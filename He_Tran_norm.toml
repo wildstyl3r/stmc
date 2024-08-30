@@ -1,7 +1,0 @@
-cross_sections = "He.txt"
-gap_length = 2.0
-cathode_fall_potential = 150.0
-cathode_fall_length = 1.3
-num_runs = 20
-heavy_mass = 4.0026
-cathode_flux = 100

@@ -15,7 +15,8 @@ type Model struct {
 	gapLength         float64 // gap length
 	EConst            float64
 	density           float64 // N
-	cathodeFlux       int
+	nElectrons        int
+	cathodeFlux       float64
 
 	Va float64 // additional voltage to avoid numeric negative energy problems beyond cathode fall
 
@@ -27,7 +28,7 @@ type Model struct {
 	eStep  float64
 	muStep float64
 
-	flux            []int // ratio to 1 electron emitted from cathode
+	flux            []float64 // ratio to 1 electron emitted from cathode
 	driftVelocity   []float64
 	TownsendAlpha   []float64
 	psi             [][][]int
@@ -36,7 +37,7 @@ type Model struct {
 	electronEnergy  []float64
 
 	ionizationAtCell               []int
-	sourceTermOutput               []float64
+	sourceTerm                     []float64
 	accumulatedAvgIonizationAtCell []float64
 }
 
@@ -51,7 +52,7 @@ func (m *Model) init() {
 
 	m.xStep = m.gapLength / float64(m.numCells)
 
-	m.flux = make([]int, m.numCells)
+	m.flux = make([]float64, m.numCells)
 	m.driftVelocity = make([]float64, m.numCells)
 	m.TownsendAlpha = make([]float64, m.numCells)
 
@@ -69,7 +70,7 @@ func (m *Model) init() {
 	m.electronEnergy = make([]float64, m.numCells)
 
 	m.ionizationAtCell = make([]int, m.numCells)
-	m.sourceTermOutput = make([]float64, m.numCells)
+	m.sourceTerm = make([]float64, m.numCells)
 	m.accumulatedAvgIonizationAtCell = make([]float64, m.numCells)
 
 }
@@ -225,9 +226,10 @@ func (s *Model) nextCollision(p *Particle) *lxgata.Collision {
 
 func (s *Model) run() {
 	var particles []Particle
-	for i := 0; i < s.cathodeFlux; i++ {
+	for i := 0; i < s.nElectrons; i++ {
 		particles = append(particles, newParticle())
 		particles[len(particles)-1].recalcParams(s)
+		s.incrementPsi(&particles[len(particles)-1], 0)
 	}
 
 	activeParticles := true
@@ -283,8 +285,6 @@ func (s *Model) run() {
 	const me float64 = 9.1093837139e-31 // [kg]
 
 	for xIndex := 0; xIndex < s.numCells; xIndex++ {
-		//var counter int = 0
-		//var preVxSum float64
 
 		for eIndex := 1; eIndex < s.numCellsE; eIndex++ {
 			//currentE := s.eStep * float64(eIndex)
@@ -295,15 +295,13 @@ func (s *Model) run() {
 				//preVxSum += math.Abs(currentMu) * math.Sqrt(currentE) * float64(s.psi[xIndex][eIndex][muIndex])
 
 				if math.Abs(currentMu) > 0.00001 {
-					s.distribution[xIndex][eIndex][muIndex] = float64(s.psi[xIndex][eIndex][muIndex]) / (v * math.Abs(currentMu) * eV2J(s.eStep) * s.muStep)
+					s.distribution[xIndex][eIndex][muIndex] = float64(s.psi[xIndex][eIndex][muIndex]) * s.cathodeFlux / (v * math.Abs(currentMu) * s.eStep * s.muStep * float64(s.nElectrons))
 				}
 				if math.IsNaN(s.distribution[xIndex][eIndex][muIndex]) {
 					fmt.Printf("distr nan %d %d %d\n", xIndex, eIndex, muIndex)
 				}
 			}
 		}
-		//s.driftVelocity[xIndex] = math.Sqrt(2./me) * preVxSum / float64(counter) // to reduce float point error from multiple multiplications and additions
-		//s.avgDriftVelocity += s.driftVelocity[xIndex]
 	}
 
 	for xIndex := 0; xIndex < s.numCells; xIndex++ {
@@ -331,6 +329,9 @@ func (s *Model) run() {
 
 		s.TownsendAlpha[xIndex] *= math.Sqrt(2. / me)
 		s.TownsendAlpha[xIndex] /= s.driftVelocity[xIndex]
-		s.TownsendAlpha[xIndex] /= s.electronDensity[xIndex]
+
+		s.flux[xIndex] = s.driftVelocity[xIndex] * s.electronDensity[xIndex]
+
+		s.sourceTerm[xIndex] = s.TownsendAlpha[xIndex] * s.flux[xIndex] / (s.cathodeFlux)
 	}
 }
