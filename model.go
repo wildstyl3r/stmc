@@ -28,7 +28,7 @@ type Model struct {
 	eStep  float64
 	muStep float64
 
-	flux            []float64 // ratio to 1 electron emitted from cathode
+	flux            []int // ratio to 1 electron emitted from cathode
 	driftVelocity   []float64
 	TownsendAlpha   []float64
 	psi             [][][]int
@@ -52,7 +52,7 @@ func (m *Model) init() {
 
 	m.xStep = m.gapLength / float64(m.numCells)
 
-	m.flux = make([]float64, m.numCells)
+	m.flux = make([]int, m.numCells)
 	m.driftVelocity = make([]float64, m.numCells)
 	m.TownsendAlpha = make([]float64, m.numCells)
 
@@ -305,21 +305,26 @@ func (s *Model) run() {
 	}
 
 	for xIndex := 0; xIndex < s.numCells; xIndex++ {
-		for eIndex := 1; eIndex < s.numCellsE; eIndex++ {
-			for muIndex := 0; muIndex < s.numCellsMu; muIndex++ {
-				s.electronDensity[xIndex] += s.distribution[xIndex][eIndex][muIndex] * s.eStep
-			}
-		}
+		NxI, NxINext := 0., 0.
 		for eIndex := 1; eIndex < s.numCellsE; eIndex++ {
 			currentEnergy := s.eStep * float64(eIndex)
 			for muIndex := 0; muIndex < s.numCellsMu; muIndex++ {
 				currentMu := s.muStep*float64(muIndex) - 1.
 
-				s.electronEnergy[xIndex] += s.distribution[xIndex][eIndex][muIndex] * s.eStep * currentEnergy
+				s.electronDensity[xIndex] += s.distribution[xIndex][eIndex][muIndex] * s.eStep
 
-				s.driftVelocity[xIndex] += s.distribution[xIndex][eIndex][muIndex] * s.eStep * math.Sqrt(eV2J(currentEnergy)) * currentMu
+				if eIndex > 0 {
+					s.electronEnergy[xIndex] += s.distribution[xIndex][eIndex][muIndex] * s.eStep * currentEnergy
 
-				s.TownsendAlpha[xIndex] += s.crossSections.TotalCrossSectionOfKindAt(lxgata.IONIZATION, currentEnergy) * math.Sqrt(eV2J(currentEnergy)) * s.distribution[xIndex][eIndex][muIndex] * s.eStep
+					s.driftVelocity[xIndex] += s.distribution[xIndex][eIndex][muIndex] * s.eStep * math.Sqrt(eV2J(currentEnergy)) * currentMu
+
+					//s.TownsendAlpha[xIndex] += s.crossSections.TotalCrossSectionOfKindAt(lxgata.IONIZATION, currentEnergy) * math.Sqrt(eV2J(currentEnergy)) * s.distribution[xIndex][eIndex][muIndex] * s.eStep
+				}
+
+				NxI += float64(s.psi[xIndex][eIndex][muIndex])
+				if xIndex+1 < s.numCells {
+					NxINext += float64(s.psi[xIndex+1][eIndex][muIndex])
+				}
 			}
 		}
 		s.electronEnergy[xIndex] /= s.electronDensity[xIndex]
@@ -327,11 +332,14 @@ func (s *Model) run() {
 		s.driftVelocity[xIndex] *= math.Sqrt(2. / me)
 		s.driftVelocity[xIndex] /= s.electronDensity[xIndex]
 
-		s.TownsendAlpha[xIndex] *= math.Sqrt(2. / me)
-		s.TownsendAlpha[xIndex] /= s.driftVelocity[xIndex]
+		//s.TownsendAlpha[xIndex] *= math.Sqrt(2. / me)
+		//s.TownsendAlpha[xIndex] /= s.driftVelocity[xIndex]
+		if xIndex+1 < s.numCells {
+			s.TownsendAlpha[xIndex] = (float64(s.flux[xIndex+1]) - float64(s.nElectrons)) / (float64(s.nElectrons) * s.xStep * float64(xIndex))
+			s.sourceTerm[xIndex] = (float64(s.flux[xIndex+1]) - float64(s.nElectrons)) * float64(s.nElectrons) / (float64(s.nElectrons) * float64(s.nElectrons) * s.xStep * float64(xIndex+1)) //s.TownsendAlpha[xIndex] * s.flux[xIndex] / (s.cathodeFlux)
+		}
 
-		s.flux[xIndex] = s.driftVelocity[xIndex] * s.electronDensity[xIndex]
+		//s.flux[xIndex] = s.driftVelocity[xIndex] * s.electronDensity[xIndex]
 
-		s.sourceTerm[xIndex] = s.TownsendAlpha[xIndex] * s.flux[xIndex] / (s.cathodeFlux)
 	}
 }
