@@ -50,10 +50,6 @@ func main() {
 		panic(fmt.Errorf("fatal error config file: %w", err))
 	}
 
-	const k float64 = 1.380649e-23
-	const p float64 = 101325. / 760.       //Pa
-	const electronCharge = 1.602176634e-19 // C
-
 	//var angularDistributionAveraged [][][]float64
 	var TownsendAlpha []float64
 	var driftVelocity []float64

@@ -5,6 +5,11 @@ import (
 	"math/rand"
 )
 
+const k float64 = 1.380649e-23
+const p float64 = 101325. / 760.       //Pa
+const electronCharge = 1.602176634e-19 // C
+const me float64 = 9.1093837139e-31    // [kg]
+
 func ternarySearchMaxF(f func(float64) float64, left, right, eps float64) float64 {
 	for right-left > eps {
 		a := (left*2. + right) / 3.
