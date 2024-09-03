@@ -224,58 +224,56 @@ func (s *Model) nextCollision(p *Particle) *lxgata.Collision {
 }
 
 func (s *Model) run() {
-	var particles []Particle
+
+	particlePtrs := make(map[*Particle]struct{})
 	for i := 0; i < s.nElectrons; i++ {
-		particles = append(particles, newParticle())
-		particles[len(particles)-1].recalcParams(s)
-		s.incrementPsi(&particles[len(particles)-1], 0)
+		particle := newParticle()
+		particle.recalcParams(s)
+		s.incrementPsi(&particle, 0)
+		particlePtrs[&particle] = struct{}{}
 	}
 
-	activeParticles := true
-	for activeParticles {
-		activeParticles = false
-		for i := len(particles) - 1; i >= 0; i-- {
-			if int(particles[i].x/s.xStep)+1 < s.numCells {
-				activeParticles = true
-			} else {
+	for len(particlePtrs) > 0 {
+		for particlePtr := range particlePtrs {
+			if int(particlePtr.x/s.xStep)+1 >= s.numCells {
+				delete(particlePtrs, particlePtr)
 				continue
 			}
 
-			if collision := s.nextCollision(&particles[i]); collision != nil {
+			if collision := s.nextCollision(particlePtr); collision != nil {
 				cosChi := 1. - 2.*rand.Float64()
 				cosPhi := math.Cos(2. * math.Pi * rand.Float64())
 				switch collision.Type {
 				case lxgata.ELASTIC:
-					particles[i].redirect(cosChi, cosPhi)
-					particles[i].e = particles[i].e * (1. - (2.*collision.MassRatio)*(1.-cosChi))
+					particlePtr.redirect(cosChi, cosPhi)
+					particlePtr.e = particlePtr.e * (1. - (2.*collision.MassRatio)*(1.-cosChi))
 
 				case lxgata.EFFECTIVE:
-					particles[i].redirect(cosChi, cosPhi)
-					particles[i].e = particles[i].e * (1. - (2.*collision.MassRatio)*(1.-cosChi))
+					particlePtr.redirect(cosChi, cosPhi)
+					particlePtr.e = particlePtr.e * (1. - (2.*collision.MassRatio)*(1.-cosChi))
 
 				case lxgata.EXCITATION:
-					particles[i].redirect(cosChi, cosPhi)
-					particles[i].e -= collision.Threshold
+					particlePtr.redirect(cosChi, cosPhi)
+					particlePtr.e -= collision.Threshold
 
 				case lxgata.IONIZATION:
-					collisionEnergy := particles[i].e
+					collisionEnergy := particlePtr.e
 					collisionEnergy -= collision.Threshold
 					e1 := collisionEnergy * rand.Float64()
 					e2 := collisionEnergy - e1
 					cosChi1 := math.Sqrt(e1 / collisionEnergy)
 					cosChi2 := math.Sqrt(e2 / collisionEnergy)
 
-					particles = append(particles, particles[i])
+					ejected := *particlePtr
+					ejected.e = e2
+					ejected.redirect(cosChi2, cosPhi)
+					ejected.recalcParams(s)
 
-					particles[len(particles)-1].e = e2
-					particles[len(particles)-1].redirect(cosChi2, cosPhi)
-					particles[len(particles)-1].recalcParams(s)
-
-					particles[i].e = e1
-					particles[i].redirect(cosChi1, cosPhi)
+					particlePtr.e = e1
+					particlePtr.redirect(cosChi1, cosPhi)
 				default:
 				}
-				particles[i].recalcParams(s)
+				particlePtr.recalcParams(s)
 			}
 		}
 	}
