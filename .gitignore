@@ -1,2 +1,6 @@
 *.toml
 *.txt
+*.sh
+Ar*
+go.sum
+outputs

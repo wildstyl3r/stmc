@@ -12,262 +12,321 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
+	"github.com/BurntSushi/toml"
 	"github.com/wildstyl3r/lxgata"
 )
 
+type output struct {
+	saveFlag    *bool
+	fileSuffix  string
+	columnNames []string
+	indexStep   *float64
+	data        *[]float64
+	scalers     []func(float64) float64
+	notAverage  bool
+}
+
+type ModelParameters struct {
+	CrossSections        string
+	GapLength            float64
+	CathodeFallLength    float64
+	CathodeFallPotential float64
+	CathodeCurrent       float64
+	ConstEField          float64
+	Temperature          float64
+	DeltaE               float64
+	DeltaMu              float64
+	Runs                 int
+	NElectrons           int
+	MakeDir              bool
+}
+
+type Config struct {
+	OutputDir string
+	Models    map[string]ModelParameters
+}
+
 func main() {
-	// if len(os.Args) < 2 {
-	// 	panic(fmt.Errorf("no input provided"))
-	// }
-
-	var saveTownsendAlpha = flag.Bool("ta", false, "save Townsend alpha coefficient")
-	var saveDriftVelocity = flag.Bool("vx", false, "save drift velocity")
-	var saveElectronDensity = flag.Bool("n", false, "save electron density")
-	var saveEnergy = flag.Bool("emean", false, "save mean energy")
-	var saveSourceTermFormula = flag.Bool("stf", false, "save source term calculated by paper formula")
-	var configFileNamePointer = flag.String("input", "He_Tran_norm", "model configuration in toml format")
-	flag.Parse()
-	// var saveSourceTermFormula = flag.Bool("stf", false, "save source term calculated by paper formula")
-	// var saveSourceTermNative = flag.Bool("stn", false, "save source term counted natively")
-
-	configFileName := strings.TrimSuffix(*configFileNamePointer, ".toml")
-
-	viper.SetConfigName(configFileName)
-	viper.SetConfigType("toml") // REQUIRED if the config file does not have the extension in the name
-	viper.AddConfigPath(".")    // optionally look for config in the working directory
-
-	viper.SetDefault("temperature", 300.)
-	viper.SetDefault("num_runs", 5)
-	viper.SetDefault("deltaE", 0.3) // eV
-	viper.SetDefault("deltaMu", 2./90.)
-	viper.SetDefault("n_electrons", 100)
-	viper.SetDefault("const_E_field", -100.)
-	viper.SetDefault("cathode_current", 2.84e-2) // [A m^-2] = [C / s^-1 m^-2]
-
-	err := viper.ReadInConfig() // Find and read the config file
-	if err != nil {             // Handle errors reading the config file
-		panic(fmt.Errorf("fatal error config file: %w", err))
-	}
-
-	//var angularDistributionAveraged [][][]float64
 	var TownsendAlpha []float64
+	var TownsendAlphaD []float64
+	var TownsendAlphaF []float64
 	var driftVelocity []float64
 	var electronDensity []float64
 	var meanEnergy []float64
-	var normalizedIonizationSourceTerm []float64
+	var ionizationSourceTerm []float64
+	var ionizationSourceTermD []float64
+	var ionizations []float64
+	var flux []float64
 	var xStep float64
+	var numCells int
 
-	numRuns := viper.GetInt("num_runs")
-
-	crossSections, err := lxgata.LoadCrossSections(viper.GetString("cross_sections"))
-	if err != nil {
-		panic(fmt.Errorf("invalid cross section file: %w", err))
+	outputs := map[string]output{
+		"Townsend alpha": {
+			saveFlag:    flag.Bool("ta", false, "save Townsend alpha coefficient"),
+			fileSuffix:  "Townsend_alpha",
+			columnNames: []string{"px (Torr cm)", "a/p (cm^-1 Torr^-1)"},
+			indexStep:   &xStep,
+			data:        &TownsendAlpha,
+			scalers:     []func(float64) float64{m2cm, cm2m},
+		},
+		"Townsend alpha per density": {
+			saveFlag:    flag.Bool("tad", false, "save Townsend alpha coefficient divided by electron density"),
+			fileSuffix:  "Townsend_alpha_D",
+			columnNames: []string{"px (Torr cm)", "a*n/p (cm^2 Torr^-1)"},
+			indexStep:   &xStep,
+			data:        &TownsendAlphaD,
+			scalers:     []func(float64) float64{m2cm, func(f float64) float64 { return f * 1.e4 }},
+		},
+		"Drift velocity": {
+			saveFlag:    flag.Bool("vx", false, "save drift velocity"),
+			fileSuffix:  "drift_vel",
+			columnNames: []string{"px (Torr cm)", "v_x (cm s^-1)"},
+			indexStep:   &xStep,
+			data:        &driftVelocity,
+			scalers:     []func(float64) float64{m2cm, m2cm},
+		},
+		"Density": {
+			saveFlag:    flag.Bool("n", false, "save density"),
+			fileSuffix:  "density",
+			columnNames: []string{"px (Torr cm)", "n (сm^-3)"},
+			indexStep:   &xStep,
+			data:        &electronDensity,
+			scalers:     []func(float64) float64{m2cm, func(f float64) float64 { return f / 1.e6 }},
+		},
+		"Mean energy": {
+			saveFlag:    flag.Bool("emean", false, "save mean energy"),
+			fileSuffix:  "mean_energy",
+			columnNames: []string{"px (Torr cm)", "e (eV)"},
+			indexStep:   &xStep,
+			data:        &meanEnergy,
+			scalers:     []func(float64) float64{m2cm},
+		},
+		"Ionization source term": {
+			saveFlag:    flag.Bool("stf", false, "save ionization source term"),
+			fileSuffix:  "ist",
+			columnNames: []string{"px (Torr cm)", "S_n/p (cm^-1 Torr^-1)"},
+			indexStep:   &xStep,
+			data:        &ionizationSourceTerm,
+			scalers:     []func(float64) float64{m2cm, cm2m},
+		},
+		"Ionization source term per density": {
+			saveFlag:    flag.Bool("std", false, "save ionization source term divided by electron density"),
+			fileSuffix:  "istd",
+			columnNames: []string{"px (Torr cm)", "S_n*n/p (cm^2 Torr^-1)"},
+			indexStep:   &xStep,
+			data:        &ionizationSourceTermD,
+			scalers:     []func(float64) float64{m2cm, func(f float64) float64 { return f * 1.e4 }},
+		},
+		"Ionization counter": {
+			saveFlag:    flag.Bool("ic", false, "save ionization counter"),
+			fileSuffix:  "ic",
+			columnNames: []string{"px (Torr cm)", "N_i(cm^-1 Torr^-1)"},
+			indexStep:   &xStep,
+			data:        &ionizations,
+			scalers:     []func(float64) float64{m2cm, cm2m},
+		},
+		"Flux": {
+			saveFlag:    flag.Bool("f", false, "save flux"),
+			fileSuffix:  "flux",
+			columnNames: []string{"px (Torr cm)", "Phi(cm^-1 Torr^-1)"},
+			indexStep:   &xStep,
+			data:        &flux,
+			scalers:     []func(float64) float64{m2cm, cm2m},
+		},
+		"Townsend Alpha from flux": {
+			saveFlag:    flag.Bool("taf", false, "save Townsend alpha calculated as 1/F * dF/dx "),
+			fileSuffix:  "Townsend_Alpha_F",
+			columnNames: []string{"px (Torr cm)", "a/p (cm^-1 Torr^-1)"},
+			indexStep:   &xStep,
+			data:        &TownsendAlphaF,
+			scalers:     []func(float64) float64{m2cm, cm2m},
+			notAverage:  true,
+		},
 	}
+	//var densityNorm = flag.Bool("dn", false, "divide TA by distribution integral")
+	var configFileNamePointer = flag.String("input", "He_Tran_norm", "model configuration in toml format")
+	flag.Parse()
 
 	startTime := time.Now()
 	fmt.Printf("Current time: %s\n", startTime.UTC().Format(time.UnixDate))
 
-	var chanWg sync.WaitGroup
-	dataflow := make(chan *Model)
-	for run := 0; run < numRuns; run++ {
-		chanWg.Add(1)
-		//worker
+	configFileName := strings.TrimSuffix(*configFileNamePointer, ".toml")
+
+	var config Config
+	meta, err := toml.DecodeFile(configFileName+".toml", &config)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	if len(config.Models) == 0 {
+		fmt.Println("No models provided")
+		os.Exit(0)
+	}
+
+	outputPath := ""
+
+	if config.OutputDir != "" && config.OutputDir != "." {
+		os.MkdirAll(config.OutputDir, 0750)
+		outputPath += config.OutputDir + "/"
+	}
+
+	for modelName, parameters := range config.Models {
+		fmt.Println("\n" + modelName)
+		if !meta.IsDefined("Models", modelName, "CrossSections") ||
+			!meta.IsDefined("Models", modelName, "GapLength") ||
+			!meta.IsDefined("Models", modelName, "CathodeFallLength") ||
+			!meta.IsDefined("Models", modelName, "CathodeFallPotential") {
+			fmt.Println("Model " + modelName + " lacks key parameters (CrossSections, GapLength, CathodeFallLength or CathodeFallPotential)")
+			continue
+		}
+		if !meta.IsDefined("Models", modelName, "CathodeCurrent") {
+			parameters.CathodeCurrent = 2.84e-2
+		}
+		if !meta.IsDefined("Models", modelName, "ConstEField") {
+			parameters.ConstEField = -100.
+		}
+		if !meta.IsDefined("Models", modelName, "Temperature") {
+			parameters.Temperature = 300.
+		}
+		if !meta.IsDefined("Models", modelName, "DeltaE") {
+			parameters.DeltaE = 0.3
+		}
+		if !meta.IsDefined("Models", modelName, "DeltaMu") {
+			parameters.DeltaMu = 1. / 45.
+		}
+		if !meta.IsDefined("Models", modelName, "Runs") {
+			parameters.Runs = 5
+		}
+		if !meta.IsDefined("Models", modelName, "NElectrons") {
+			parameters.NElectrons = 100
+		}
+		if !meta.IsDefined("Models", modelName, "MakeDir") {
+			parameters.MakeDir = false
+		}
+
+		crossSections, err := lxgata.LoadCrossSections(parameters.CrossSections)
+		if err != nil {
+			panic(fmt.Errorf("invalid cross section file: %w", err))
+		}
+
+		var chanWg sync.WaitGroup
+		dataflow := make(chan *Model)
+		for run := 0; run < parameters.Runs; run++ {
+			chanWg.Add(1)
+			//worker
+			go func() {
+				defer chanWg.Done()
+				setup := Model{
+					crossSections:     crossSections,
+					cathodeFallLength: cm2m(parameters.CathodeFallLength),
+					Vc:                -math.Abs(parameters.CathodeFallPotential),
+					gapLength:         cm2m(parameters.GapLength),
+					EConst:            parameters.ConstEField,
+					density:           p / (k * parameters.Temperature),
+					nElectrons:        int(parameters.NElectrons),
+					eStep:             parameters.DeltaE,
+					muStep:            parameters.DeltaMu,
+					cathodeFlux:       parameters.CathodeCurrent / electronCharge,
+				}
+				setup.init()
+				setup.run()
+				dataflow <- &setup
+			}()
+		}
+
+		// chan killer
 		go func() {
-			defer chanWg.Done()
-			setup := Model{
-				crossSections:     crossSections,
-				cathodeFallLength: cm2m(viper.GetFloat64("cathode_fall_length")),
-				Vc:                -math.Abs(viper.GetFloat64("cathode_fall_potential")),
-				gapLength:         cm2m(viper.GetFloat64("gap_length")),
-				EConst:            viper.GetFloat64("const_E_field"),
-				density:           p / (k * viper.GetFloat64("temperature")),
-				nElectrons:        int(viper.GetFloat64("n_electrons")),
-				eStep:             viper.GetFloat64("deltaE"),
-				muStep:            viper.GetFloat64("deltaMu"),
-				cathodeFlux:       viper.GetFloat64("cathode_current") / electronCharge,
-			}
-			setup.init()
-			setup.run()
-			dataflow <- &setup
+			chanWg.Wait()
+			close(dataflow)
 		}()
-	}
 
-	// chanel killer
-	go func() {
-		chanWg.Wait()
-		close(dataflow)
-	}()
+		counter := 0
+		fmt.Printf("\rDone:[0/%d]", parameters.Runs)
+		first := true
+		for results := range dataflow {
+			fmt.Printf("\rDone:[%d/%d]", counter+1, parameters.Runs)
+			if first {
+				first = false
+				xStep = results.xStep
+				numCells = results.numCells
 
-	// merger
-	//go func() {
-	counter := 0
-	fmt.Printf("\rDone:[0/%d]", numRuns)
-	for results := range dataflow {
-		fmt.Printf("\rDone:[%d/%d]", counter+1, numRuns)
-		if meanEnergy == nil {
-			xStep = results.xStep
-			//eStep = setup.eStep
-			//muStep = setup.muStep
+				TownsendAlpha = make([]float64, numCells)
+				TownsendAlphaD = make([]float64, numCells)
+				TownsendAlphaF = make([]float64, numCells)
+				driftVelocity = make([]float64, numCells)
+				meanEnergy = make([]float64, numCells)
+				electronDensity = make([]float64, numCells)
+				ionizationSourceTerm = make([]float64, numCells)
+				ionizationSourceTermD = make([]float64, numCells)
+				ionizations = make([]float64, numCells)
+				flux = make([]float64, numCells)
+			}
 
-			TownsendAlpha = make([]float64, results.numCells)
-			driftVelocity = make([]float64, results.numCells)
-			meanEnergy = make([]float64, results.numCells)
-			electronDensity = make([]float64, results.numCells)
-			normalizedIonizationSourceTerm = make([]float64, results.numCells)
+			for xIndex := 0; xIndex < numCells; xIndex++ {
+				TownsendAlpha[xIndex] += results.TownsendAlpha[xIndex]
+				ionizationSourceTerm[xIndex] += results.sourceTerm[xIndex]
+				meanEnergy[xIndex] += results.electronEnergy[xIndex]
+				driftVelocity[xIndex] += results.driftVelocity[xIndex]
+				electronDensity[xIndex] += results.electronDensity[xIndex]
+				ionizations[xIndex] += float64(results.ionizationAtCell[xIndex]) / float64(results.nElectrons)
+				flux[xIndex] += float64(results.flux[xIndex]) / float64(results.nElectrons)
+				TownsendAlphaD[xIndex] += results.TownsendAlpha[xIndex] / results.electronDensity[xIndex]
+				ionizationSourceTermD[xIndex] += results.sourceTerm[xIndex] * (parameters.CathodeCurrent / electronCharge) / (results.electronDensity[xIndex] * results.driftVelocity[xIndex])
+			}
+			counter++
+		}
+		for xIndex := 0; xIndex < numCells; xIndex++ {
+			for _, output := range outputs {
+				if output.notAverage {
+					continue
+				}
+				(*output.data)[xIndex] /= float64(counter)
+			}
 		}
 
-		for xIndex := 0; xIndex < results.numCells; xIndex++ {
-			TownsendAlpha[xIndex] += results.TownsendAlpha[xIndex]
-			normalizedIonizationSourceTerm[xIndex] += results.TownsendAlpha[xIndex] * float64(results.flux[xIndex])
-			meanEnergy[xIndex] += results.electronEnergy[xIndex]
-			driftVelocity[xIndex] += results.driftVelocity[xIndex]
-			electronDensity[xIndex] += results.electronDensity[xIndex]
+		for xIndex := 1; xIndex+2 < numCells; xIndex++ {
+			TownsendAlphaF[xIndex] = (flux[xIndex+1] + flux[xIndex+2] - flux[xIndex] - flux[xIndex-1]) / (2. * flux[xIndex] * xStep)
 		}
-		counter++
-	}
-	for xIndex := 0; xIndex < len(meanEnergy); xIndex++ {
-		TownsendAlpha[xIndex] /= float64(counter)
-		normalizedIonizationSourceTerm[xIndex] /= float64(counter)
-		driftVelocity[xIndex] /= float64(counter)
-		meanEnergy[xIndex] /= float64(counter)
-		electronDensity[xIndex] /= float64(counter)
-	}
-	println()
-	//}()
+		println()
 
-	// for run := 0; run < numRuns; run++ {
-	// 	fmt.Println("run: ", run)
-
-	// 	setup := Model{
-	// 		crossSections:     crossSections,
-	// 		cathodeFallLength: cm2m(viper.GetFloat64("cathode_fall_length")),
-	// 		Vc:                -math.Abs(viper.GetFloat64("cathode_fall_potential")),
-	// 		gapLength:         cm2m(viper.GetFloat64("gap_length")),
-	// 		EConst:            viper.GetFloat64("const_E_field"),
-	// 		density:           p / (k * viper.GetFloat64("temperature")),
-	// 		nElectrons:       int(viper.GetFloat64("n_electrons")),
-	// 		eStep:             viper.GetFloat64("deltaE"),
-	// 		muStep:            viper.GetFloat64("deltaMu"),
-	// 	}
-	// 	setup.init()
-
-	// 	if meanEnergy == nil {
-	// 		fmt.Println("parameters loaded, variables initialized")
-	// 		xStep = setup.xStep
-	// 		//eStep = setup.eStep
-	// 		//muStep = setup.muStep
-
-	// 		TownsendAlpha = make([]float64, setup.numCells)
-	// 		normalizedIonizationSourceTerm = make([]float64, setup.numCells)
-	// 		driftVelocity = make([]float64, setup.numCells)
-	// 		meanEnergy = make([]float64, setup.numCells)
-	// 		electronDensity = make([]float64, setup.numCells)
-	// 	}
-	// 	setup.run()
-
-	// 	for xIndex := 0; xIndex < setup.numCells; xIndex++ {
-	// 		TownsendAlpha[xIndex] += setup.TownsendAlpha[xIndex]
-	// 		normalizedIonizationSourceTerm[xIndex] += setup.TownsendAlpha[xIndex] * float64(setup.flux[xIndex])
-	// 		meanEnergy[xIndex] += setup.electronEnergy[xIndex]
-	// 		driftVelocity[xIndex] += setup.driftVelocity[xIndex]
-	// 		electronDensity[xIndex] += setup.electronDensity[xIndex]
-	// 	}
-	// }
-	// for xIndex := 0; xIndex < len(meanEnergy); xIndex++ {
-	// 	TownsendAlpha[xIndex] /= float64(numRuns)
-	// 	normalizedIonizationSourceTerm[xIndex] /= float64(numRuns)
-	// 	driftVelocity[xIndex] /= float64(numRuns)
-	// 	meanEnergy[xIndex] /= float64(numRuns)
-	// 	electronDensity[xIndex] /= float64(numRuns)
-	// }
-
-	if *saveTownsendAlpha {
-		file, err := os.Create(configFileName + "_Townsend_alpha.txt")
-		if err != nil {
-			println("unable to save first Townsend coefficient: ", err)
+		if parameters.MakeDir {
+			err := os.MkdirAll(outputPath+modelName, 0750)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				continue
+			}
+			modelName += "/"
 		} else {
-			output := [][]string{{"px (Torr cm)", "a/p (cm^-1 Torr^-1)"}}
-			for xIndex := range TownsendAlpha {
-				output = append(output, []string{strconv.FormatFloat(m2cm(xStep*float64(xIndex)), 'f', -1, 64), strconv.FormatFloat(TownsendAlpha[xIndex]/100., 'f', -1, 64)})
-			}
-			w := csv.NewWriter(file)
-			w.WriteAll(output)
-			println("TA saved")
-			if err := w.Error(); err != nil {
-				log.Fatalln("error writing csv:", err)
-			}
+			modelName += "_"
 		}
-	}
 
-	if *saveDriftVelocity {
-		file, err := os.Create(configFileName + "_drift_vel.txt")
-		if err != nil {
-			println("unable to save drift velocity: ", err)
-		} else {
-			output := [][]string{{"px (Torr cm)", "v_x (cm s^-1)"}}
-			for xIndex := range driftVelocity {
-				output = append(output, []string{strconv.FormatFloat(m2cm(xStep*float64(xIndex)), 'f', -1, 64), strconv.FormatFloat(m2cm(driftVelocity[xIndex]), 'f', -1, 64)})
-			}
-			w := csv.NewWriter(file)
-			w.WriteAll(output)
-			println("drift velocity saved")
-			if err := w.Error(); err != nil {
-				log.Fatalln("error writing csv:", err)
-			}
-		}
-	}
+		for name, output := range outputs {
+			if *output.saveFlag {
+				file, err := os.Create(outputPath + modelName + output.fileSuffix + ".txt")
+				if err != nil {
+					println("unable to save "+name+": ", err)
+				} else {
+					rows := [][]string{output.columnNames}
+					for index := range *output.data {
+						xColumnValue := *output.indexStep * float64(index)
+						yColumnValue := (*output.data)[index]
+						if len(output.scalers) > 0 && output.scalers[0] != nil {
+							xColumnValue = output.scalers[0](xColumnValue)
+						}
+						if len(output.scalers) > 1 && output.scalers[1] != nil {
+							yColumnValue = output.scalers[1](yColumnValue)
+						}
 
-	if *saveEnergy {
-		file, err := os.Create(configFileName + "_mean_energy.txt")
-		if err != nil {
-			println("unable to save drift velocity: ", err)
-		} else {
-			output := [][]string{{"px (Torr cm)", "e (eV)"}}
-			for xIndex := range meanEnergy {
-				output = append(output, []string{strconv.FormatFloat(m2cm(xStep*float64(xIndex)), 'f', -1, 64), strconv.FormatFloat(meanEnergy[xIndex], 'f', -1, 64)})
-			}
-			w := csv.NewWriter(file)
-			w.WriteAll(output)
-			println("Energy saved")
-			if err := w.Error(); err != nil {
-				log.Fatalln("error writing csv:", err)
-			}
-		}
-	}
-
-	if *saveElectronDensity {
-		file, err := os.Create(configFileName + "_density.txt")
-		if err != nil {
-			println("unable to save density: ", err)
-		} else {
-			output := [][]string{{"px (Torr cm)", "n (сm^-3)"}}
-			for xIndex := range meanEnergy {
-				output = append(output, []string{strconv.FormatFloat(m2cm(xStep*float64(xIndex)), 'f', -1, 64), strconv.FormatFloat(electronDensity[xIndex]/(1.e6), 'f', -1, 64)})
-			}
-			w := csv.NewWriter(file)
-			w.WriteAll(output)
-			println("Electron density saved")
-			if err := w.Error(); err != nil {
-				log.Fatalln("error writing csv:", err)
-			}
-		}
-	}
-
-	if *saveSourceTermFormula {
-		file, err := os.Create(configFileName + "_st.txt")
-		if err != nil {
-			println("unable to save ionization source term: ", err)
-		} else {
-			output := [][]string{{"px (Torr cm)", "a/p (cm^-1 Torr^-1)"}}
-			for xIndex := range meanEnergy {
-				output = append(output, []string{strconv.FormatFloat(m2cm(xStep*float64(xIndex)), 'f', -1, 64), strconv.FormatFloat(normalizedIonizationSourceTerm[xIndex]/100., 'f', -1, 64)})
-			}
-			w := csv.NewWriter(file)
-			w.WriteAll(output)
-			println("Source term saved")
-			if err := w.Error(); err != nil {
-				log.Fatalln("error writing csv:", err)
+						rows = append(rows, []string{strconv.FormatFloat(xColumnValue, 'f', -1, 64), strconv.FormatFloat(yColumnValue, 'f', -1, 64)})
+					}
+					w := csv.NewWriter(file)
+					w.WriteAll(rows)
+					println(name + " saved")
+					if err := w.Error(); err != nil {
+						log.Fatalln("error writing csv:", err)
+					}
+				}
 			}
 		}
 	}

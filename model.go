@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"math"
 	"math/rand"
 
@@ -18,7 +17,7 @@ type Model struct {
 	nElectrons        int
 	cathodeFlux       float64
 
-	Va float64 // additional voltage to avoid numeric negative energy problems beyond cathode fall
+	Va float64 // additional voltage to avoid numeric negative energy beyond cathode fall
 
 	numCells   int
 	numCellsE  int
@@ -28,20 +27,18 @@ type Model struct {
 	eStep  float64
 	muStep float64
 
-	flux            []int // ratio to 1 electron emitted from cathode
-	driftVelocity   []float64
-	TownsendAlpha   []float64
-	psi             [][][]int
-	psiF            [][][]float64
+	flux          []int // ratio to 1 electron emitted from cathode
+	driftVelocity []float64
+	TownsendAlpha []float64
+	// psi             [][][]int
+	// psiF            [][][]float64
 	psiFIncrement   float64
-	distributionF   [][][]float64
 	distribution    [][][]float64
 	electronDensity []float64
 	electronEnergy  []float64
 
-	ionizationAtCell               []int
-	sourceTerm                     []float64
-	accumulatedAvgIonizationAtCell []float64
+	ionizationAtCell []int
+	sourceTerm       []float64
 }
 
 func (m *Model) init() {
@@ -59,21 +56,18 @@ func (m *Model) init() {
 	m.driftVelocity = make([]float64, m.numCells)
 	m.TownsendAlpha = make([]float64, m.numCells)
 
-	m.psi = make([][][]int, m.numCells)
+	// m.psi = make([][][]int, m.numCells)
 	m.distribution = make([][][]float64, m.numCells)
-	m.distributionF = make([][][]float64, m.numCells)
-	m.psiF = make([][][]float64, m.numCells)
+	// m.psiF = make([][][]float64, m.numCells)
 	m.psiFIncrement = m.cathodeFlux / (float64(m.nElectrons) * m.eStep * m.muStep)
-	for i := range m.psi {
-		m.psi[i] = make([][]int, m.numCellsE)
+	for i := range m.distribution {
+		// m.psi[i] = make([][]int, m.numCellsE)
 		m.distribution[i] = make([][]float64, m.numCellsE)
-		m.distributionF[i] = make([][]float64, m.numCellsE)
-		m.psiF[i] = make([][]float64, m.numCellsE)
-		for j := range m.psi[i] {
-			m.psi[i][j] = make([]int, m.numCellsMu)
+		// m.psiF[i] = make([][]float64, m.numCellsE)
+		for j := range m.distribution[i] {
+			// m.psi[i][j] = make([]int, m.numCellsMu)
 			m.distribution[i][j] = make([]float64, m.numCellsMu)
-			m.distributionF[i][j] = make([]float64, m.numCellsMu)
-			m.psiF[i][j] = make([]float64, m.numCellsMu)
+			// m.psiF[i][j] = make([]float64, m.numCellsMu)
 		}
 	}
 	m.electronDensity = make([]float64, m.numCells)
@@ -81,7 +75,6 @@ func (m *Model) init() {
 
 	m.ionizationAtCell = make([]int, m.numCells)
 	m.sourceTerm = make([]float64, m.numCells)
-	m.accumulatedAvgIonizationAtCell = make([]float64, m.numCells)
 
 }
 
@@ -128,14 +121,8 @@ func (s *Model) incrementPsi(p *Particle, xIndex int) {
 	muIndex := int((p.mu + 1. + s.muStep/2.) / s.muStep)
 	if 0 <= xIndex && xIndex < s.numCells {
 		if eIndex < s.numCellsE && muIndex < s.numCellsMu && eIndex >= 0 && muIndex >= 0 {
-			s.psiF[xIndex][eIndex][muIndex] += s.psiFIncrement
 			vxAbs := math.Sqrt(eV2J(p.e)*2./me) * math.Abs(p.mu)
-			s.distributionF[xIndex][eIndex][muIndex] += s.psiFIncrement / vxAbs
-			if p.mu < 0 {
-				s.psi[xIndex][eIndex][muIndex]--
-			} else {
-				s.psi[xIndex][eIndex][muIndex]++
-			}
+			s.distribution[xIndex][eIndex][muIndex] += s.psiFIncrement / vxAbs
 		}
 		if p.mu < 0 {
 			s.flux[xIndex]--
@@ -151,7 +138,6 @@ func (s *Model) nextCollision(p *Particle) *lxgata.Collision {
 
 	var eColl float64
 	if p.mu < 0 {
-		//fmt.Println("-mu")
 		stopPoint := s.LfromV(p.eStar - p.totEnergy) // the point where electron speed along x axis becomes 0, hereby mu = 0
 		if stopPoint < 0. {
 			stopPoint = 0.
@@ -176,7 +162,8 @@ func (s *Model) nextCollision(p *Particle) *lxgata.Collision {
 				}
 
 				p.setEnergy(eColl, s)
-				//fmt.Printf("eColl: %f; eTot: %f\n", eColl, p.totEnergy)
+
+				currentCellIndex := int(p.x / s.xStep)
 
 				var totalCrossSectionPrimed float64 = M * math.Abs(s.EFieldFromL(p.x)) / (s.density * math.Sqrt(eColl))
 				var selector float64 = totalCrossSectionPrimed - s.crossSections.TotalCrossSectionAt(eColl) // the difference is null collision
@@ -188,7 +175,7 @@ func (s *Model) nextCollision(p *Particle) *lxgata.Collision {
 					selector += collision.CrossSectionAt(eColl)
 					if choice < selector/totalCrossSectionPrimed {
 						if s.crossSections[i].Type == lxgata.IONIZATION {
-							s.ionizationAtCell[int(p.x/s.xStep)]++
+							s.ionizationAtCell[currentCellIndex]++
 						}
 						return &s.crossSections[i]
 					}
@@ -200,26 +187,20 @@ func (s *Model) nextCollision(p *Particle) *lxgata.Collision {
 	p.mu = math.Copysign(p.mu, +1.)
 	// so mu is >= 0
 	for cellIndex := int(p.x / s.xStep); cellIndex < s.numCells; cellIndex++ {
-		//fmt.Printf("p.x = %f; cellIndex = %d\n", p.x, int(p.x/s.xStep))
 		eRight := s.VfromL(float64(cellIndex+1)*s.xStep) + p.totEnergy
 		M := p.M(cellIndex, s)
 		G := 2. * M * (math.Sqrt(eRight-p.eStar) - math.Sqrt(p.e-p.eStar))
 		if G < R { // no collision
-			if p.x > float64(cellIndex+1)*s.xStep {
-				fmt.Println("wtf")
-			}
 			p.setEnergy(eRight, s)
 			s.incrementPsi(p, cellIndex+1)
 
 			R -= G
 		} else { // collision occured (possibly null)
-			//fmt.Printf("eStar: %f; R: %f, M: %f\n", p.eStar, R, M)
 			eColl = math.Pow(R/(2.*M)+math.Sqrt(p.e-p.eStar), 2.) + p.eStar
-			if p.x > s.LfromV(eColl-p.totEnergy) {
-				fmt.Println("wtf +mu coll")
-			}
 
 			p.setEnergy(eColl, s)
+
+			currentCellIndex := int(p.x / s.xStep)
 
 			var totalCrossSectionPrimed float64 = M * math.Abs(s.EFieldFromL(p.x)) / (s.density * math.Sqrt(eColl))
 			var selector float64 = totalCrossSectionPrimed - s.crossSections.TotalCrossSectionAt(eColl) // the difference is null collision
@@ -231,7 +212,7 @@ func (s *Model) nextCollision(p *Particle) *lxgata.Collision {
 				selector += collision.CrossSectionAt(eColl)
 				if choice < selector/totalCrossSectionPrimed {
 					if s.crossSections[i].Type == lxgata.IONIZATION {
-						s.ionizationAtCell[int(p.x/s.xStep)]++
+						s.ionizationAtCell[currentCellIndex]++
 					}
 					return &s.crossSections[i]
 				}
@@ -252,13 +233,9 @@ func (s *Model) run() {
 
 	activeParticles := true
 	for activeParticles {
-		if math.IsNaN(particles[0].x) {
-			panic("nan")
-		}
 		activeParticles = false
 		for i := len(particles) - 1; i >= 0; i-- {
 			if int(particles[i].x/s.xStep)+1 < s.numCells {
-				//fmt.Println("any activity ", i, " ", particles[i].x, " ", particles[i].x/s.xStep, " ", s.numCells, particles[i].mu, particles[i].e)
 				activeParticles = true
 			} else {
 				continue
@@ -269,6 +246,10 @@ func (s *Model) run() {
 				cosPhi := math.Cos(2. * math.Pi * rand.Float64())
 				switch collision.Type {
 				case lxgata.ELASTIC:
+					particles[i].redirect(cosChi, cosPhi)
+					particles[i].e = particles[i].e * (1. - (2.*collision.MassRatio)*(1.-cosChi))
+
+				case lxgata.EFFECTIVE:
 					particles[i].redirect(cosChi, cosPhi)
 					particles[i].e = particles[i].e * (1. - (2.*collision.MassRatio)*(1.-cosChi))
 
@@ -285,7 +266,6 @@ func (s *Model) run() {
 					cosChi2 := math.Sqrt(e2 / collisionEnergy)
 
 					particles = append(particles, particles[i])
-					//fmt.Println("ionization occured; active particles: {}", len(particles))
 
 					particles[len(particles)-1].e = e2
 					particles[len(particles)-1].redirect(cosChi2, cosPhi)
@@ -300,60 +280,37 @@ func (s *Model) run() {
 		}
 	}
 
-	for xIndex := 0; xIndex < s.numCells; xIndex++ {
-
-		for eIndex := 1; eIndex < s.numCellsE; eIndex++ {
-			//currentE := s.eStep * float64(eIndex)
-			v := math.Sqrt(2. * eV2J(s.eStep*float64(eIndex)) / me) // [m/s]
-			for muIndex := 0; muIndex < s.numCellsMu; muIndex++ {
-				//counter++
-				currentMu := s.muStep*float64(muIndex) - 1.
-				//preVxSum += math.Abs(currentMu) * math.Sqrt(currentE) * float64(s.psi[xIndex][eIndex][muIndex])
-
-				if math.Abs(currentMu) > 0.00001 {
-					s.distribution[xIndex][eIndex][muIndex] = float64(s.psi[xIndex][eIndex][muIndex]) * s.cathodeFlux / (v * math.Abs(currentMu) * s.eStep * s.muStep * float64(s.nElectrons))
-				}
-				if math.IsNaN(s.distribution[xIndex][eIndex][muIndex]) {
-					fmt.Printf("distr nan %d %d %d\n", xIndex, eIndex, muIndex)
-				}
-			}
-		}
-	}
+	var energyRoot2Velocity float64 = math.Sqrt(2. / me)
 
 	for xIndex := 0; xIndex < s.numCells; xIndex++ {
-		NxI, NxINext := 0., 0.
-		psiX := 0.
 		for eIndex := 1; eIndex < s.numCellsE; eIndex++ {
 			currentEnergy := s.eStep * float64(eIndex)
 			for muIndex := 0; muIndex < s.numCellsMu; muIndex++ {
 				currentMu := s.muStep*float64(muIndex) - 1.
 
-				s.electronDensity[xIndex] += s.distributionF[xIndex][eIndex][muIndex] * s.eStep
+				s.electronDensity[xIndex] += s.distribution[xIndex][eIndex][muIndex]
 
 				if eIndex > 0 {
-					s.electronEnergy[xIndex] += s.distributionF[xIndex][eIndex][muIndex] * s.eStep * currentEnergy
+					s.electronEnergy[xIndex] += s.distribution[xIndex][eIndex][muIndex] * currentEnergy
 
-					s.driftVelocity[xIndex] += s.distributionF[xIndex][eIndex][muIndex] * s.eStep * math.Sqrt(eV2J(currentEnergy)) * currentMu
+					s.driftVelocity[xIndex] += s.distribution[xIndex][eIndex][muIndex] * math.Sqrt(eV2J(currentEnergy)) * currentMu
 
-					s.TownsendAlpha[xIndex] += s.crossSections.TotalCrossSectionOfKindAt(lxgata.IONIZATION, currentEnergy) * math.Sqrt(eV2J(currentEnergy)) * s.distributionF[xIndex][eIndex][muIndex] * s.eStep
+					s.TownsendAlpha[xIndex] += s.crossSections.TotalCrossSectionOfKindAt(lxgata.IONIZATION, currentEnergy) * math.Sqrt(eV2J(currentEnergy)) * s.distribution[xIndex][eIndex][muIndex] * s.eStep
 				}
-
-				NxI += float64(s.psi[xIndex][eIndex][muIndex])
-				if xIndex+1 < s.numCells {
-					NxINext += float64(s.psi[xIndex+1][eIndex][muIndex])
-				}
-
-				psiX += math.Copysign(1., currentMu)
 			}
 		}
 		s.electronEnergy[xIndex] /= s.electronDensity[xIndex]
 
-		s.driftVelocity[xIndex] *= math.Sqrt(2. / me)
+		s.driftVelocity[xIndex] *= energyRoot2Velocity
 		s.driftVelocity[xIndex] /= s.electronDensity[xIndex]
 
-		s.TownsendAlpha[xIndex] *= math.Sqrt(2. / me)
+		s.electronDensity[xIndex] *= s.eStep
+
+		s.TownsendAlpha[xIndex] *= energyRoot2Velocity
+
 		s.TownsendAlpha[xIndex] /= s.driftVelocity[xIndex]
-		s.sourceTerm[xIndex] = s.TownsendAlpha[xIndex] * psiX / float64(s.nElectrons)
+		//s.sourceTerm[xIndex] = s.TownsendAlpha[xIndex] * psiX / float64(s.nElectrons)
+		s.sourceTerm[xIndex] = s.TownsendAlpha[xIndex] * float64(s.flux[xIndex]) / float64(s.nElectrons)
 		// if xIndex+1 < s.numCells {
 		// 	s.TownsendAlpha[xIndex] = (float64(s.flux[xIndex+1]) - float64(s.nElectrons)) / (float64(s.nElectrons) * s.xStep * float64(xIndex))
 		// 	s.sourceTerm[xIndex] = (float64(s.flux[xIndex+1]) - float64(s.nElectrons)) * float64(s.nElectrons) / (float64(s.nElectrons) * float64(s.nElectrons) * s.xStep * float64(xIndex+1)) //s.TownsendAlpha[xIndex] * s.flux[xIndex] / (s.cathodeFlux)
