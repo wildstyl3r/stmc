@@ -268,6 +268,7 @@ func (s *Model) run() {
 					ejected.e = e2
 					ejected.redirect(cosChi2, cosPhi)
 					ejected.recalcParams(s)
+					particlePtrs[&ejected] = struct{}{}
 
 					particlePtr.e = e1
 					particlePtr.redirect(cosChi1, cosPhi)
