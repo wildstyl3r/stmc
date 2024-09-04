@@ -294,7 +294,7 @@ func (s *Model) run() {
 
 					s.driftVelocity[xIndex] += s.distribution[xIndex][eIndex][muIndex] * math.Sqrt(eV2J(currentEnergy)) * currentMu
 
-					s.TownsendAlpha[xIndex] += s.crossSections.TotalCrossSectionOfKindAt(lxgata.IONIZATION, currentEnergy) * math.Sqrt(eV2J(currentEnergy)) * s.distribution[xIndex][eIndex][muIndex] * s.eStep
+					s.TownsendAlpha[xIndex] += s.crossSections.TotalCrossSectionOfKindAt(lxgata.IONIZATION, currentEnergy) * math.Sqrt(eV2J(currentEnergy)) * s.distribution[xIndex][eIndex][muIndex] * s.eStep * s.muStep
 				}
 			}
 		}
@@ -303,7 +303,7 @@ func (s *Model) run() {
 		s.driftVelocity[xIndex] *= energyRoot2Velocity
 		s.driftVelocity[xIndex] /= s.electronDensity[xIndex]
 
-		s.electronDensity[xIndex] *= s.eStep
+		s.electronDensity[xIndex] *= s.eStep * s.muStep
 
 		s.TownsendAlpha[xIndex] *= energyRoot2Velocity
 

@@ -28,13 +28,13 @@ type output struct {
 
 type ModelParameters struct {
 	CrossSections        string
-	GapLength            float64
-	CathodeFallLength    float64
-	CathodeFallPotential float64
-	CathodeCurrent       float64
-	ConstEField          float64
-	Temperature          float64
-	DeltaE               float64
+	GapLength            float64 // [m]
+	CathodeFallLength    float64 // [m]
+	CathodeFallPotential float64 // [V]
+	CathodeCurrent       float64 // [A m^-2] = [C s^-1 m^-2]
+	ConstEField          float64 // [V / m]
+	Temperature          float64 // [K]
+	DeltaE               float64 // [eV]
 	DeltaMu              float64
 	Runs                 int
 	NElectrons           int
