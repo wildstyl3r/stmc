@@ -37,7 +37,7 @@ func (p *Particle) setEnergy(e float64, s *Model) {
 		p.mu = 0
 	} else {
 		p.e = e
-		p.mu = math.Sqrt((e - p.eStar) / e)
+		p.mu = math.Copysign(math.Sqrt((e-p.eStar)/e), p.mu)
 	}
 	p.x = s.LfromV(p.e - p.totEnergy)
 }
