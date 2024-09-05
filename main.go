@@ -7,9 +7,9 @@ import (
 	"log"
 	"math"
 	"os"
+	"runtime/pprof"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -36,7 +36,6 @@ type ModelParameters struct {
 	Temperature          float64 // [K]
 	DeltaE               float64 // [eV]
 	DeltaMu              float64
-	Runs                 int
 	NElectrons           int
 	MakeDir              bool
 }
@@ -47,6 +46,7 @@ type Config struct {
 }
 
 func main() {
+	var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 	var TownsendAlpha []float64
 	var TownsendAlphaD []float64
 	var TownsendAlphaF []float64
@@ -56,7 +56,7 @@ func main() {
 	var ionizationSourceTerm []float64
 	var ionizationSourceTermD []float64
 	var ionizations []float64
-	var flux []float64
+	var fluxF []float64
 	var xStep float64
 	var numCells int
 
@@ -125,16 +125,16 @@ func main() {
 			data:        &ionizations,
 			scalers:     []func(float64) float64{m2cm, cm2m},
 		},
-		"Flux": {
-			saveFlag:    flag.Bool("f", false, "save flux"),
+		"Flux calculated as n(x) * v(x)": {
+			saveFlag:    flag.Bool("f", false, "save calculated flux"),
 			fileSuffix:  "flux",
 			columnNames: []string{"px (Torr cm)", "Phi(cm^-1 Torr^-1)"},
 			indexStep:   &xStep,
-			data:        &flux,
+			data:        &fluxF,
 			scalers:     []func(float64) float64{m2cm, cm2m},
 		},
-		"Townsend Alpha from flux": {
-			saveFlag:    flag.Bool("taf", false, "save Townsend alpha calculated as 1/F * dF/dx "),
+		"Townsend Alpha from calculated flux": {
+			saveFlag:    flag.Bool("taf", false, "save Townsend alpha calculated as 1/(n(x)*v(x)) * d(n(x)v(x))/dx "),
 			fileSuffix:  "Townsend_Alpha_F",
 			columnNames: []string{"px (Torr cm)", "a/p (cm^-1 Torr^-1)"},
 			indexStep:   &xStep,
@@ -146,6 +146,14 @@ func main() {
 	//var densityNorm = flag.Bool("dn", false, "divide TA by distribution integral")
 	var configFileNamePointer = flag.String("input", "He_Tran_norm", "model configuration in toml format")
 	flag.Parse()
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
 
 	startTime := time.Now()
 	fmt.Printf("Current time: %s\n", startTime.UTC().Format(time.UnixDate))
@@ -195,9 +203,6 @@ func main() {
 		if !meta.IsDefined("Models", modelName, "DeltaMu") {
 			parameters.DeltaMu = 1. / 45.
 		}
-		if !meta.IsDefined("Models", modelName, "Runs") {
-			parameters.Runs = 5
-		}
 		if !meta.IsDefined("Models", modelName, "NElectrons") {
 			parameters.NElectrons = 100
 		}
@@ -210,83 +215,43 @@ func main() {
 			panic(fmt.Errorf("invalid cross section file: %w", err))
 		}
 
-		var chanWg sync.WaitGroup
-		dataflow := make(chan *Model)
-		for run := 0; run < parameters.Runs; run++ {
-			chanWg.Add(1)
-			//worker
-			go func() {
-				defer chanWg.Done()
-				setup := Model{
-					crossSections:     crossSections,
-					cathodeFallLength: cm2m(parameters.CathodeFallLength),
-					Vc:                -math.Abs(parameters.CathodeFallPotential),
-					gapLength:         cm2m(parameters.GapLength),
-					EConst:            parameters.ConstEField,
-					density:           p / (k * parameters.Temperature),
-					nElectrons:        int(parameters.NElectrons),
-					eStep:             parameters.DeltaE,
-					muStep:            parameters.DeltaMu,
-					cathodeFlux:       parameters.CathodeCurrent / electronCharge,
-				}
-				setup.init()
-				setup.run()
-				dataflow <- &setup
-			}()
+		setup := Model{
+			crossSections:     crossSections,
+			cathodeFallLength: cm2m(parameters.CathodeFallLength),
+			Vc:                -math.Abs(parameters.CathodeFallPotential),
+			gapLength:         cm2m(parameters.GapLength),
+			EConst:            parameters.ConstEField,
+			density:           p / (k * parameters.Temperature),
+			nElectrons:        int(parameters.NElectrons),
+			eStep:             parameters.DeltaE,
+			muStep:            parameters.DeltaMu,
+			cathodeFlux:       parameters.CathodeCurrent / electronCharge,
 		}
+		setup.init()
+		setup.run()
 
-		// chan killer
-		go func() {
-			chanWg.Wait()
-			close(dataflow)
-		}()
+		xStep = setup.xStep
+		numCells = setup.numCells
 
-		counter := 0
-		fmt.Printf("\rDone:[0/%d]", parameters.Runs)
-		first := true
-		for results := range dataflow {
-			fmt.Printf("\rDone:[%d/%d]", counter+1, parameters.Runs)
-			if first {
-				first = false
-				xStep = results.xStep
-				numCells = results.numCells
+		TownsendAlpha = setup.TownsendAlpha
+		TownsendAlphaD = make([]float64, numCells)
+		TownsendAlphaF = make([]float64, numCells)
+		driftVelocity = setup.driftVelocity
+		meanEnergy = setup.electronEnergy
+		electronDensity = setup.electronDensity
+		ionizationSourceTerm = setup.sourceTerm
+		ionizationSourceTermD = make([]float64, numCells)
+		ionizations = make([]float64, numCells)
+		fluxF = setup.fluxF
 
-				TownsendAlpha = make([]float64, numCells)
-				TownsendAlphaD = make([]float64, numCells)
-				TownsendAlphaF = make([]float64, numCells)
-				driftVelocity = make([]float64, numCells)
-				meanEnergy = make([]float64, numCells)
-				electronDensity = make([]float64, numCells)
-				ionizationSourceTerm = make([]float64, numCells)
-				ionizationSourceTermD = make([]float64, numCells)
-				ionizations = make([]float64, numCells)
-				flux = make([]float64, numCells)
-			}
-
-			for xIndex := 0; xIndex < numCells; xIndex++ {
-				TownsendAlpha[xIndex] += results.TownsendAlpha[xIndex]
-				ionizationSourceTerm[xIndex] += results.sourceTerm[xIndex]
-				meanEnergy[xIndex] += results.electronEnergy[xIndex]
-				driftVelocity[xIndex] += results.driftVelocity[xIndex]
-				electronDensity[xIndex] += results.electronDensity[xIndex]
-				ionizations[xIndex] += float64(results.ionizationAtCell[xIndex]) / float64(results.nElectrons)
-				flux[xIndex] += float64(results.flux[xIndex]) / float64(results.nElectrons)
-				TownsendAlphaD[xIndex] += results.TownsendAlpha[xIndex] / results.electronDensity[xIndex]
-				ionizationSourceTermD[xIndex] += results.sourceTerm[xIndex] * (parameters.CathodeCurrent / electronCharge) / (results.electronDensity[xIndex] * results.driftVelocity[xIndex])
-			}
-			counter++
-		}
 		for xIndex := 0; xIndex < numCells; xIndex++ {
-			for _, output := range outputs {
-				if output.notAverage {
-					continue
-				}
-				(*output.data)[xIndex] /= float64(counter)
-			}
+			ionizations[xIndex] = float64(setup.ionizationAtCell[xIndex]) / float64(setup.nElectrons)
+			TownsendAlphaD[xIndex] += setup.TownsendAlpha[xIndex] / setup.electronDensity[xIndex]
+			ionizationSourceTermD[xIndex] += setup.sourceTerm[xIndex] * (parameters.CathodeCurrent / electronCharge) / (setup.electronDensity[xIndex] * setup.driftVelocity[xIndex])
 		}
 
 		for xIndex := 1; xIndex+2 < numCells; xIndex++ {
-			TownsendAlphaF[xIndex] = (flux[xIndex+1] + flux[xIndex+2] - flux[xIndex] - flux[xIndex-1]) / (2. * flux[xIndex] * xStep)
+			TownsendAlphaF[xIndex] = (fluxF[xIndex+1] + fluxF[xIndex+2] - fluxF[xIndex] - fluxF[xIndex-1]) / (2. * fluxF[xIndex] * xStep)
 		}
 		println()
 
