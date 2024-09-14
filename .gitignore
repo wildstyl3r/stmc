@@ -4,3 +4,6 @@
 Ar*
 go.sum
 outputs
+inputs
+__pycache__
+*.prof
