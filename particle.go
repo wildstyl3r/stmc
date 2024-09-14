@@ -54,7 +54,7 @@ func (p *Particle) recalcParams(s *Model) {
 }
 
 func (p *Particle) M(i int, s *Model) float64 {
-	left, right := s.VfromL(float64(i)*s.xStep)+p.totEnergy, s.VfromL(float64(i+1)*s.xStep)+p.totEnergy
+	left, right := s.lookUpPotential[i]+p.totEnergy, s.lookUpPotential[i+1]+p.totEnergy
 	if left < 0. {
 		left = 0.
 	}
@@ -62,8 +62,8 @@ func (p *Particle) M(i int, s *Model) float64 {
 		panic("stf")
 	}
 	return ternarySearchMaxF(func(e float64) float64 {
-		return s.Q(e) * math.Sqrt(e) / math.Abs(s.EFieldFromL(s.LfromV(e-p.totEnergy)))
-	}, s.VfromL(float64(i)*s.xStep)+p.totEnergy, s.VfromL(float64(i+1)*s.xStep)+p.totEnergy, 0.00001)
+		return s.density * s.crossSections.TotalCrossSectionAt(e) * math.Sqrt(e) / math.Abs(s.EFieldFromL(s.LfromV(e-p.totEnergy)))
+	}, s.lookUpPotential[i]+p.totEnergy, s.lookUpPotential[i+1]+p.totEnergy, 0.00001)
 }
 
 func (p *Particle) redirect(cosChi, cosPhi float64) {
