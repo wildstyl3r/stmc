@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"math"
 	"math/rand"
 	"sync"
@@ -29,18 +28,13 @@ type Model struct {
 	eStep  float64
 	muStep float64
 
-	driftVelocity   []float64
-	TownsendAlpha   []float64
-	psiFIncrement   float64
-	distribution    [][][]int
-	electronDensity []float64
-	electronEnergy  []float64
-	fluxF           []float64
+	psiFIncrement float64
+	distribution  [][][]int
 
 	ionizationAtCell []int
-	sourceTerm       []float64
 
-	lookUpVelocity []float64
+	lookUpVelocity  []float64
+	lookUpPotential []float64
 }
 
 func (m *Model) init() {
@@ -48,14 +42,11 @@ func (m *Model) init() {
 
 	meanFreePath := 1. / (m.crossSections.SurplusCrossSection() * m.density)
 
-	m.numCells = 3 * int(m.gapLength/meanFreePath)
+	m.numCells = 5 * int(m.gapLength/meanFreePath)
 	m.numCellsE = int(200./m.eStep) + 1
 	m.numCellsMu = int(2./m.muStep) + 1
 
 	m.xStep = m.gapLength / float64(m.numCells)
-
-	m.driftVelocity = make([]float64, m.numCells)
-	m.TownsendAlpha = make([]float64, m.numCells)
 
 	m.distribution = make([][][]int, m.numCells)
 	m.psiFIncrement = m.cathodeFlux / (float64(m.nElectrons)) // * m.eStep * m.muStep)
@@ -65,17 +56,17 @@ func (m *Model) init() {
 			m.distribution[i][j] = make([]int, m.numCellsMu)
 		}
 	}
-	m.electronDensity = make([]float64, m.numCells)
-	m.electronEnergy = make([]float64, m.numCells)
-	m.fluxF = make([]float64, m.numCells)
 
 	m.ionizationAtCell = make([]int, m.numCells)
-	m.sourceTerm = make([]float64, m.numCells)
 
 	var energyRoot2Velocity float64 = math.Sqrt(2. / me)
 	m.lookUpVelocity = make([]float64, m.numCellsE)
 	for i := range m.lookUpVelocity {
 		m.lookUpVelocity[i] = math.Sqrt(eV2J(m.eStep*float64(i))) * energyRoot2Velocity
+	}
+	m.lookUpPotential = make([]float64, m.numCellsE)
+	for i := range m.lookUpPotential {
+		m.lookUpPotential[i] = m.VfromL(float64(i) * m.xStep)
 	}
 }
 
@@ -113,15 +104,11 @@ func (s *Model) EFieldFromL(l float64) (E float64) { // V/m
 	return E
 }
 
-func (s *Model) Q(e float64) float64 {
-	return s.density * s.crossSections.TotalCrossSectionAt(e)
-}
-
 type StateIncrement struct {
 	xIndex, eIndex, muIndex int
 }
 
-func (s *Model) nextCollision(p *Particle, ch chan<- StateIncrement) *lxgata.Collision {
+func (s *Model) nextCollision(p *Particle, acc map[StateIncrement]int) *lxgata.Collision { //ch chan<- StateIncrement,
 	R := -math.Log(1. - rand.Float64())
 
 	var eColl float64
@@ -131,7 +118,7 @@ func (s *Model) nextCollision(p *Particle, ch chan<- StateIncrement) *lxgata.Col
 			stopPoint = 0.
 		}
 		for cellIndex := int(p.x / s.xStep); 0 <= cellIndex && stopPoint < s.xStep*float64(cellIndex); cellIndex-- {
-			eLeft := s.VfromL(float64(cellIndex)*s.xStep) + p.totEnergy
+			eLeft := s.lookUpPotential[cellIndex] + p.totEnergy
 			if eLeft < 0. {
 				panic("eleft < 0")
 			}
@@ -139,10 +126,19 @@ func (s *Model) nextCollision(p *Particle, ch chan<- StateIncrement) *lxgata.Col
 			G := 2. * M * (math.Sqrt(p.e-p.eStar) - math.Sqrt(eLeft-p.eStar))
 			if G < R { // no collision
 				p.setEnergy(eLeft, s)
-				ch <- StateIncrement{
-					xIndex:  cellIndex,
-					eIndex:  int((p.e + s.eStep/2.) / s.eStep),
-					muIndex: int((p.mu + 1. + s.muStep/2.) / s.muStep),
+				eIndex := int((p.e + s.eStep/2.) / s.eStep)
+				muIndex := int((p.mu + 1. + s.muStep/2.) / s.muStep)
+				if cellIndex < s.numCells && eIndex < s.numCellsE && muIndex < s.numCellsMu {
+					// ch <- StateIncrement{
+					// 	xIndex:  cellIndex,
+					// 	eIndex:  eIndex,
+					// 	muIndex: muIndex,
+					// }
+					acc[StateIncrement{
+						xIndex:  cellIndex,
+						eIndex:  eIndex,
+						muIndex: muIndex,
+					}]++
 				}
 
 				R -= G
@@ -179,17 +175,24 @@ func (s *Model) nextCollision(p *Particle, ch chan<- StateIncrement) *lxgata.Col
 	p.mu = math.Copysign(p.mu, +1.)
 	// so mu is >= 0
 	for cellIndex := int(p.x / s.xStep); cellIndex < s.numCells; cellIndex++ {
-		eRight := s.VfromL(float64(cellIndex+1)*s.xStep) + p.totEnergy
+		eRight := s.lookUpPotential[cellIndex+1] + p.totEnergy
 		M := p.M(cellIndex, s)
 		G := 2. * M * (math.Sqrt(eRight-p.eStar) - math.Sqrt(p.e-p.eStar))
 		if G < R { // no collision
 			p.setEnergy(eRight, s)
-			if cellIndex+1 < s.numCells {
-				ch <- StateIncrement{
+			eIndex := int((p.e + s.eStep/2.) / s.eStep)
+			muIndex := int((p.mu + 1. + s.muStep/2.) / s.muStep)
+			if cellIndex+1 < s.numCells && eIndex < s.numCellsE && muIndex < s.numCellsMu {
+				// ch <- StateIncrement{
+				// 	xIndex:  cellIndex+1,
+				// 	eIndex:  eIndex,
+				// 	muIndex: muIndex,
+				// }
+				acc[StateIncrement{
 					xIndex:  cellIndex + 1,
-					eIndex:  int((p.e + s.eStep/2.) / s.eStep),
-					muIndex: int((p.mu + 1. + s.muStep/2.) / s.muStep),
-				}
+					eIndex:  eIndex,
+					muIndex: muIndex,
+				}]++
 			}
 
 			R -= G
@@ -222,13 +225,15 @@ func (s *Model) nextCollision(p *Particle, ch chan<- StateIncrement) *lxgata.Col
 }
 
 func (s *Model) run() {
-	fmt.Printf("step, cells: x[%v, %v], e[%v,%v], mu[%v,%v]\n", s.xStep, s.numCells, s.eStep, s.numCellsE, s.muStep, s.numCellsMu)
 
 	var chanWg sync.WaitGroup
-	stateflow := make(chan StateIncrement, 8)
+	stateflow := make(chan map[StateIncrement]int, 100000)
+
 	go func() {
-		for update := range stateflow {
-			s.distribution[update.xIndex][update.eIndex][update.muIndex]++
+		for accum := range stateflow {
+			for update, value := range accum {
+				s.distribution[update.xIndex][update.eIndex][update.muIndex] += value
+			}
 		}
 	}()
 
@@ -236,11 +241,7 @@ func (s *Model) run() {
 	for i := 0; i < s.nElectrons; i++ {
 		particle := newParticle()
 		particle.recalcParams(s)
-		stateflow <- StateIncrement{
-			xIndex:  0,
-			eIndex:  int((particle.e + s.eStep/2.) / s.eStep),
-			muIndex: int((particle.mu + 1. + s.muStep/2.) / s.muStep),
-		}
+		s.distribution[0][int((particle.e+s.eStep/2.)/s.eStep)][int((particle.mu+1.+s.muStep/2.)/s.muStep)]++
 		computeflow <- &particle
 	}
 
@@ -255,12 +256,17 @@ func (s *Model) run() {
 		}
 	}()
 
+	status := []string{"//", "==", "\\\\", "||"}
+	counter := 0
 	for particlePtr := range computeflow {
+		counter++
+		print("\r" + status[counter&0b11])
 		chanWg.Add(1)
 		go func(particlePtr *Particle) {
 			defer chanWg.Done()
+			accumulator := make(map[StateIncrement]int)
 			for int(particlePtr.x/s.xStep)+1 < s.numCells {
-				if collision := s.nextCollision(particlePtr, stateflow); collision != nil {
+				if collision := s.nextCollision(particlePtr, accumulator); collision != nil {
 					cosChi := 1. - 2.*rand.Float64()
 					cosPhi := math.Cos(2. * math.Pi * rand.Float64())
 					switch collision.Type {
@@ -297,47 +303,9 @@ func (s *Model) run() {
 					particlePtr.recalcParams(s)
 				}
 			}
+			stateflow <- accumulator
 		}(particlePtr)
 
 	}
-
-	for xIndex := 0; xIndex < s.numCells; xIndex++ {
-		for eIndex := 1; eIndex < s.numCellsE; eIndex++ {
-			currentEnergy := s.eStep * float64(eIndex)
-			fXE := 0.
-			for muIndex := 0; muIndex < s.numCellsMu; muIndex++ {
-				currentMu := s.muStep*float64(muIndex) - 1.
-
-				f := 0.
-				if currentMu > 0.0001 {
-					f = s.psiFIncrement * float64(s.distribution[xIndex][eIndex][muIndex]) / (s.lookUpVelocity[eIndex] * currentMu)
-				}
-
-				s.electronDensity[xIndex] += f
-
-				fXE += f // * s.muStep
-
-				if eIndex > 0 {
-					s.electronEnergy[xIndex] += f * currentEnergy
-
-					s.fluxF[xIndex] += f * s.lookUpVelocity[eIndex] * currentMu
-
-				}
-			}
-			cs := s.crossSections.TotalCrossSectionOfKindAt(lxgata.IONIZATION, currentEnergy)
-			vel := s.lookUpVelocity[eIndex] //math.Sqrt(eV2J(currentEnergy)) * energyRoot2Velocity
-			s.TownsendAlpha[xIndex] += cs * vel * fXE
-		}
-		s.electronEnergy[xIndex] /= s.electronDensity[xIndex]
-		s.driftVelocity[xIndex] = s.fluxF[xIndex] / s.electronDensity[xIndex]
-
-		//s.TownsendAlpha[xIndex] /= s.driftVelocity[xIndex]
-		//s.sourceTerm[xIndex] = s.TownsendAlpha[xIndex] * psiX / float64(s.nElectrons)
-		s.sourceTerm[xIndex] = s.TownsendAlpha[xIndex] * s.fluxF[xIndex] / s.cathodeFlux
-		// if xIndex+1 < s.numCells {
-		// 	s.TownsendAlpha[xIndex] = (float64(s.flux[xIndex+1]) - float64(s.nElectrons)) / (float64(s.nElectrons) * s.xStep * float64(xIndex))
-		// 	s.sourceTerm[xIndex] = (float64(s.flux[xIndex+1]) - float64(s.nElectrons)) * float64(s.nElectrons) / (float64(s.nElectrons) * float64(s.nElectrons) * s.xStep * float64(xIndex+1)) //s.TownsendAlpha[xIndex] * s.flux[xIndex] / (s.cathodeFlux)
-		// }
-
-	}
+	print("\r")
 }
