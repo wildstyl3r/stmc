@@ -17,6 +17,7 @@ type Model struct {
 	density           float64 // N
 	nElectrons        int
 	cathodeFlux       float64
+	threads           int
 
 	Va float64 // additional voltage to avoid numeric negative energy beyond cathode fall
 
@@ -32,6 +33,7 @@ type Model struct {
 	distribution  [][][]int
 
 	ionizationAtCell []int
+	electronsAtCell  []int
 
 	lookUpVelocity  []float64
 	lookUpPotential []float64
@@ -58,6 +60,7 @@ func (m *Model) init() {
 	}
 
 	m.ionizationAtCell = make([]int, m.numCells)
+	m.electronsAtCell = make([]int, m.numCells)
 
 	var energyRoot2Velocity float64 = math.Sqrt(2. / me)
 	m.lookUpVelocity = make([]float64, m.numCellsE)
@@ -129,11 +132,6 @@ func (s *Model) nextCollision(p *Particle, acc map[StateIncrement]int) *lxgata.C
 				eIndex := int((p.e + s.eStep/2.) / s.eStep)
 				muIndex := int((p.mu + 1. + s.muStep/2.) / s.muStep)
 				if cellIndex < s.numCells && eIndex < s.numCellsE && muIndex < s.numCellsMu {
-					// ch <- StateIncrement{
-					// 	xIndex:  cellIndex,
-					// 	eIndex:  eIndex,
-					// 	muIndex: muIndex,
-					// }
 					acc[StateIncrement{
 						xIndex:  cellIndex,
 						eIndex:  eIndex,
@@ -183,11 +181,6 @@ func (s *Model) nextCollision(p *Particle, acc map[StateIncrement]int) *lxgata.C
 			eIndex := int((p.e + s.eStep/2.) / s.eStep)
 			muIndex := int((p.mu + 1. + s.muStep/2.) / s.muStep)
 			if cellIndex+1 < s.numCells && eIndex < s.numCellsE && muIndex < s.numCellsMu {
-				// ch <- StateIncrement{
-				// 	xIndex:  cellIndex+1,
-				// 	eIndex:  eIndex,
-				// 	muIndex: muIndex,
-				// }
 				acc[StateIncrement{
 					xIndex:  cellIndex + 1,
 					eIndex:  eIndex,
@@ -227,85 +220,84 @@ func (s *Model) nextCollision(p *Particle, acc map[StateIncrement]int) *lxgata.C
 func (s *Model) run() {
 
 	var chanWg sync.WaitGroup
-	stateflow := make(chan map[StateIncrement]int, 100000)
+	stateflow := make(chan map[StateIncrement]int, 1000)
 
 	go func() {
 		for accum := range stateflow {
 			for update, value := range accum {
 				s.distribution[update.xIndex][update.eIndex][update.muIndex] += value
+				if update.muIndex < s.numCellsMu/2 {
+					s.electronsAtCell[update.xIndex]--
+				} else {
+					s.electronsAtCell[update.xIndex]++
+				}
 			}
 		}
 	}()
 
-	computeflow := make(chan *Particle, s.nElectrons*2)
+	computeflow := make(chan *Particle, s.nElectrons*100)
 	for i := 0; i < s.nElectrons; i++ {
 		particle := newParticle()
 		particle.recalcParams(s)
 		s.distribution[0][int((particle.e+s.eStep/2.)/s.eStep)][int((particle.mu+1.+s.muStep/2.)/s.muStep)]++
 		computeflow <- &particle
+		chanWg.Add(1)
 	}
-
-	go func() {
-		for {
-			chanWg.Wait()
-			if len(computeflow) == 0 {
-				close(stateflow)
-				close(computeflow)
-				break
-			}
-		}
-	}()
 
 	status := []string{"//", "==", "\\\\", "||"}
-	counter := 0
-	for particlePtr := range computeflow {
-		counter++
-		print("\r" + status[counter&0b11])
-		chanWg.Add(1)
-		go func(particlePtr *Particle) {
-			defer chanWg.Done()
-			accumulator := make(map[StateIncrement]int)
-			for int(particlePtr.x/s.xStep)+1 < s.numCells {
-				if collision := s.nextCollision(particlePtr, accumulator); collision != nil {
-					cosChi := 1. - 2.*rand.Float64()
-					cosPhi := math.Cos(2. * math.Pi * rand.Float64())
-					switch collision.Type {
-					case lxgata.ELASTIC:
-						particlePtr.redirect(cosChi, cosPhi)
-						particlePtr.e = particlePtr.e * (1. - (2.*collision.MassRatio)*(1.-cosChi))
+	for w := 0; w < s.threads; w++ {
+		go func() {
+			counter := 0
+			for particlePtr := range computeflow {
+				counter++
+				print("\r" + status[counter&0b11])
+				accumulator := make(map[StateIncrement]int)
+				for int(particlePtr.x/s.xStep)+1 < s.numCells {
+					if collision := s.nextCollision(particlePtr, accumulator); collision != nil {
+						cosChi := 1. - 2.*rand.Float64()
+						cosPhi := math.Cos(2. * math.Pi * rand.Float64())
+						switch collision.Type {
+						case lxgata.ELASTIC:
+							particlePtr.redirect(cosChi, cosPhi)
+							particlePtr.e = particlePtr.e * (1. - (2.*collision.MassRatio)*(1.-cosChi))
 
-					case lxgata.EFFECTIVE:
-						particlePtr.redirect(cosChi, cosPhi)
-						particlePtr.e = particlePtr.e * (1. - (2.*collision.MassRatio)*(1.-cosChi))
+						case lxgata.EFFECTIVE:
+							particlePtr.redirect(cosChi, cosPhi)
+							particlePtr.e = particlePtr.e * (1. - (2.*collision.MassRatio)*(1.-cosChi))
 
-					case lxgata.EXCITATION:
-						particlePtr.redirect(cosChi, cosPhi)
-						particlePtr.e -= collision.Threshold
+						case lxgata.EXCITATION:
+							particlePtr.redirect(cosChi, cosPhi)
+							particlePtr.e -= collision.Threshold
 
-					case lxgata.IONIZATION:
-						collisionEnergy := particlePtr.e
-						collisionEnergy -= collision.Threshold
-						e1 := collisionEnergy * rand.Float64()
-						e2 := collisionEnergy - e1
-						cosChi1 := math.Sqrt(e1 / collisionEnergy)
-						cosChi2 := math.Sqrt(e2 / collisionEnergy)
+						case lxgata.IONIZATION:
+							collisionEnergy := particlePtr.e
+							collisionEnergy -= collision.Threshold
+							e1 := collisionEnergy * rand.Float64()
+							e2 := collisionEnergy - e1
+							cosChi1 := math.Sqrt(e1 / collisionEnergy)
+							cosChi2 := math.Sqrt(e2 / collisionEnergy)
 
-						ejected := *particlePtr
-						ejected.e = e2
-						ejected.redirect(cosChi2, cosPhi)
-						ejected.recalcParams(s)
-						computeflow <- &ejected
+							ejected := *particlePtr
+							ejected.e = e2
+							ejected.redirect(cosChi2, cosPhi)
+							ejected.recalcParams(s)
+							computeflow <- &ejected
+							chanWg.Add(1)
 
-						particlePtr.e = e1
-						particlePtr.redirect(cosChi1, cosPhi)
-					default:
+							particlePtr.e = e1
+							particlePtr.redirect(cosChi1, cosPhi)
+						default:
+						}
+						particlePtr.recalcParams(s)
 					}
-					particlePtr.recalcParams(s)
 				}
+				stateflow <- accumulator
+				chanWg.Done()
 			}
-			stateflow <- accumulator
-		}(particlePtr)
-
+		}()
 	}
+	chanWg.Wait()
+	close(stateflow)
+	close(computeflow)
 	print("\r")
 }

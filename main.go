@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"runtime"
 	"runtime/pprof"
 	"strconv"
 	"strings"
@@ -68,10 +69,12 @@ func main() {
 	var meanEnergy []float64
 	var ionizations []float64
 	var flux []float64
+	var rawFlux []float64
 	var xStep float64
 	var Navg, Vxavg, Favg, Eavg float64
 	var cathodeFlux float64
 	var all = flag.Bool("all", false, "save every available metric")
+	var threads = flag.Int("j", runtime.NumCPU(), "threads to run")
 
 	outputs := map[string]output{
 		"Townsend alpha": {
@@ -129,6 +132,16 @@ func main() {
 			indexStep:   &xStep,
 			value:       func(x int) float64 { return rateIntegral[x] / cathodeFlux },
 			scalers:     []func(float64) float64{m2cm, func(f float64) float64 { return f * 1.e4 }},
+		},
+		"Ionization source term per density, raw": {
+			saveFlag:    flag.Bool("stdr", false, "save ionization source term with flux from naive counter, divided by electron density"),
+			fileSuffix:  "istdr",
+			columnNames: []string{"px (Torr cm)", "S_n*n/p (cm^2 Torr^-1)"},
+			indexStep:   &xStep,
+			value: func(x int) float64 {
+				return rateIntegral[x] / (flux[x] / electronDensity[x]) * rawFlux[x] / cathodeFlux
+			},
+			scalers: []func(float64) float64{m2cm, func(f float64) float64 { return f * 1.e4 }},
 		},
 		"Ionization counter": {
 			saveFlag:    flag.Bool("ic", false, "save ionization counter"),
@@ -358,11 +371,9 @@ func main() {
 			}
 		}
 		if !meta.IsDefined("Models", modelName, "MakeDir") {
-			parameters.MakeDir = false
+			parameters.MakeDir = true
 			if meta.IsDefined("MakeDir") {
 				parameters.MakeDir = config.MakeDir
-			} else {
-				parameters.MakeDir = false
 			}
 		}
 
@@ -384,6 +395,7 @@ func main() {
 			eStep:             parameters.DeltaE,
 			muStep:            parameters.DeltaMu,
 			cathodeFlux:       cathodeFlux,
+			threads:           *threads,
 		}
 		model.init()
 		model.run()
@@ -392,8 +404,10 @@ func main() {
 		rateIntegral = make([]float64, model.numCells)
 		meanEnergy = make([]float64, model.numCells)
 		flux = make([]float64, model.numCells)
+		rawFlux = make([]float64, model.numCells)
 
 		for xIndex := 0; xIndex < model.numCells; xIndex++ {
+			rawFlux[xIndex] = float64(model.electronsAtCell[xIndex]) / float64(model.nElectrons)
 			for eIndex := 1; eIndex < model.numCellsE; eIndex++ {
 				currentEnergy := model.eStep * float64(eIndex)
 				fXE := 0.
@@ -407,7 +421,7 @@ func main() {
 
 					electronDensity[xIndex] += f
 
-					fXE += f // * s.muStep
+					fXE += f
 
 					if eIndex > 0 {
 						meanEnergy[xIndex] += f * currentEnergy
@@ -418,7 +432,7 @@ func main() {
 					}
 				}
 				cs := model.crossSections.TotalCrossSectionOfKindAt(lxgata.IONIZATION, currentEnergy)
-				vel := model.lookUpVelocity[eIndex] //math.Sqrt(eV2J(currentEnergy)) * energyRoot2Velocity
+				vel := model.lookUpVelocity[eIndex]
 				rateIntegral[xIndex] += cs * vel * fXE
 			}
 			meanEnergy[xIndex] /= electronDensity[xIndex]
@@ -431,8 +445,6 @@ func main() {
 		Navg /= float64(model.numCells)
 		Favg /= float64(model.numCells)
 		Eavg /= float64(model.numCells)
-		// constN := model.cathodeFlux / Vxavg
-		// initV := math.Sqrt(2. * eV2J(4.5) / me)
 
 		xStep = model.xStep
 
@@ -440,7 +452,6 @@ func main() {
 		ionizations = make([]float64, model.numCells)
 
 		initElectronDensity := model.cathodeFlux / math.Sqrt(2.*eV2J(4.5)/me)
-		fmt.Printf("initN: %v\n", initElectronDensity)
 		for xIndex := 0; xIndex < model.numCells; xIndex++ {
 			ionizations[xIndex] = float64(model.ionizationAtCell[xIndex]) / float64(model.nElectrons) * initElectronDensity
 		}
