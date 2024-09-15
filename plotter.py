@@ -1,11 +1,13 @@
 import matplotlib.pyplot as plt
 import argparse
 import os
+import sys
 import csv
 
 parser = argparse.ArgumentParser(description='Make plot from all csv files in given directory.')
 parser.add_argument('dirname', help="directory with data to plot")
 parser.add_argument('-cn', '--compare-normalized', metavar='dirname2', help="normalize to respective maximums both original data and given by this option, then make plot")
+parser.add_argument('-t', '--title', metavar='name', help="plot title")
 args = parser.parse_args()
 
 
@@ -63,4 +65,6 @@ if args.compare_normalized is not None:
 
 axs.legend()
 
+fig.canvas.manager.set_window_title(' '.join(sys.argv[1:]))
+plt.title(args.title)
 plt.show()
