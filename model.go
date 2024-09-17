@@ -219,9 +219,10 @@ func (s *Model) nextCollision(p *Particle, acc map[StateIncrement]int) *lxgata.C
 
 func (s *Model) run() {
 
-	var chanWg sync.WaitGroup
+	var computeWg, stateWg sync.WaitGroup
 	stateflow := make(chan map[StateIncrement]int, 1000)
 
+	stateWg.Add(1)
 	go func() {
 		for accum := range stateflow {
 			for update, value := range accum {
@@ -233,6 +234,7 @@ func (s *Model) run() {
 				}
 			}
 		}
+		stateWg.Done()
 	}()
 
 	computeflow := make(chan *Particle, s.nElectrons*100)
@@ -241,7 +243,7 @@ func (s *Model) run() {
 		particle.recalcParams(s)
 		s.distribution[0][int((particle.e+s.eStep/2.)/s.eStep)][int((particle.mu+1.+s.muStep/2.)/s.muStep)]++
 		computeflow <- &particle
-		chanWg.Add(1)
+		computeWg.Add(1)
 	}
 
 	status := []string{"//", "==", "\\\\", "||"}
@@ -282,7 +284,7 @@ func (s *Model) run() {
 							ejected.redirect(cosChi2, cosPhi)
 							ejected.recalcParams(s)
 							computeflow <- &ejected
-							chanWg.Add(1)
+							computeWg.Add(1)
 
 							particlePtr.e = e1
 							particlePtr.redirect(cosChi1, cosPhi)
@@ -292,12 +294,13 @@ func (s *Model) run() {
 					}
 				}
 				stateflow <- accumulator
-				chanWg.Done()
+				computeWg.Done()
 			}
 		}()
 	}
-	chanWg.Wait()
+	computeWg.Wait()
 	close(stateflow)
 	close(computeflow)
+	stateWg.Wait()
 	print("\r")
 }
