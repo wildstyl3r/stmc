@@ -111,7 +111,7 @@ type StateIncrement struct {
 	xIndex, eIndex, muIndex int
 }
 
-func (s *Model) nextCollision(p *Particle, acc map[StateIncrement]int) *lxgata.Collision { //ch chan<- StateIncrement,
+func (s *Model) nextCollision(p *Particle, acc map[StateIncrement]int, ionization chan<- int) *lxgata.Collision { //ch chan<- StateIncrement,
 	R := -math.Log(1. - rand.Float64())
 
 	var eColl float64
@@ -161,7 +161,8 @@ func (s *Model) nextCollision(p *Particle, acc map[StateIncrement]int) *lxgata.C
 					selector += collision.CrossSectionAt(eColl)
 					if choice < selector/totalCrossSectionPrimed {
 						if s.crossSections[i].Type == lxgata.IONIZATION {
-							s.ionizationAtCell[currentCellIndex]++
+							ionization <- currentCellIndex
+							//s.ionizationAtCell[currentCellIndex]++
 						}
 						return &s.crossSections[i]
 					}
@@ -206,7 +207,8 @@ func (s *Model) nextCollision(p *Particle, acc map[StateIncrement]int) *lxgata.C
 				selector += collision.CrossSectionAt(eColl)
 				if choice < selector/totalCrossSectionPrimed {
 					if s.crossSections[i].Type == lxgata.IONIZATION {
-						s.ionizationAtCell[currentCellIndex]++
+						ionization <- currentCellIndex
+						//s.ionizationAtCell[currentCellIndex]++
 					}
 					return &s.crossSections[i]
 				}
@@ -221,6 +223,7 @@ func (s *Model) run() {
 
 	var computeWg, stateWg sync.WaitGroup
 	stateflow := make(chan map[StateIncrement]int, 1000)
+	ionflow := make(chan int, 100000)
 
 	stateWg.Add(1)
 	go func() {
@@ -233,6 +236,13 @@ func (s *Model) run() {
 					s.electronsAtCell[update.xIndex]++
 				}
 			}
+		}
+		stateWg.Done()
+	}()
+	stateWg.Add(1)
+	go func() {
+		for ionizationCell := range ionflow {
+			s.ionizationAtCell[ionizationCell]++
 		}
 		stateWg.Done()
 	}()
@@ -255,7 +265,7 @@ func (s *Model) run() {
 				print("\r" + status[counter&0b11])
 				accumulator := make(map[StateIncrement]int)
 				for int(particlePtr.x/s.xStep)+1 < s.numCells {
-					if collision := s.nextCollision(particlePtr, accumulator); collision != nil {
+					if collision := s.nextCollision(particlePtr, accumulator, ionflow); collision != nil {
 						cosChi := 1. - 2.*rand.Float64()
 						cosPhi := math.Cos(2. * math.Pi * rand.Float64())
 						switch collision.Type {
@@ -301,6 +311,7 @@ func (s *Model) run() {
 	computeWg.Wait()
 	close(stateflow)
 	close(computeflow)
+	close(ionflow)
 	stateWg.Wait()
 	print("\r")
 }

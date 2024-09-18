@@ -451,9 +451,9 @@ func main() {
 		TownsendAlphaF = make([]float64, model.numCells)
 		ionizations = make([]float64, model.numCells)
 
-		initElectronDensity := model.cathodeFlux / math.Sqrt(2.*eV2J(4.5)/me)
+		// initElectronDensity := model.cathodeFlux / math.Sqrt(2.*eV2J(4.5)/me)
 		for xIndex := 0; xIndex < model.numCells; xIndex++ {
-			ionizations[xIndex] = float64(model.ionizationAtCell[xIndex]) / float64(model.nElectrons) * initElectronDensity
+			ionizations[xIndex] = float64(model.ionizationAtCell[xIndex]) / float64(model.nElectrons) // * initElectronDensity
 		}
 
 		for xIndex := 1; xIndex+2 < model.numCells; xIndex++ {
