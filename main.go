@@ -68,6 +68,9 @@ func main() {
 	var electronDensity []float64
 	var meanEnergy []float64
 	var ionizations []float64
+	var nulls []float64
+	var elastics []float64
+	var excitations []float64
 	var flux []float64
 	var rawFlux []float64
 	var xStep float64
@@ -149,6 +152,30 @@ func main() {
 			columnNames: []string{"px (Torr cm)", "N_i(cm^-1 Torr^-1)"},
 			indexStep:   &xStep,
 			value:       func(x int) float64 { return ionizations[x] },
+			scalers:     []func(float64) float64{m2cm, cm2m},
+		},
+		"Null counter": {
+			saveFlag:    flag.Bool("0c", false, "save null collision counter"),
+			fileSuffix:  "0c",
+			columnNames: []string{"px (Torr cm)", "N_i(cm^-1 Torr^-1)"},
+			indexStep:   &xStep,
+			value:       func(x int) float64 { return nulls[x] },
+			scalers:     []func(float64) float64{m2cm, cm2m},
+		},
+		"Excitations counter": {
+			saveFlag:    flag.Bool("xc", false, "save excitations counter"),
+			fileSuffix:  "xc",
+			columnNames: []string{"px (Torr cm)", "N_i(cm^-1 Torr^-1)"},
+			indexStep:   &xStep,
+			value:       func(x int) float64 { return excitations[x] },
+			scalers:     []func(float64) float64{m2cm, cm2m},
+		},
+		"Elastics counter": {
+			saveFlag:    flag.Bool("ec", false, "save elastics counter"),
+			fileSuffix:  "ec",
+			columnNames: []string{"px (Torr cm)", "N_i(cm^-1 Torr^-1)"},
+			indexStep:   &xStep,
+			value:       func(x int) float64 { return elastics[x] },
 			scalers:     []func(float64) float64{m2cm, cm2m},
 		},
 		"Electron flux": {
@@ -382,7 +409,7 @@ func main() {
 			panic(fmt.Errorf("invalid cross section file: %w", err))
 		}
 
-		cathodeFlux = parameters.CathodeCurrent / electronCharge
+		cathodeFlux = parameters.CathodeCurrent / electronCharge // [m^-2 s^-1]
 
 		model := Model{
 			crossSections:     crossSections,
@@ -391,10 +418,9 @@ func main() {
 			gapLength:         cm2m(parameters.GapLength),
 			EConst:            parameters.ConstEField,
 			density:           p / (k * parameters.Temperature),
-			nElectrons:        int(parameters.NElectrons),
+			nElectrons:        parameters.NElectrons,
 			eStep:             parameters.DeltaE,
 			muStep:            parameters.DeltaMu,
-			cathodeFlux:       cathodeFlux,
 			threads:           *threads,
 		}
 		model.init()
@@ -406,6 +432,8 @@ func main() {
 		flux = make([]float64, model.numCells)
 		rawFlux = make([]float64, model.numCells)
 
+		psiFIncrement := cathodeFlux / float64(parameters.NElectrons)
+
 		for xIndex := 0; xIndex < model.numCells; xIndex++ {
 			rawFlux[xIndex] = float64(model.electronsAtCell[xIndex]) / float64(model.nElectrons)
 			for eIndex := 1; eIndex < model.numCellsE; eIndex++ {
@@ -416,7 +444,7 @@ func main() {
 
 					f := 0.
 					if currentMu > 0.0001 {
-						f = model.psiFIncrement * float64(model.distribution[xIndex][eIndex][muIndex]) / (model.lookUpVelocity[eIndex] * currentMu)
+						f = psiFIncrement / (model.lookUpVelocity[eIndex] * currentMu) * float64(model.distribution[xIndex][eIndex][muIndex])
 					}
 
 					electronDensity[xIndex] += f
@@ -450,11 +478,27 @@ func main() {
 
 		TownsendAlphaF = make([]float64, model.numCells)
 		ionizations = make([]float64, model.numCells)
+		elastics = make([]float64, model.numCells)
+		nulls = make([]float64, model.numCells)
+		excitations = make([]float64, model.numCells)
 
 		// initElectronDensity := model.cathodeFlux / math.Sqrt(2.*eV2J(4.5)/me)
+		ic, elc, exc, nc := 0., 0., 0., 0.
 		for xIndex := 0; xIndex < model.numCells; xIndex++ {
 			ionizations[xIndex] = float64(model.ionizationAtCell[xIndex]) / float64(model.nElectrons) // * initElectronDensity
+			elastics[xIndex] = float64(model.elasticAtCell[xIndex]) / float64(model.nElectrons)
+			nulls[xIndex] = float64(model.nullAtCell[xIndex]) / float64(model.nElectrons)
+			excitations[xIndex] = float64(model.excitationAtCell[xIndex]) / float64(model.nElectrons)
+			ic += float64(model.ionizationAtCell[xIndex])
+			elc += float64(model.elasticAtCell[xIndex])
+			nc += float64(model.nullAtCell[xIndex])
+			exc += float64(model.excitationAtCell[xIndex])
 		}
+		ic /= float64(model.nElectrons)
+		nc /= float64(model.nElectrons)
+		elc /= float64(model.nElectrons)
+		exc /= float64(model.nElectrons)
+		fmt.Printf("Avg collisions per electron at distance %f: elastic = %f; ionization = %f; excitation = %f; null = %f", model.cathodeFallLength, elc, ic, exc, nc)
 
 		for xIndex := 1; xIndex+2 < model.numCells; xIndex++ {
 			TownsendAlphaF[xIndex] = (flux[xIndex+1] + flux[xIndex+2] - flux[xIndex] - flux[xIndex-1]) / (2. * flux[xIndex] * xStep)
