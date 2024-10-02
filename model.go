@@ -39,12 +39,16 @@ type Model struct {
 
 	lookUpVelocity  []float64
 	lookUpPotential []float64
+
+	energyLossByProcess [][]float64
+	probabilities       []map[string][]float64
 }
 
 func (m *Model) init() {
 	m.Va = -m.EConst*(m.gapLength-m.cathodeFallLength) + 1.
 
 	meanFreePath := 1. / (m.crossSections.SurplusCrossSection() * m.density)
+	fmt.Printf("Mean free path: %f\n", meanFreePath)
 
 	m.numCells = 5 * int(m.gapLength/meanFreePath)
 	m.numCellsE = int(200./m.eStep) + 1
@@ -65,6 +69,14 @@ func (m *Model) init() {
 	m.excitationAtCell = make([]int, m.numCells)
 	m.elasticAtCell = make([]int, m.numCells)
 	m.electronsAtCell = make([]int, m.numCells)
+	m.energyLossByProcess = make([][]float64, m.numCells)
+	for i := range m.energyLossByProcess {
+		m.energyLossByProcess[i] = make([]float64, 3)
+	}
+	m.probabilities = make([]map[string][]float64, m.numCells)
+	for i := range m.probabilities {
+		m.probabilities[i] = make(map[string][]float64)
+	}
 
 	var energyRoot2Velocity float64 = math.Sqrt(2. / me)
 	m.lookUpVelocity = make([]float64, m.numCellsE)
@@ -115,7 +127,43 @@ type StateIncrement struct {
 	xIndex, eIndex, muIndex int
 }
 
-func (s *Model) nextCollision(p *Particle, acc map[StateIncrement]int) *lxgata.Collision { //ch chan<- StateIncrement,
+type ProbIncrement struct {
+	x        int
+	collType string
+	prob     float64
+}
+
+func (s *Model) collisionSelector(p *Particle, eColl, M float64, probChan chan<- ProbIncrement) *lxgata.Collision {
+	var totalCrossSectionPrimed float64 = M * math.Abs(s.EFieldFromL(p.x)) / (s.density * math.Sqrt(eColl)) // [m^2]
+	var selector float64 = totalCrossSectionPrimed - s.crossSections.TotalCrossSectionAt(eColl)             // the difference is null collision
+	var choice float64 = rand.Float64()
+	prob := selector / totalCrossSectionPrimed
+
+	currentCell := int(p.x / s.xStep)
+	eAtCellBound := s.lookUpPotential[currentCell] + p.totEnergy
+	var totalCrossSectionAtCellBound float64 = s.crossSections.TotalCrossSectionAt(eAtCellBound)
+	var totalCrossSectionPrimedAtCellBound float64 = M * math.Abs(s.EFieldFromL(p.x)) / (s.density * math.Sqrt(eAtCellBound)) // [m^2]
+	probChan <- ProbIncrement{currentCell, "NULL", (totalCrossSectionPrimedAtCellBound - totalCrossSectionAtCellBound) / totalCrossSectionAtCellBound}
+
+	var selection *lxgata.Collision
+	selected := false
+	if choice < prob {
+		selection = nil // null collision
+		selected = true
+	}
+	for i, collision := range s.crossSections {
+		selector += collision.CrossSectionAt(eColl)
+		prob = selector / totalCrossSectionPrimed
+		probChan <- ProbIncrement{currentCell, string(collision.Type), collision.CrossSectionAt(eAtCellBound) / totalCrossSectionAtCellBound}
+		if choice < prob && !selected {
+			selection = &s.crossSections[i]
+			selected = true
+		}
+	}
+	return selection
+}
+
+func (s *Model) nextCollision(p *Particle, acc map[StateIncrement]int, probChan chan<- ProbIncrement) *lxgata.Collision { //ch chan<- StateIncrement,
 	R := -math.Log(1. - rand.Float64())
 
 	var eColl float64
@@ -132,7 +180,7 @@ func (s *Model) nextCollision(p *Particle, acc map[StateIncrement]int) *lxgata.C
 			M := p.M(cellIndex, s)
 			G := 2. * M * (math.Sqrt(p.e-p.eStar) - math.Sqrt(eLeft-p.eStar))
 			if G < R { // no collision
-				p.setEnergy(eLeft, s)????????????????????????
+				p.setEnergy(eLeft, s)
 				eIndex := int((p.e + s.eStep/2.) / s.eStep)
 				muIndex := int((p.mu + 1. + s.muStep/2.) / s.muStep)
 				if cellIndex < s.numCells && eIndex < s.numCellsE && muIndex < s.numCellsMu {
@@ -146,9 +194,6 @@ func (s *Model) nextCollision(p *Particle, acc map[StateIncrement]int) *lxgata.C
 				R -= G
 			} else { // collision occured (possibly null)
 				eColl = math.Pow(math.Sqrt(p.e-p.eStar)-R/(2.*M), 2.) + p.eStar
-				if eColl > 200 {
-					fmt.Printf("eColl: %f\n", eColl)
-				}
 				if eColl <= 0 || p.x < 0 {
 					p.setEnergy(p.eStar, s)
 					break
@@ -156,25 +201,7 @@ func (s *Model) nextCollision(p *Particle, acc map[StateIncrement]int) *lxgata.C
 
 				p.setEnergy(eColl, s)
 
-				//currentCellIndex := int(p.x / s.xStep)
-
-				var totalCrossSectionPrimed float64 = M * math.Abs(s.EFieldFromL(p.x)) / (s.density * math.Sqrt(eColl))
-				var selector float64 = totalCrossSectionPrimed - s.crossSections.TotalCrossSectionAt(eColl) // the difference is null collision
-				var choice float64 = rand.Float64()
-				if choice < selector/totalCrossSectionPrimed {
-					return nil // null collision
-				}
-				for i, collision := range s.crossSections {
-					selector += collision.CrossSectionAt(eColl)
-					if choice < selector/totalCrossSectionPrimed {
-						// if s.crossSections[i].Type == lxgata.IONIZATION {
-						//  ionization <- currentCellIndex
-						// 	//s.ionizationAtCell[currentCellIndex]++
-						// }
-						return &s.crossSections[i]
-					}
-				}
-				break
+				return s.collisionSelector(p, eColl, M, probChan)
 			}
 		}
 	}
@@ -185,7 +212,7 @@ func (s *Model) nextCollision(p *Particle, acc map[StateIncrement]int) *lxgata.C
 		M := p.M(cellIndex, s)
 		G := 2. * M * (math.Sqrt(eRight-p.eStar) - math.Sqrt(p.e-p.eStar))
 		if G < R { // no collision
-			p.setEnergy(eRight, s)????????????????????????
+			p.setEnergy(eRight, s)
 			eIndex := int((p.e + s.eStep/2.) / s.eStep)
 			muIndex := int((p.mu + 1. + s.muStep/2.) / s.muStep)
 			if cellIndex+1 < s.numCells && eIndex < s.numCellsE && muIndex < s.numCellsMu {
@@ -199,44 +226,26 @@ func (s *Model) nextCollision(p *Particle, acc map[StateIncrement]int) *lxgata.C
 			R -= G
 		} else { // collision occured (possibly null)
 			eColl = math.Pow(R/(2.*M)+math.Sqrt(p.e-p.eStar), 2.) + p.eStar
-			if eColl > 200 {
-				fmt.Printf("eColl: %f\n", eColl)
-			}
 
 			p.setEnergy(eColl, s)
-
-			//currentCellIndex := int(p.x / s.xStep)
-
-			var totalCrossSectionPrimed float64 = M * math.Abs(s.EFieldFromL(p.x)) / (s.density * math.Sqrt(eColl))
-			var selector float64 = totalCrossSectionPrimed - s.crossSections.TotalCrossSectionAt(eColl) // the difference is null collision
-			var choice float64 = rand.Float64()
-			if choice < selector/totalCrossSectionPrimed {
-				return nil // null collision
-			}
-			for i, collision := range s.crossSections {
-				selector += collision.CrossSectionAt(eColl)
-				if choice < selector/totalCrossSectionPrimed {
-					// if s.crossSections[i].Type == lxgata.IONIZATION {
-					// 	ionization <- currentCellIndex
-					// 	//s.ionizationAtCell[currentCellIndex]++
-					// }
-					return &s.crossSections[i]
-				}
-			}
-			break
+			return s.collisionSelector(p, eColl, M, probChan)
 		}
 	}
 	return nil
 }
 
-func (s *Model) run() {
+type CollisionEvent struct {
+	x          int
+	energyLoss float64
+}
 
+func (s *Model) run() {
 	var computeWg, stateWg sync.WaitGroup
 	stateflow := make(chan map[StateIncrement]int, 1000)
-	ionflow := make(chan int, 100000)
+	ionflow := make(chan CollisionEvent, 100000)
+	elasticflow := make(chan CollisionEvent, 100000)
+	exitationflow := make(chan CollisionEvent, 100000)
 	nullflow := make(chan int, 100000)
-	elasticflow := make(chan int, 100000)
-	exitationflow := make(chan int, 100000)
 
 	stateWg.Add(1)
 	go func() {
@@ -252,24 +261,36 @@ func (s *Model) run() {
 		}
 		stateWg.Done()
 	}()
+
+	probflow := make(chan ProbIncrement, 100000)
 	stateWg.Add(1)
 	go func() {
-		for ionizationCell := range ionflow {
-			s.ionizationAtCell[ionizationCell]++
+		for probInc := range probflow {
+			s.probabilities[probInc.x][probInc.collType] = append(s.probabilities[probInc.x][probInc.collType], probInc.prob)
 		}
 		stateWg.Done()
 	}()
 	stateWg.Add(1)
 	go func() {
-		for elasticCell := range elasticflow {
-			s.elasticAtCell[elasticCell]++
+		for ionization := range ionflow {
+			s.ionizationAtCell[ionization.x]++
+			s.energyLossByProcess[ionization.x][0] += ionization.energyLoss
 		}
 		stateWg.Done()
 	}()
 	stateWg.Add(1)
 	go func() {
-		for excitationCell := range exitationflow {
-			s.excitationAtCell[excitationCell]++
+		for elastic := range elasticflow {
+			s.elasticAtCell[elastic.x]++
+			s.energyLossByProcess[elastic.x][1] += elastic.energyLoss
+		}
+		stateWg.Done()
+	}()
+	stateWg.Add(1)
+	go func() {
+		for excitation := range exitationflow {
+			s.excitationAtCell[excitation.x]++
+			s.energyLossByProcess[excitation.x][2] += excitation.energyLoss
 		}
 		stateWg.Done()
 	}()
@@ -299,27 +320,27 @@ func (s *Model) run() {
 				print("\r" + status[counter&0b11])
 				accumulator := make(map[StateIncrement]int)
 				for int(particlePtr.x/s.xStep)+1 < s.numCells {
-					if collision := s.nextCollision(particlePtr, accumulator); collision != nil {
+					if collision := s.nextCollision(particlePtr, accumulator, probflow); collision != nil {
 						cosChi := 1. - 2.*rand.Float64()
 						cosPhi := math.Cos(2. * math.Pi * rand.Float64())
 						switch collision.Type {
 						case lxgata.ELASTIC:
-							elasticflow <- int(particlePtr.x / s.xStep)
+							elasticflow <- CollisionEvent{int(particlePtr.x / s.xStep), (1. - (2.*collision.MassRatio)*(1.-cosChi))}
 							particlePtr.redirect(cosChi, cosPhi)
 							particlePtr.e = particlePtr.e * (1. - (2.*collision.MassRatio)*(1.-cosChi))
 
 						case lxgata.EFFECTIVE:
-							elasticflow <- int(particlePtr.x / s.xStep)
+							elasticflow <- CollisionEvent{int(particlePtr.x / s.xStep), (1. - (2.*collision.MassRatio)*(1.-cosChi))}
 							particlePtr.redirect(cosChi, cosPhi)
 							particlePtr.e = particlePtr.e * (1. - (2.*collision.MassRatio)*(1.-cosChi))
 
 						case lxgata.EXCITATION:
-							exitationflow <- int(particlePtr.x / s.xStep)
+							exitationflow <- CollisionEvent{int(particlePtr.x / s.xStep), collision.Threshold}
 							particlePtr.redirect(cosChi, cosPhi)
 							particlePtr.e -= collision.Threshold
 
 						case lxgata.IONIZATION:
-							ionflow <- int(particlePtr.x / s.xStep)
+							ionflow <- CollisionEvent{int(particlePtr.x / s.xStep), collision.Threshold}
 							collisionEnergy := particlePtr.e
 							collisionEnergy -= collision.Threshold
 							e1 := collisionEnergy * rand.Float64()
@@ -358,6 +379,7 @@ func (s *Model) run() {
 	close(nullflow)
 	close(exitationflow)
 	close(elasticflow)
+	close(probflow)
 	stateWg.Wait()
 	print("\r")
 }
