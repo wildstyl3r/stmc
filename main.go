@@ -14,14 +14,11 @@ import (
 	"github.com/wildstyl3r/lxgata"
 )
 
-//AINF
-// AIV?
-
 func main() {
 	cpuprofile := flag.String("cpuprofile", "", "write cpu profile to file")
 	threads := flag.Int("j", runtime.NumCPU(), "threads to run")
-	dataExtractor := newDataExtractor()
-	configFileNamePointer := flag.String("input", "He_Tran_norm", "model configuration in toml format")
+	dataExtractorFlags := newDataFlags()
+	configFileNamePointer := flag.String("input", "inputs/val/BM_He", "model configuration in toml format") //"inputs/val/BM_He", "model configuration in toml format")
 	flag.Parse()
 
 	if *cpuprofile != "" {
@@ -40,12 +37,13 @@ func main() {
 
 	if config.OutputDir != "" && config.OutputDir != "." {
 		os.MkdirAll(config.OutputDir, 0750)
-		dataExtractor.outputPath += config.OutputDir + "/"
+		dataExtractorFlags.outputPath += config.OutputDir + "/"
 	}
 
 	for modelName, parameters := range config.Models {
+		runtime.GC()
 		fmt.Println("\n" + modelName)
-		parameters.checkDefaults(modelName, &config, &meta)
+		parameters.checkMetrizeSetDefaults(modelName, &config, &meta)
 
 		crossSections, err := lxgata.LoadCrossSections(parameters.CrossSections)
 		if err != nil {
@@ -53,19 +51,18 @@ func main() {
 		}
 
 		model := Model{
-			crossSections:     crossSections,
-			cathodeFallLength: cm2m(parameters.CathodeFallLength),
-			Vc:                -math.Abs(parameters.CathodeFallPotential),
-			gapLength:         cm2m(parameters.GapLength),
-			EConst:            parameters.ConstEField,
-			density:           p / (k * parameters.Temperature),
-			nElectrons:        parameters.NElectrons,
-			eStep:             parameters.DeltaE,
-			muStep:            parameters.DeltaMu,
-			threads:           *threads,
+			crossSections: crossSections,
+			dataFlags:     dataExtractorFlags,
+			Vc:            -math.Abs(parameters.CathodeFallPotential),
+			parameters:    parameters,
+			gasDensity:    parameters.Pressure / (k * parameters.Temperature),
+			threads:       *threads,
 		}
 		model.init()
 		model.run()
+		dataExtractor := DataExtractor{
+			flags: dataExtractorFlags,
+		}
 		dataExtractor.extract(modelName, &model, &parameters)
 	}
 	fmt.Printf("Elapsed time: %v\n", time.Since(startTime))

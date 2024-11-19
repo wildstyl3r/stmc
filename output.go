@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -16,455 +17,551 @@ type DataItem struct {
 	saveFlag    *bool
 	fileSuffix  string
 	columnNames []string
-	values      func(*DataExtractor, int) (float64, []float64)
-	scalers     []func(float64) float64
+	values      func(*DataExtractor) (args []float64, values [][]float64, labels []string)
+	scalers     [][]func(float64) float64
+}
+
+type DataFlags struct {
+	all           *bool
+	specification map[string]DataItem
+	outputPath    string
 }
 
 type DataExtractor struct {
 	crossSections                    lxgata.Collisions
-	xStep                            float64
-	Navg, Vxavg, Favg, Eavg          float64
+	model                            *Model
+	psiFIncrement                    float64
+	gasDensity                       float64
 	cathodeFlux                      float64
-	all                              *bool
-	specification                    map[string]DataItem
-	outputPath                       string
+	flags                            DataFlags
 	TownsendAlphaF                   []float64
 	rateIntegral                     []float64
+	sourceTerm                       []float64
 	electronDensity                  []float64
 	meanEnergy                       []float64
-	ionizations                      []float64
-	nulls                            []float64
-	elastics                         []float64
-	excitations                      []float64
+	driftVelocity                    []float64
+	angularDistribution              [][]float64
+	energyDistribution               [][]float64
+	collisions                       map[string][]float64
 	flux                             []float64
-	rawFlux                          []float64
-	energyLossByProcess              [][]float64
-	probabilitiesByProcess           [][]float64
-	probabilitiesByProcessFromEnergy [][]float64
+	velocity                         []float64
+	radialVelocity                   []float64
+	energyLossByProcess              map[string][]float64
+	probabilitiesByProcess           map[string][]float64
+	probabilitiesByProcessFromEnergy map[string][]float64
 }
 
-func newDataExtractor() DataExtractor {
-	return DataExtractor{
-		all: flag.Bool("all", false, "save every available metric"),
+func newDataFlags() DataFlags {
+	return DataFlags{
+		all: flag.Bool("all", true, "save every available metric"),
 		specification: map[string]DataItem{
+			// "Angular distribution": {
+			// 	saveFlag:    flag.Bool("ang", false, "save potential"),
+			// 	fileSuffix:  "angles",
+			// 	columnNames: []string{"x (cm)", "cos(Theta)"},
+			// 	values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+			// 		for x := 0; x < de.model.numCells; x++ {
+			// 			args = append(args, de.model.xStep*float64(x))
+			// 			var muRow = make([]float64, de.model.numCellsMu)
+			// 			for muIndex := 0; muIndex < de.model.numCellsMu; muIndex++ {
+			// 				currentMu := de.model.muStep*float64(muIndex) - 1.
+			// 				accum := 0.
+			// 				for eIndex := 0; eIndex < de.model.numCellsE; eIndex++ {
+			// 					// currentEnergy := de.model.eStep * float64(eIndex)
+			// 					accum += de.psiFIncrement / (de.model.lookUpVelocity[eIndex] * currentMu) * float64(de.model.distribution[x][eIndex][muIndex])
+			// 					// de.model.distribution[x][e][mu]
+			// 				}
+			// 				muRow = append(muRow, accum)
+			// 			}
+			// 			values = append(values, muRow)
+			// 		}
+			// 		return args, values, nil
+			// 	},
+			// 	scalers: []func(float64) float64{m2cm},
+			// },
+			// "Energy distribution": {
+			// 	saveFlag:    flag.Bool("engs", false, "save potential"),
+			// 	fileSuffix:  "energies",
+			// 	columnNames: []string{"x (cm)", "e, eV"},
+			// 	values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+			// 		for x := 0; x < de.model.numCells; x++ {
+			// 			args = append(args, de.model.xStep*float64(x))
+			// 			var eRow = make([]float64, de.model.numCellsMu)
+			// 			for muIndex := 0; muIndex < de.model.numCellsMu; muIndex++ {
+			// 				currentMu := de.model.muStep*float64(muIndex) - 1.
+			// 				accum := 0.
+			// 				for eIndex := 0; eIndex < de.model.numCellsE; eIndex++ {
+			// 					// currentEnergy := de.model.eStep * float64(eIndex)
+			// 					accum += de.psiFIncrement / (de.model.lookUpVelocity[eIndex] * currentMu) * float64(de.model.distribution[x][eIndex][muIndex])
+			// 					// de.model.distribution[x][e][mu]
+			// 				}
+			// 				muRow = append(muRow, accum)
+			// 			}
+			// 			values = append(values, []float64{de.model.VfromL(de.model.xStep * float64(x))})
+			// 		}
+			// 		return args, values, nil
+			// 	},
+			// 	scalers: []func(float64) float64{m2cm},
+			// },
+			"Potential": {
+				saveFlag:    flag.Bool("v", false, "save potential"),
+				fileSuffix:  "V",
+				columnNames: []string{"x (cm)", "g (V)"},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					for x := 0; x < de.model.numCells; x++ {
+						args = append(args, de.model.xStep*float64(x))
+						values = append(values, []float64{de.model.VfromL(de.model.xStep * float64(x))})
+					}
+					return args, values, nil
+				},
+				scalers: [][]func(float64) float64{{m2cm}},
+			},
+			"Electric Field": {
+				saveFlag:    flag.Bool("ef", false, "save Electric field"),
+				fileSuffix:  "Efield",
+				columnNames: []string{"x (cm)", "E (V/m)"},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					for x := 0; x < de.model.numCells; x++ {
+						args = append(args, de.model.xStep*float64(x))
+						values = append(values, []float64{de.model.EFieldFromL(de.model.xStep * float64(x))})
+					}
+					return args, values, nil
+				},
+				scalers: [][]func(float64) float64{{m2cm}, {cm2m}},
+			},
+			"LfromV": {
+				saveFlag:    flag.Bool("lv", false, "save x from v"),
+				fileSuffix:  "lv",
+				columnNames: []string{"g (V)", "x (cm)"},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					for i := 0; i < 100000; i++ {
+						v := -(math.Abs(de.model.Va) + math.Abs(de.model.Vc)) * float64(100000-i) / 100000.
+						args = append(args, v)
+						values = append(values, []float64{de.model.LfromV(v)})
+					}
+					return args, values, nil
+				},
+				scalers: [][]func(float64) float64{{}, {m2cm}},
+			},
 			"Actual process probabilities": {
 				saveFlag:    flag.Bool("probs", false, "save in-simulation process probabilities"),
 				fileSuffix:  "probs",
-				columnNames: []string{"px (Torr cm)", "..."},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), de.probabilitiesByProcess[x]
+				columnNames: []string{"x (cm)", "..."},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					for label := range de.probabilitiesByProcess {
+						labels = append(labels, label)
+					}
+					sort.Strings(labels)
+					for x := 0; x < de.model.numCells; x++ {
+						args = append(args, de.model.xStep*float64(x))
+						var row []float64
+						for _, label := range labels {
+							row = append(row, de.probabilitiesByProcess[label][x])
+						}
+						values = append(values, row)
+					}
+					return args, values, labels
 				},
-				scalers: []func(float64) float64{m2cm},
+				scalers: [][]func(float64) float64{{m2cm}},
 			},
 			"Process probabilities from mean energy": {
 				saveFlag:    flag.Bool("meprobs", false, "save process probabilities based on mean energy"),
 				fileSuffix:  "meprobs",
-				columnNames: []string{"px (Torr cm)", "..."},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), de.probabilitiesByProcessFromEnergy[x]
+				columnNames: []string{"x (cm)", "..."},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					for label := range de.probabilitiesByProcessFromEnergy {
+						labels = append(labels, label)
+					}
+					sort.Strings(labels)
+					for x := 0; x < de.model.numCells; x++ {
+						args = append(args, de.model.xStep*float64(x))
+						var row []float64
+						for _, label := range labels {
+							row = append(row, de.probabilitiesByProcessFromEnergy[label][x])
+						}
+						values = append(values, row)
+					}
+					return args, values, labels
 				},
-				scalers: []func(float64) float64{m2cm},
+				scalers: [][]func(float64) float64{{m2cm}},
 			},
 			"Townsend alpha": {
 				saveFlag:    flag.Bool("ta", false, "save Townsend alpha coefficient"),
 				fileSuffix:  "Townsend_alpha",
-				columnNames: []string{"px (Torr cm)", "a/p (cm^-1 Torr^-1)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.rateIntegral[x] * de.electronDensity[x] / de.flux[x]}
+				columnNames: []string{"x (cm)", "a/p (cm^-1 Torr^-1)"},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					for x := range de.rateIntegral {
+						args = append(args, de.model.xStep*float64(x))
+						values = append(values, []float64{de.rateIntegral[x] / de.driftVelocity[x] * de.gasDensity})
+					}
+					return args, values, nil
 				},
-				scalers: []func(float64) float64{m2cm, cm2m},
+				scalers: [][]func(float64) float64{{m2cm}, {cm2m}},
 			},
-			"Townsend alpha per density": {
-				saveFlag:    flag.Bool("tad", false, "save Townsend alpha coefficient divided by electron density"),
-				fileSuffix:  "Townsend_alpha_D",
-				columnNames: []string{"px (Torr cm)", "a*n/p (cm^2 Torr^-1)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.rateIntegral[x] / de.flux[x]}
+			"Townsend alpha alt": {
+				saveFlag:    flag.Bool("taa", false, "save Townsend alpha coefficient as in Boeuf & Marode 1982"),
+				fileSuffix:  "Townsend_alpha_alt",
+				columnNames: []string{"x (cm)", "a/p (cm^2 Torr^-1)"},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					avgDVel := 0.
+					for x := range de.driftVelocity {
+						avgDVel += de.driftVelocity[x]
+					}
+					avgDVel /= float64(len(de.driftVelocity))
+					for x := range de.rateIntegral {
+						args = append(args, de.model.xStep*float64(x))
+						values = append(values, []float64{de.rateIntegral[x] * de.electronDensity[x] / avgDVel})
+					}
+					return args, values, nil
 				},
-				scalers: []func(float64) float64{m2cm, func(f float64) float64 { return f * 1.e4 }},
+				scalers: [][]func(float64) float64{{m2cm}, {cm2m}},
 			},
 			"Drift velocity": {
 				saveFlag:    flag.Bool("vx", false, "save drift velocity"),
 				fileSuffix:  "drift_vel",
-				columnNames: []string{"px (Torr cm)", "v_x (cm s^-1)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.flux[x] / de.electronDensity[x]}
+				columnNames: []string{"x (cm)", "v_x (cm s^-1)"},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					for x := range de.flux {
+						args = append(args, de.model.xStep*float64(x))
+						values = append(values, []float64{de.flux[x] / de.electronDensity[x]})
+					}
+					return args, values, nil
 				},
-				scalers: []func(float64) float64{m2cm, m2cm},
+				scalers: [][]func(float64) float64{{m2cm}, {m2cm}},
+			},
+			"Radial velocity": {
+				saveFlag:    flag.Bool("vs", false, "save radial velocity"),
+				fileSuffix:  "vel_star",
+				columnNames: []string{"x (cm)", "v* (cm s^-1)"},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					for x := range de.flux {
+						args = append(args, de.model.xStep*float64(x))
+						values = append(values, []float64{de.radialVelocity[x]})
+					}
+					return args, values, nil
+				},
+				scalers: [][]func(float64) float64{{m2cm}, {m2cm}},
+			},
+			"Total velocity": {
+				saveFlag:    flag.Bool("vt", false, "save total velocity"),
+				fileSuffix:  "vel",
+				columnNames: []string{"x (cm)", "v (cm s^-1)"},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					for x := range de.flux {
+						args = append(args, de.model.xStep*float64(x))
+						values = append(values, []float64{de.velocity[x]})
+					}
+					return args, values, nil
+				},
+				scalers: [][]func(float64) float64{{m2cm}, {m2cm}},
+			},
+			"M base": {
+				saveFlag:    flag.Bool("m", false, "save total cross section dynamics"),
+				fileSuffix:  "m",
+				columnNames: []string{"x (cm)", "arb"},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					f := func(x float64, totEnergy float64) float64 {
+						eKin := totEnergy + de.model.VfromL(x)
+						potential := -(totEnergy - eKin)
+						return de.model.gasDensity * de.model.crossSections.TotalCrossSectionAt(eKin) * math.Sqrt(eKin) / math.Abs(de.model.EFieldFromL(de.model.LfromV(potential)))
+					}
+					for i := 0; i < de.model.numCells*2; i++ {
+						x := de.model.xStep * float64(i) / 2.
+						args = append(args, x)
+						values = append(values, []float64{
+							f(x, math.Abs(de.model.parameters.CathodeFallPotential)+4.5),
+							f(x, (math.Abs(de.model.parameters.CathodeFallPotential)+4.5)*0.75),
+							f(x, (math.Abs(de.model.parameters.CathodeFallPotential)+4.5)*0.5),
+							f(x, (math.Abs(de.model.parameters.CathodeFallPotential)+4.5)*0.25)})
+					}
+					return args, values, []string{"total energy: 1", "total energy: 0.75", "total energy: 0.5", "total energy: 0.25"}
+				},
+				scalers: [][]func(float64) float64{{m2cm}, {m2cm}},
 			},
 			"Density": {
 				saveFlag:    flag.Bool("n", false, "save density"),
 				fileSuffix:  "density",
-				columnNames: []string{"px (Torr cm)", "n (сm^-3)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.electronDensity[x]}
+				columnNames: []string{"x (cm)", "n (cm^-3)"},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					for x := range de.electronDensity {
+						args = append(args, de.model.xStep*float64(x))
+						values = append(values, []float64{de.electronDensity[x]})
+					}
+					return args, values, nil
 				},
-				scalers: []func(float64) float64{m2cm, func(f float64) float64 { return f / 1.e6 }},
+				scalers: [][]func(float64) float64{{m2cm}, {cm2m, cm2m, cm2m}},
 			},
 			"Mean energy": {
 				saveFlag:    flag.Bool("emean", false, "save mean energy"),
 				fileSuffix:  "mean_energy",
-				columnNames: []string{"px (Torr cm)", "e (eV)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.meanEnergy[x]}
+				columnNames: []string{"x (cm)", "e (eV)"},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					for x := range de.meanEnergy {
+						args = append(args, de.model.xStep*float64(x))
+						values = append(values, []float64{de.meanEnergy[x]})
+					}
+					return args, values, nil
 				},
-				scalers: []func(float64) float64{m2cm},
+				scalers: [][]func(float64) float64{{m2cm}},
 			},
-			"Ionization source term": {
-				saveFlag:    flag.Bool("stf", false, "save ionization source term"),
-				fileSuffix:  "ist",
-				columnNames: []string{"px (Torr cm)", "S_n/p (cm^-1 Torr^-1)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.rateIntegral[x] * de.electronDensity[x] / de.cathodeFlux}
+			"Source term": {
+				saveFlag:    flag.Bool("st", false, "save source term"),
+				fileSuffix:  "st",
+				columnNames: []string{"x (cm)", "S (cm^-3 s^-1)"},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					for x := range de.sourceTerm {
+						args = append(args, de.model.xStep*float64(x))
+						values = append(values, []float64{de.sourceTerm[x]})
+					}
+					return args, values, nil
 				},
-				scalers: []func(float64) float64{m2cm, cm2m},
+				scalers: [][]func(float64) float64{{m2cm}, {cm2m, cm2m, cm2m}},
 			},
-			"Ionization source term per density": {
-				saveFlag:    flag.Bool("std", false, "save ionization source term divided by electron density"),
-				fileSuffix:  "istd",
-				columnNames: []string{"px (Torr cm)", "S_n*n/p (cm^2 Torr^-1)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.rateIntegral[x] / de.cathodeFlux}
+			"Normalized source term": {
+				saveFlag:    flag.Bool("nst", false, "save normalized source term"),
+				fileSuffix:  "nst",
+				columnNames: []string{"px (cm Torr)", "S/p (cm^-1 Torr ^-1)"},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					for x := range de.sourceTerm {
+						args = append(args, de.model.xStep*float64(x))
+						values = append(values, []float64{de.sourceTerm[x] * Torr / de.model.parameters.Pressure / de.cathodeFlux})
+					}
+					return args, values, nil
 				},
-				scalers: []func(float64) float64{m2cm, func(f float64) float64 { return f * 1.e4 }},
+				scalers: [][]func(float64) float64{{m2cm}, {cm2m}},
 			},
-			"Ionization source term per density, raw": {
-				saveFlag:    flag.Bool("stdr", false, "save ionization source term with flux from naive counter, divided by electron density"),
-				fileSuffix:  "istdr",
-				columnNames: []string{"px (Torr cm)", "S_n*n/p (cm^2 Torr^-1)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.rateIntegral[x] / (de.flux[x] / de.electronDensity[x]) * de.rawFlux[x] / de.cathodeFlux}
+			"Collision counters": {
+				saveFlag:    flag.Bool("cc", false, "save collision counters"),
+				fileSuffix:  "cc",
+				columnNames: []string{"x (cm)", "N_i(cm^-1 Torr^-1)"},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					for label := range de.collisions {
+						labels = append(labels, label)
+					}
+					sort.Strings(labels)
+					for x := 0; x < de.model.numCells; x++ {
+						args = append(args, de.model.xStep*float64(x))
+						var row []float64
+						for _, label := range labels {
+							row = append(row, de.collisions[label][x])
+						}
+						values = append(values, row)
+					}
+					return args, values, labels
 				},
-				scalers: []func(float64) float64{m2cm, func(f float64) float64 { return f * 1.e4 }},
-			},
-			"Ionization counter": {
-				saveFlag:    flag.Bool("ic", false, "save ionization counter"),
-				fileSuffix:  "ic",
-				columnNames: []string{"px (Torr cm)", "N_i(cm^-1 Torr^-1)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.ionizations[x]}
-				},
-				scalers: []func(float64) float64{m2cm},
-			},
-			"Null counter": {
-				saveFlag:    flag.Bool("0c", false, "save null collision counter"),
-				fileSuffix:  "0c",
-				columnNames: []string{"px (Torr cm)", "N_i(cm^-1 Torr^-1)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.nulls[x]}
-				},
-				scalers: []func(float64) float64{m2cm},
-			},
-			"Excitations counter": {
-				saveFlag:    flag.Bool("xc", false, "save excitations counter"),
-				fileSuffix:  "xc",
-				columnNames: []string{"px (Torr cm)", "N_i(cm^-1 Torr^-1)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.excitations[x]}
-				},
-				scalers: []func(float64) float64{m2cm},
-			},
-			"Elastics counter": {
-				saveFlag:    flag.Bool("ec", false, "save elastics counter"),
-				fileSuffix:  "ec",
-				columnNames: []string{"px (Torr cm)", "N_i(cm^-1 Torr^-1)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.elastics[x]}
-				},
-				scalers: []func(float64) float64{m2cm},
+				scalers: [][]func(float64) float64{{m2cm}},
 			},
 			"Electron flux": {
 				saveFlag:    flag.Bool("f", false, "save calculated flux"),
 				fileSuffix:  "flux",
-				columnNames: []string{"px (Torr cm)", "Phi(cm^-1 Torr^-1)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.flux[x]}
+				columnNames: []string{"x (cm)", "Phi(cm^-1 Torr^-1)"},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					for x := range de.flux {
+						args = append(args, de.model.xStep*float64(x))
+						values = append(values, []float64{de.flux[x]})
+					}
+					return args, values, nil
 				},
-				scalers: []func(float64) float64{m2cm, cm2m},
-			},
-			// "Townsend Alpha from calculated flux": {
-			// 	saveFlag:    flag.Bool("taf", false, "save Townsend alpha calculated as 1/(n(x)*v(x)) * d(n(x)v(x))/dx "),
-			// 	fileSuffix:  "Townsend_Alpha_F",
-			// 	columnNames: []string{"px (Torr cm)", "a/p (cm^-1 Torr^-1)"},
-			// 	indexStep:   &xStep,
-			// 	data:        &TownsendAlphaF,
-			// 	scalers:     []func(float64) float64{m2cm, cm2m},
-			// },
-			"Ionization rate": {
-				saveFlag:    flag.Bool("ir", false, "save ionization rate "),
-				fileSuffix:  "ir",
-				columnNames: []string{"px (Torr cm)", "nu (s^-1)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.rateIntegral[x]}
-				},
-				scalers: []func(float64) float64{m2cm},
-			},
-			"Ionization rate mul density": {
-				saveFlag:    flag.Bool("ird", false, "save ionization rate mul density"),
-				fileSuffix:  "irxd",
-				columnNames: []string{"px (Torr cm)", "R (cm^-3 s^-1)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.rateIntegral[x] * de.electronDensity[x]}
-				},
-				scalers: []func(float64) float64{m2cm, func(f float64) float64 { return f / 1.e6 }},
-			},
-			"Ionization rate per flux": {
-				saveFlag:    flag.Bool("irf", false, "save ionization rate per flux"),
-				fileSuffix:  "irpf",
-				columnNames: []string{"px (Torr cm)", "RpF (cm^2)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.rateIntegral[x] / de.flux[x]}
-				},
-				scalers: []func(float64) float64{m2cm, func(f float64) float64 { return f * 1.e4 }},
-			},
-			"Ionization rate per velocity": {
-				saveFlag:    flag.Bool("irpv", false, "save ionization rate per velocity"),
-				fileSuffix:  "irpv",
-				columnNames: []string{"px (Torr cm)", "RpV (cm^-1)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.rateIntegral[x] * de.electronDensity[x] / de.flux[x]}
-				},
-				scalers: []func(float64) float64{m2cm, cm2m},
-			},
-			"Ionization rate per density": {
-				saveFlag:    flag.Bool("irpd", false, "save ionization rate per density"),
-				fileSuffix:  "irpd",
-				columnNames: []string{"px (Torr cm)", "RpV (cm^3 s^-1)"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.rateIntegral[x] / de.electronDensity[x]}
-				},
-				scalers: []func(float64) float64{m2cm, func(f float64) float64 { return f * 1.e6 }},
-			},
-			"I*Navg": {
-				saveFlag:    flag.Bool("ain", false, "i*navg"),
-				fileSuffix:  "ain",
-				columnNames: []string{"px (Torr cm)", "??"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.rateIntegral[x] * de.Navg}
-				},
-				scalers: []func(float64) float64{m2cm},
-			},
-			"I/Vavg": {
-				saveFlag:    flag.Bool("aiv", false, "i/vavg"),
-				fileSuffix:  "aiv",
-				columnNames: []string{"px (Torr cm)", "??"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.rateIntegral[x] / de.Vxavg}
-				},
-				scalers: []func(float64) float64{m2cm},
-			},
-			"I/Favg": {
-				saveFlag:    flag.Bool("aif", false, "i/favg"),
-				fileSuffix:  "aif",
-				columnNames: []string{"px (Torr cm)", "??"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.rateIntegral[x] / de.Favg}
-				},
-				scalers: []func(float64) float64{m2cm},
-			},
-			"I*Navg/Favg": {
-				saveFlag:    flag.Bool("ainf", false, "i*navg"),
-				fileSuffix:  "ainf",
-				columnNames: []string{"px (Torr cm)", "??"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.rateIntegral[x] * de.Navg / de.Favg}
-				},
-				scalers: []func(float64) float64{m2cm},
-			},
-			"I/VavgFx": {
-				saveFlag:    flag.Bool("aivx", false, "i/vavg*f(x)"),
-				fileSuffix:  "aivx",
-				columnNames: []string{"px (Torr cm)", "??"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.rateIntegral[x] / de.Vxavg * de.flux[x]}
-				},
-				scalers: []func(float64) float64{m2cm},
-			},
-			"I*Navg/FavgFx": {
-				saveFlag:    flag.Bool("ainfx", false, "i*navg/favg*f(x)"),
-				fileSuffix:  "ainfx",
-				columnNames: []string{"px (Torr cm)", "??"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.rateIntegral[x] * de.Navg / de.Favg * de.flux[x]}
-				},
-				scalers: []func(float64) float64{m2cm},
+				scalers: [][]func(float64) float64{{m2cm}, {cm2m}},
 			},
 			"Energy loss due to ionizations": {
 				saveFlag:    flag.Bool("li", false, "save ionization energy losses"),
 				fileSuffix:  "li",
 				columnNames: []string{"eV", "cm ^ -1"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.energyLossByProcess[x][0]}
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					for label := range de.energyLossByProcess {
+						labels = append(labels, label)
+					}
+					sort.Strings(labels)
+					for x := 0; x < de.model.numCells; x++ {
+						args = append(args, de.model.xStep*float64(x))
+						var row []float64
+						for _, label := range labels {
+							row = append(row, de.energyLossByProcess[label][x])
+						}
+						values = append(values, row)
+					}
+					return args, values, labels
 				},
-				scalers: []func(float64) float64{m2cm},
-			},
-			"Energy loss due to elastic collisions": {
-				saveFlag:    flag.Bool("le", false, "save elastic energy losses"),
-				fileSuffix:  "le",
-				columnNames: []string{"eV", "cm ^ -1"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.energyLossByProcess[x][1]}
-				},
-				scalers: []func(float64) float64{m2cm},
-			},
-			"Energy loss due to excitations": {
-				saveFlag:    flag.Bool("lx", false, "save excitation energy losses"),
-				fileSuffix:  "lx",
-				columnNames: []string{"eV", "cm ^ -1"},
-				values: func(de *DataExtractor, x int) (float64, []float64) {
-					return de.xStep * float64(x), []float64{de.energyLossByProcess[x][2]}
-				},
-				scalers: []func(float64) float64{m2cm},
+				scalers: [][]func(float64) float64{{m2cm}},
 			},
 		},
 	}
 }
 
 func (de *DataExtractor) extract(modelName string, model *Model, parameters *ModelParameters) {
-	if de.outputPath != "" && de.outputPath[len(de.outputPath)-1] != '/' {
-		de.outputPath += "/"
+	if de.flags.outputPath != "" && de.flags.outputPath[len(de.flags.outputPath)-1] != '/' {
+		de.flags.outputPath += "/"
 	}
 
+	de.model = model
+
+	de.model.numCells = model.numCells
+
 	de.crossSections = model.crossSections
+	de.gasDensity = model.gasDensity
 
 	de.cathodeFlux = parameters.CathodeCurrent / electronCharge // [m^-2 s^-1]
 	de.electronDensity = make([]float64, model.numCells)
 	de.rateIntegral = make([]float64, model.numCells)
+	de.sourceTerm = make([]float64, model.numCells)
 	de.meanEnergy = make([]float64, model.numCells)
+	de.driftVelocity = make([]float64, model.numCells)
 	de.flux = make([]float64, model.numCells)
-	de.rawFlux = make([]float64, model.numCells)
+	de.velocity = make([]float64, model.numCells)
+	de.radialVelocity = make([]float64, model.numCells)
+
+	de.angularDistribution = make([][]float64, model.numCells)
+	de.energyDistribution = make([][]float64, model.numCells)
+	for x := range de.angularDistribution {
+		de.angularDistribution[x] = make([]float64, model.numCellsMu)
+		de.energyDistribution[x] = make([]float64, model.numCellsE)
+	}
 
 	de.TownsendAlphaF = make([]float64, model.numCells)
-	de.ionizations = make([]float64, model.numCells)
-	de.elastics = make([]float64, model.numCells)
-	de.nulls = make([]float64, model.numCells)
-	de.excitations = make([]float64, model.numCells)
+	de.collisions = make(map[string][]float64)
 	de.energyLossByProcess = model.energyLossByProcess
-	de.probabilitiesByProcess = make([][]float64, model.numCells)
-	for i := range de.probabilitiesByProcess {
-		de.probabilitiesByProcess[i] = make([]float64, len(model.probabilities[i]))
-	}
-	de.probabilitiesByProcessFromEnergy = make([][]float64, model.numCells)
-	for i := range de.probabilitiesByProcessFromEnergy {
-		de.probabilitiesByProcessFromEnergy[i] = make([]float64, len(model.probabilities[i]))
-	}
+	de.probabilitiesByProcess = make(map[string][]float64)
+	de.probabilitiesByProcessFromEnergy = make(map[string][]float64)
 
-	psiFIncrement := de.cathodeFlux / float64(parameters.NElectrons)
+	de.psiFIncrement = de.cathodeFlux / (float64(parameters.NElectrons) * parameters.DeltaE * parameters.DeltaMu)
 
-	var probKeys []string
-	for processType := range model.probabilities[0] {
-		probKeys = append(probKeys, processType)
-	}
-	sort.Strings(probKeys)
-	var probKeyIndex = make(map[string]int)
-	for i, key := range probKeys {
-		probKeyIndex[key] = i
+	var lookUpVelocity []float64 = make([]float64, model.numCellsE+1)
+
+	var energyRoot2Velocity float64 = math.Sqrt(2. / me)
+	for eIndex := range lookUpVelocity {
+		lookUpVelocity[eIndex] = math.Sqrt(eV2J(parameters.DeltaE*float64(eIndex)+parameters.DeltaE/2)) * energyRoot2Velocity
 	}
 
 	for xIndex := 0; xIndex < model.numCells; xIndex++ {
-		for processType, probs := range model.probabilities[xIndex] {
-			for i := range probs {
-				de.probabilitiesByProcess[xIndex][probKeyIndex[processType]] += model.probabilities[xIndex][processType][i]
-			}
-			de.probabilitiesByProcess[xIndex][probKeyIndex[processType]] /= float64(len(model.probabilities[xIndex][processType]))
-		}
-		de.rawFlux[xIndex] = float64(model.electronsAtCell[xIndex]) / float64(model.nElectrons)
-		for eIndex := 1; eIndex < model.numCellsE; eIndex++ {
-			currentEnergy := model.eStep * float64(eIndex)
+		for eIndex := 0; eIndex < model.numCellsE; eIndex++ {
+			currentEnergy := model.parameters.DeltaE*float64(eIndex) + model.parameters.DeltaE/2.
 			fXE := 0.
+			fXE_mu := 0.
+			v_x_fXE := 0.
+			v_fXE := 0.
+			v_r_fXE := 0.
 			for muIndex := 0; muIndex < model.numCellsMu; muIndex++ {
-				currentMu := model.muStep*float64(muIndex) - 1.
+				currentMu := model.parameters.DeltaMu*float64(muIndex) - 1.
 
 				f := 0.
-				if currentMu > 0.0001 {
-					f = psiFIncrement / (model.lookUpVelocity[eIndex] * currentMu) * float64(model.distribution[xIndex][eIndex][muIndex])
+				if math.Abs(currentMu) > 0.0001 {
+					f = de.psiFIncrement / (lookUpVelocity[eIndex] * math.Abs(currentMu)) * float64(model.distribution[xIndex][eIndex][muIndex])
 				}
-
-				de.electronDensity[xIndex] += f
-
+				fXE_mu += f * currentMu
 				fXE += f
 
-				if eIndex > 0 {
-					de.meanEnergy[xIndex] += f * currentEnergy
-
-					de.flux[xIndex] += f * model.lookUpVelocity[eIndex] * currentMu
-					de.Favg += de.flux[xIndex]
-
-				}
+				v_x_fXE += f * lookUpVelocity[eIndex] * currentMu
+				v_fXE += f * lookUpVelocity[eIndex]
+				v_r_fXE += f * lookUpVelocity[eIndex] * math.Sqrt(1-currentMu*currentMu)
 			}
-			cs := model.crossSections.TotalCrossSectionOfKindAt(lxgata.IONIZATION, currentEnergy)
-			vel := model.lookUpVelocity[eIndex]
-			de.rateIntegral[xIndex] += cs * vel * fXE
-		}
-		de.meanEnergy[xIndex] /= de.electronDensity[xIndex]
-		de.Vxavg += de.flux[xIndex] / de.electronDensity[xIndex]
-		de.Navg += de.electronDensity[xIndex]
-		de.Eavg += de.meanEnergy[xIndex]
+			fXE_mu *= parameters.DeltaMu
+			fXE *= parameters.DeltaMu
+			v_x_fXE *= parameters.DeltaMu
+			v_fXE *= parameters.DeltaMu
+			v_r_fXE *= parameters.DeltaMu
 
-		totalCS := de.crossSections.TotalCrossSectionAt(de.meanEnergy[xIndex])
-		for _, collision := range de.crossSections {
-			de.probabilitiesByProcessFromEnergy[xIndex][probKeyIndex[string(collision.Type)]] += collision.CrossSectionAt(de.meanEnergy[xIndex]) / totalCS
+			de.electronDensity[xIndex] += fXE
+
+			de.meanEnergy[xIndex] += fXE * currentEnergy
+			de.driftVelocity[xIndex] += fXE * lookUpVelocity[eIndex]
+			de.flux[xIndex] += v_x_fXE
+			de.velocity[xIndex] += v_fXE
+			de.radialVelocity[xIndex] += v_r_fXE
+			de.rateIntegral[xIndex] += model.crossSections.TotalCrossSectionOfKindAt(lxgata.IONIZATION, currentEnergy) * lookUpVelocity[eIndex] * fXE
+		}
+		de.electronDensity[xIndex] *= parameters.DeltaE
+
+		de.meanEnergy[xIndex] *= parameters.DeltaE
+		de.meanEnergy[xIndex] /= de.electronDensity[xIndex]
+
+		de.driftVelocity[xIndex] *= parameters.DeltaE
+		de.driftVelocity[xIndex] /= de.electronDensity[xIndex]
+
+		de.flux[xIndex] *= parameters.DeltaE
+		de.velocity[xIndex] *= parameters.DeltaE
+		de.velocity[xIndex] /= de.electronDensity[xIndex]
+		de.radialVelocity[xIndex] *= parameters.DeltaE
+		de.radialVelocity[xIndex] /= de.electronDensity[xIndex]
+
+		de.rateIntegral[xIndex] *= parameters.DeltaE
+		de.rateIntegral[xIndex] /= de.electronDensity[xIndex]
+
+		de.sourceTerm[xIndex] = model.gasDensity * de.electronDensity[xIndex] * de.rateIntegral[xIndex] // dn/dt = N * n(x) * <sigma_i(x,e) * v(x,e)>
+	}
+
+	de.model.xStep = model.xStep
+
+	for processType, probs := range model.probabilities {
+		de.probabilitiesByProcess[processType] = make([]float64, de.model.numCells)
+		for xIndex := 0; xIndex < model.numCells; xIndex++ {
+			de.probabilitiesByProcess[processType][xIndex] = probs[xIndex].avg()
 		}
 	}
-	de.Vxavg /= float64(model.numCells)
-	de.Navg /= float64(model.numCells)
-	de.Favg /= float64(model.numCells)
-	de.Eavg /= float64(model.numCells)
-
-	de.xStep = model.xStep
+	for _, collision := range de.crossSections {
+		de.probabilitiesByProcessFromEnergy[string(collision.Type)] = make([]float64, de.model.numCells)
+		for xIndex := 0; xIndex < model.numCells; xIndex++ {
+			totalCS := de.crossSections.TotalCrossSectionAt(de.meanEnergy[xIndex])
+			de.probabilitiesByProcessFromEnergy[string(collision.Type)][xIndex] += collision.CrossSectionAt(de.meanEnergy[xIndex]) / totalCS
+		}
+	}
 
 	// initElectronDensity := model.cathodeFlux / math.Sqrt(2.*eV2J(4.5)/me)
-	ic, elc, exc, nc := 0., 0., 0., 0.
-	for xIndex := 0; xIndex < model.numCells; xIndex++ {
-		de.ionizations[xIndex] = float64(model.ionizationAtCell[xIndex]) / float64(model.nElectrons) // * initElectronDensity
-		de.elastics[xIndex] = float64(model.elasticAtCell[xIndex]) / float64(model.nElectrons)
-		de.nulls[xIndex] = float64(model.nullAtCell[xIndex]) / float64(model.nElectrons)
-		de.excitations[xIndex] = float64(model.excitationAtCell[xIndex]) / float64(model.nElectrons)
-		ic += float64(model.ionizationAtCell[xIndex])
-		elc += float64(model.elasticAtCell[xIndex])
-		nc += float64(model.nullAtCell[xIndex])
-		exc += float64(model.excitationAtCell[xIndex])
+	collCounters := make(map[string]float64)
+
+	for key, val := range model.collisionAtCell {
+		de.collisions[key] = make([]float64, de.model.numCells)
+		for xIndex := 0; xIndex < model.numCells; xIndex++ {
+			de.collisions[key][xIndex] = float64(val[xIndex]) / float64(model.parameters.NElectrons)
+			collCounters[key] += float64(model.collisionAtCell[key][xIndex])
+		}
 	}
-	ic /= float64(model.nElectrons)
-	nc /= float64(model.nElectrons)
-	elc /= float64(model.nElectrons)
-	exc /= float64(model.nElectrons)
-	fmt.Printf("Avg collisions per electron at distance %f: elastic = %f; ionization = %f; excitation = %f; null = %f", model.cathodeFallLength, elc, ic, exc, nc)
+	for key := range collCounters {
+		collCounters[key] /= float64(model.parameters.NElectrons)
+	}
+	fmt.Printf("Avg collisions per electron at distance %f: %v\n", model.parameters.CathodeFallLength, collCounters)
 
 	for xIndex := 1; xIndex+2 < model.numCells; xIndex++ {
-		de.TownsendAlphaF[xIndex] = (de.flux[xIndex+1] + de.flux[xIndex+2] - de.flux[xIndex] - de.flux[xIndex-1]) / (2. * de.flux[xIndex] * de.xStep)
+		de.TownsendAlphaF[xIndex] = (de.flux[xIndex+1] + de.flux[xIndex+2] - de.flux[xIndex] - de.flux[xIndex-1]) / (2. * de.flux[xIndex] * de.model.xStep)
 	}
 
-	for name, output := range de.specification {
-		if *output.saveFlag || *de.all {
+	de.save(modelName, parameters)
+}
+
+func (de *DataExtractor) save(modelName string, parameters *ModelParameters) {
+	for name, output := range de.flags.specification {
+		if *output.saveFlag || *de.flags.all {
 			var file *os.File
 			var err error
 			if parameters.MakeDir && output.fileSuffix != "" && output.fileSuffix != "." {
-				os.MkdirAll(de.outputPath+output.fileSuffix, 0750)
-				file, err = os.Create(de.outputPath + output.fileSuffix + "/" + modelName + ".txt")
+				os.MkdirAll(de.flags.outputPath+output.fileSuffix, 0750)
+				file, err = os.Create(de.flags.outputPath + output.fileSuffix + "/" + modelName + ".txt")
 			} else {
-				file, err = os.Create(de.outputPath + modelName + "_" + output.fileSuffix + ".txt")
+				file, err = os.Create(de.flags.outputPath + modelName + "_" + output.fileSuffix + ".txt")
 			}
 			if err != nil {
 				println("unable to save "+name+": ", err)
 			} else {
 				rows := [][]string{output.columnNames}
-				for index := 0; index < model.numCells; index++ {
-					xColumnValue, yColumnValues := output.values(de, index)
+				xColumnValue, yColumnValues, yLabels := output.values(de)
+				rows = append(rows, append([]string{""}, yLabels...))
+				for x := range xColumnValue {
 					var yColumnValuesStr []string
 					if len(output.scalers) > 0 && output.scalers[0] != nil {
-						xColumnValue = output.scalers[0](xColumnValue)
-					}
-					for i := range yColumnValues {
-						if len(output.scalers) > 1 && output.scalers[1] != nil {
-							yColumnValuesStr = append(yColumnValuesStr, strconv.FormatFloat(output.scalers[1](yColumnValues[i]), 'f', -1, 64))
-						} else {
-							yColumnValuesStr = append(yColumnValuesStr, strconv.FormatFloat(yColumnValues[i], 'f', -1, 64))
+						for _, scaler := range output.scalers[0] {
+							xColumnValue[x] = scaler(xColumnValue[x])
 						}
 					}
+					for i := range yColumnValues[x] {
+						if len(output.scalers) > 1 && output.scalers[1] != nil {
+							for _, scaler := range output.scalers[1] {
+								yColumnValues[x][i] = scaler(yColumnValues[x][i])
+							}
+						}
+						yColumnValuesStr = append(yColumnValuesStr, strconv.FormatFloat(yColumnValues[x][i], 'f', -1, 64))
+					}
 
-					rows = append(rows, []string{strconv.FormatFloat(xColumnValue, 'f', -1, 64)})
-					rows[len(rows)-1] = append(rows[len(rows)-1], yColumnValuesStr...)
+					rows = append(rows, append([]string{strconv.FormatFloat(xColumnValue[x], 'f', -1, 64)}, yColumnValuesStr...))
 				}
 				w := csv.NewWriter(file)
 				w.WriteAll(rows)
