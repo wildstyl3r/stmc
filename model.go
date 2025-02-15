@@ -10,12 +10,14 @@ import (
 )
 
 type Model struct {
-	crossSections lxgata.Collisions
-	parameters    ModelParameters
-	dataFlags     DataFlags
-	Vc            float64 // cathode fall potential
-	gasDensity    float64 // N
-	threads       int
+	crossSections      *lxgata.Collisions
+	parameters         ModelParameters
+	dataFlags          DataFlags
+	Vc                 float64 // cathode fall potential
+	gasDensity         float64 // N
+	threads            int
+	inverseConstEField float64
+	inverseVc          float64
 
 	Va float64 // additional voltage to avoid numeric negative energy beyond cathode fall
 
@@ -38,13 +40,15 @@ type Model struct {
 }
 
 func (m *Model) init() {
-	m.Va = -m.parameters.ConstEField * (m.parameters.GapLength - m.parameters.CathodeFallLength)
+	m.Va = math.Abs(m.parameters.ConstEField * (m.parameters.GapLength - m.parameters.CathodeFallLength))
+	m.inverseConstEField = 1. / m.parameters.ConstEField
+	m.inverseVc = 1. / m.Vc
 
 	meanFreePath := 1. / (m.crossSections.SurplusCrossSection() * m.gasDensity)
 	fmt.Printf("Mean free path: %f\n", meanFreePath)
 
-	m.numCells = 5 * int(m.parameters.GapLength/meanFreePath)
-	m.numCellsE = int((math.Abs(m.parameters.CathodeFallPotential)+math.Abs(m.Va)+1)/m.parameters.DeltaE) + 1
+	m.numCells = 4 * int(m.parameters.GapLength/meanFreePath)
+	m.numCellsE = int((math.Abs(m.parameters.CathodeFallPotential)+m.Va+1)/m.parameters.DeltaE) + 1
 	m.numCellsMu = int(2./m.parameters.DeltaMu) + 1
 	fmt.Printf("xCells: %d; eCells: %d; muCells: %d\n", m.numCells, m.numCellsE, m.numCellsMu)
 
@@ -72,21 +76,20 @@ func (m *Model) init() {
 func (s *Model) VfromL(l float64) (V float64) {
 	cathodeFallPortion := l / s.parameters.CathodeFallLength
 	if l < s.parameters.CathodeFallLength {
-		V = math.Abs(s.Vc) * (cathodeFallPortion*(2.-cathodeFallPortion) - 1.)
+		V = s.Vc * (cathodeFallPortion*(2.-cathodeFallPortion) - 1.)
 	} else {
 		V = -s.parameters.ConstEField * (l - s.parameters.CathodeFallLength)
 	}
-	V -= math.Abs(s.Va)
+	V -= s.Va
 	return V
 }
 
 // g^-1
 func (s *Model) LfromV(V float64) (l float64) {
-	Vtot := math.Abs(s.Va) + math.Abs(s.Vc)
-	if V < -math.Abs(s.Va) {
-		l = s.parameters.CathodeFallLength * (1. - math.Sqrt(1.-(V+Vtot)/math.Abs(s.Vc)))
+	if V < -s.Va {
+		l = s.parameters.CathodeFallLength * (1. - math.Sqrt(1.-(V+s.Va+s.Vc)*s.inverseVc))
 	} else {
-		l = (V+math.Abs(s.Va))/(-s.parameters.ConstEField) + s.parameters.CathodeFallLength
+		l = -(V+s.Va)*s.inverseConstEField + s.parameters.CathodeFallLength
 	}
 	if math.IsNaN(l) {
 		panic("x is NaN")
@@ -97,47 +100,48 @@ func (s *Model) LfromV(V float64) (l float64) {
 func (s *Model) EFieldFromL(l float64) (E float64) { // V/m
 	E = s.parameters.ConstEField
 	if l < s.parameters.CathodeFallLength {
-		E += -2. * (1. - l/s.parameters.CathodeFallLength) * math.Abs(s.Vc) / s.parameters.CathodeFallLength
+		E += -2. * (1. - l/s.parameters.CathodeFallLength) * s.Vc / s.parameters.CathodeFallLength
 	}
 	return E
 }
 
-func (s *Model) collisionSelector(p *Particle, eKinetic, M float64, probChan chan<- ProbIncrement) *lxgata.Collision {
-	var totalCrossSectionPrimed float64 = M * math.Abs(s.EFieldFromL(p.x)) / (s.gasDensity * math.Sqrt(eKinetic)) // [m^2]
-	var crossSectionAccum float64 = totalCrossSectionPrimed - s.crossSections.TotalCrossSectionAt(eKinetic)       // the difference is null collision
-	var choice float64 = rand.Float64()
-	selector := crossSectionAccum / totalCrossSectionPrimed
+func (s *Model) collisionSelector(p *Particle, eKinetic, M float64) *lxgata.Collision {
+	var totalCrossSectionPrimed float64 = -M * s.EFieldFromL(p.x) / (s.gasDensity * math.Sqrt(eKinetic))    // [m^2]
+	var crossSectionAccum float64 = totalCrossSectionPrimed - s.crossSections.TotalCrossSectionAt(eKinetic) // the difference is null collision
+	var choice float64 = rand.Float64() * totalCrossSectionPrimed
 
-	currentCell := int(p.x / s.xStep)
-	eAtCellBound := s.lookUpPotential[currentCell] + p.totEnergy
-	var totalCrossSectionAtCellBound float64 = s.crossSections.TotalCrossSectionAt(eAtCellBound)
-	var totalCrossSectionPrimedAtCellBound float64 = M * math.Abs(s.EFieldFromL(p.x)) / (s.gasDensity * math.Sqrt(eAtCellBound)) // [m^2]
-	probChan <- ProbIncrement{currentCell, "NULL", (totalCrossSectionPrimedAtCellBound - totalCrossSectionAtCellBound) / totalCrossSectionAtCellBound}
+	// currentCell := int(p.x / s.xStep)
+	// eAtCellBound := s.lookUpPotential[currentCell] + p.totEnergy
+	// var totalCrossSectionAtCellBound float64 = s.crossSections.TotalCrossSectionAt(eAtCellBound)
+	// var totalCrossSectionPrimedAtCellBound float64 = M * math.Abs(s.EFieldFromL(p.x)) / (s.gasDensity * math.Sqrt(eAtCellBound)) // [m^2]
+	// probChan <- ProbIncrement{currentCell, "NULL", (totalCrossSectionPrimedAtCellBound - totalCrossSectionAtCellBound) / totalCrossSectionAtCellBound}
 
-	var selection *lxgata.Collision
+	// var selection *lxgata.Collision
 	selected := false
-	if choice < selector {
-		selection = nil // null collision
-		selected = true
+	if choice < crossSectionAccum {
+		return nil
+		// selection = nil // null collision
+		// selected = true
 	}
-	for i, collision := range s.crossSections {
-		crossSectionAccum += collision.CrossSectionAt(eKinetic)
-		selector = crossSectionAccum / totalCrossSectionPrimed
-		probChan <- ProbIncrement{currentCell, string(collision.Type), collision.CrossSectionAt(eAtCellBound) / totalCrossSectionAtCellBound}
-		if choice < selector && !selected {
-			selection = &s.crossSections[i]
-			selected = true
+	for i := range *s.crossSections {
+		crossSectionAccum += (*s.crossSections)[i].CrossSectionAt(eKinetic)
+		// probChan <- ProbIncrement{currentCell, string((*s.crossSections)[i].Type), (*s.crossSections)[i].CrossSectionAt(eAtCellBound) / totalCrossSectionAtCellBound}
+		if choice < crossSectionAccum && !selected {
+			return &(*s.crossSections)[i]
+			// selection = &(*s.crossSections)[i]
+			// selected = true
 		}
 	}
-	return selection
+	return nil //selection
 }
 
-func (s *Model) nextCollision(p *Particle, stateChan chan<- StateIncrement, probChan chan<- ProbIncrement) *lxgata.Collision { //ch chan<- StateIncrement,, acc map[StateIncrement]int
+func (s *Model) nextCollision(p *Particle /*, stateChan chan<- StateIncrement*/) *lxgata.Collision { //ch chan<- StateIncrement,, acc map[StateIncrement]int
 	R := -math.Log(1. - rand.Float64())
 
 	cellIndex := int((p.x + 0.000001*s.xStep) / s.xStep)
 	for (cellIndex < s.numCells && !s.parameters.ParallelPlaneHollowCathode) || (cellIndex < s.numCells+1 && s.parameters.ParallelPlaneHollowCathode) {
-		if p.x < 0 || (p.x == 0 && p.mu < 0) || (s.parameters.ParallelPlaneHollowCathode && cellIndex == s.numCells && p.totEnergy < s.crossSections.MinThresholdOfKind(lxgata.IONIZATION)) { // must do this only after some time dut to density averaging
+		mt := s.crossSections.MinThresholdOfKind(lxgata.IONIZATION)
+		if p.x < 0 || ((p.x == 0 || cellIndex == 0) && p.mu < 0) || ((s.parameters.ParallelPlaneHollowCathode || true) /*&& cellIndex == s.numCells*/ && p.totEnergy < mt) { // must do this only after some time dut to density averaging
 			p.x = s.xStep * float64(s.numCells+3)
 			return nil
 		}
@@ -166,12 +170,12 @@ func (s *Model) nextCollision(p *Particle, stateChan chan<- StateIncrement, prob
 			p.setEnergy(eNext, s, p.eStar == eNext)
 			cellIndex = int((p.x + 0.000001*s.xStep) / s.xStep)
 			{
-				xIndex := int((p.x + s.xStep/2.) / s.xStep)
-				eIndex := int(p.eKinetic / s.parameters.DeltaE)
-				muIndex := int((p.mu + 1. + s.parameters.DeltaMu/2.) / s.parameters.DeltaMu)
-				if eIndex < s.numCellsE && muIndex < s.numCellsMu && xIndex < s.numCells {
-					stateChan <- StateIncrement{xIndex, eIndex, muIndex}
-				}
+				// xIndex := int((p.x + s.xStep/2.) / s.xStep)
+				// eIndex := int(p.eKinetic / s.parameters.DeltaE)
+				// muIndex := int((p.mu + 1. + s.parameters.DeltaMu/2.) / s.parameters.DeltaMu)
+				// if eIndex < s.numCellsE && muIndex < s.numCellsMu && xIndex < s.numCells {
+				// 	stateChan <- StateIncrement{xIndex, eIndex, muIndex}
+				// }
 			}
 			R -= G
 		} else { // collision occured (possibly null)
@@ -191,7 +195,7 @@ func (s *Model) nextCollision(p *Particle, stateChan chan<- StateIncrement, prob
 				eColl = math.Pow(R/(2.*M)+math.Sqrt(p.eKinetic-p.eStar), 2.) + p.eStar // R = 2M[sqrt(eColl - p.eStar) - sqrt(p.e-p.eStar)]
 			}
 			p.setEnergy(eColl, s, true)
-			return s.collisionSelector(p, eColl, M, probChan)
+			return s.collisionSelector(p, eColl, M)
 		}
 	}
 	return nil
@@ -199,38 +203,38 @@ func (s *Model) nextCollision(p *Particle, stateChan chan<- StateIncrement, prob
 
 func (m *Model) run() {
 	var computeWg, stateWg sync.WaitGroup
-	stateflow := make(chan StateIncrement, 100000) //make(chan map[StateIncrement]int, 1000)
+	// stateflow := make(chan StateIncrement, 100000) //make(chan map[StateIncrement]int, 1000)
 
-	stateWg.Add(1)
-	go func() {
-		for update := range stateflow {
-			value := 1
+	// stateWg.Add(1)
+	// go func() {
+	// 	for update := range stateflow {
+	// 		value := 1
 
-			if update.muIndex < m.numCellsMu/2 {
-				m.distribution[update.xIndex][update.eIndex][update.muIndex] += value
-			} else {
-				m.distribution[update.xIndex][update.eIndex][update.muIndex] += value
-			}
-		}
-		stateWg.Done()
-	}()
+	// 		if update.muIndex < m.numCellsMu/2 {
+	// 			m.distribution[update.xIndex][update.eIndex][update.muIndex] += value
+	// 		} else {
+	// 			m.distribution[update.xIndex][update.eIndex][update.muIndex] += value
+	// 		}
+	// 	}
+	// 	stateWg.Done()
+	// }()
 
-	probflow := make(chan ProbIncrement, 100000)
-	if *m.dataFlags.all || *m.dataFlags.specification["Actual process probabilities"].saveFlag {
-		stateWg.Add(1)
-		go func() {
-			for probInc := range probflow {
-				if m.probabilities[probInc.collType] == nil {
-					m.probabilities[probInc.collType] = make([]AveragingElement, m.numCells+1)
-				}
-				m.probabilities[probInc.collType][probInc.x].add(probInc.prob)
-			}
-			stateWg.Done()
-		}()
-	}
+	// probflow := make(chan ProbIncrement, 100000)
+	// if *m.dataFlags.all || *m.dataFlags.sequentials["Actual process probabilities"].saveFlag {
+	// 	stateWg.Add(1)
+	// 	go func() {
+	// 		for probInc := range probflow {
+	// 			if m.probabilities[probInc.collType] == nil {
+	// 				m.probabilities[probInc.collType] = make([]AveragingElement, m.numCells+1)
+	// 			}
+	// 			m.probabilities[probInc.collType][probInc.x].add(probInc.prob)
+	// 		}
+	// 		stateWg.Done()
+	// 	}()
+	// }
 
 	collflow := make(chan CollisionEvent, 100000)
-	if *m.dataFlags.all || *m.dataFlags.specification["Collision counters"].saveFlag {
+	if *m.dataFlags.all || *m.dataFlags.sequentials["Collision counters"].saveFlag {
 		stateWg.Add(1)
 		go func() {
 			for collision := range collflow {
@@ -263,14 +267,20 @@ func (m *Model) run() {
 				counter++
 				print("\r" + status[counter&0b11])
 				for (!m.parameters.ParallelPlaneHollowCathode && int((particlePtr.x+0.000001*m.xStep)/m.xStep) < m.numCells) || (m.parameters.ParallelPlaneHollowCathode && int(particlePtr.x/m.xStep) < m.numCells+1) {
-					if collision := m.nextCollision(particlePtr, stateflow, probflow); collision != nil {
+					if collision := m.nextCollision(particlePtr /*, stateflow*/); collision != nil {
 						// fmt.Printf("x:%f; cell: %d of %d; mu: %f; eKin: %f\n", particlePtr.x, int(particlePtr.x/m.xStep), m.numCells, particlePtr.mu, particlePtr.eKinetic)
 						cosChi := 1. - 2.*rand.Float64()
 						phi := 2. * math.Pi * rand.Float64()
 						switch collision.Type {
-						case lxgata.ELASTIC, lxgata.EFFECTIVE:
-							collflow <- CollisionEvent{int((particlePtr.x + m.xStep/2) / m.xStep), particlePtr.eKinetic * (1. - (2.*collision.MassRatio)*(1.-cosChi)), string(collision.Type)}
+						case lxgata.ELASTIC:
+							cosChi := (2. + particlePtr.eKinetic - 2.*math.Pow(1.+particlePtr.eKinetic, rand.Float64())) / particlePtr.eKinetic
 							particlePtr.eKinetic *= (1. - 2.*collision.MassRatio*(1.-cosChi))
+							collflow <- CollisionEvent{int((particlePtr.x + m.xStep/2) / m.xStep), particlePtr.eKinetic, string(collision.Type)}
+							particlePtr.redirect(cosChi, math.Cos(phi), m)
+
+						case lxgata.EFFECTIVE:
+							particlePtr.eKinetic *= (1. - 2.*collision.MassRatio*(1.-cosChi))
+							collflow <- CollisionEvent{int((particlePtr.x + m.xStep/2) / m.xStep), particlePtr.eKinetic, string(collision.Type)}
 							particlePtr.redirect(cosChi, math.Cos(phi), m)
 
 						case lxgata.EXCITATION:
@@ -284,18 +294,28 @@ func (m *Model) run() {
 
 							collisionEnergy := particlePtr.eKinetic - collision.Threshold
 
-							eScattered := collisionEnergy * rand.Float64()
-							particlePtr.eKinetic = eScattered
-							cosChiScattered := math.Sqrt(eScattered / collisionEnergy)
-							particlePtr.redirect(cosChiScattered, math.Cos(phi), m)
-
-							eEjected := collisionEnergy - eScattered
+							var eEjected float64
+							if m.parameters.ParallelPlaneHollowCathode {
+								const OMEGA = 15.
+								eEjected = OMEGA * math.Tan(rand.Float64()*math.Atan(collisionEnergy/(2.*OMEGA)))
+							} else {
+								eEjected = collisionEnergy * rand.Float64()
+							}
 							ejected.eKinetic = eEjected
 							cosChiEjected := math.Sqrt(eEjected / collisionEnergy)
 							ejected.redirect(cosChiEjected, math.Cos(phi+math.Pi), m)
 
 							computeflow <- &ejected
 							computeWg.Add(1)
+
+							eScattered := collisionEnergy - eEjected
+							particlePtr.eKinetic = eScattered
+							cosChiScattered := math.Sqrt(eScattered / collisionEnergy)
+							particlePtr.redirect(cosChiScattered, math.Cos(phi), m)
+
+						case lxgata.ATTACHMENT:
+							collflow <- CollisionEvent{int((particlePtr.x + m.xStep/2) / m.xStep), 0, string(collision.Type)}
+							particlePtr.x = m.xStep * float64(m.numCells+3)
 						}
 					} else {
 						// fmt.Printf("null x:%f; cell: %d of %d; mu: %f; eKinRad: %f eKinAx %f\n", particlePtr.x, int(particlePtr.x/m.xStep), m.numCells, particlePtr.mu, particlePtr.eStar, particlePtr.eKinetic*particlePtr.mu)
@@ -310,10 +330,10 @@ func (m *Model) run() {
 		}()
 	}
 	computeWg.Wait()
-	close(stateflow)
+	// close(stateflow)
 	close(computeflow)
 	close(collflow)
-	close(probflow)
+	// close(probflow)
 	stateWg.Wait()
 	print("\r")
 }

@@ -8,26 +8,12 @@ import (
 )
 
 type Config struct {
-	OutputDir string
-	Models    map[string]ModelParameters
+	OutputDir     string
+	Models        map[string]ModelParameters
+	CrossSections string
 
 	// to reset global defaults
-	CrossSections              string
-	GapLength                  float64 // [сm]
-	CathodeFallLength          float64 // [сm]
-	CathodeFallPotential       float64 // [V]
-	CathodeCurrent             float64 // [A m^-2] = [C s^-1 m^-2]
-	ConstEField                float64 // [V / m]
-	Temperature                float64 // [K]
-	Pressure                   float64 // [Pa]
-	DeltaE                     float64 // [eV]
-	ZeroECorrectionFactor      float64
-	DeltaMu                    float64
-	NElectrons                 int
-	MakeDir                    bool
-	ParallelPlaneHollowCathode bool
-	PressureInmBars            bool
-	PressureInTorrs            bool
+	ModelParameters
 	// CathodeDistance            float64 // [сm]
 }
 
@@ -47,24 +33,31 @@ func loadConfig(configFileName string) (Config, toml.MetaData) {
 }
 
 type ModelParameters struct {
-	CrossSections              string
-	GapLength                  float64 // [сm]
-	CathodeFallLength          float64 // [сm]
-	CathodeFallPotential       float64 // [V]
-	CathodeCurrent             float64 // [mqA cm^-2] // =>[A m^-2] == [C s^-1 m^-2]
-	ConstEField                float64 // [V / m]
-	Temperature                float64 // [K]
-	Pressure                   float64 // [Pa]
+	GapLength                        float64 // [сm]
+	CathodeFallLength                float64 // [сm]
+	CathodeFallPotential             float64 // [V]
+	CathodeCurrentDensity            float64 // [mqA cm^-2] // ==>[A m^-2] == [C s^-1 m^-2]
+	CathodeCurrentPerPressureSquared float64 // [mA/mbar^2]
+	ConstEField                      float64 // [V / m]
+	Temperature                      float64 // [K]
+	Pressure                         float64 // [Pa]
+	DAmbipolar                       float64
+	AmbipolarCharacterScale          float64
+	CathodeArea                      float64 // [cm^2]
+
 	DeltaE                     float64 // [eV]
-	ZeroECorrectionFactor      float64
 	DeltaMu                    float64
 	NElectrons                 int
 	MakeDir                    bool
 	ParallelPlaneHollowCathode bool
-	PressureInmBars            bool
-	PressureInTorrs            bool
 
-	SI bool
+	PressureInmBars bool
+	PressureInTorrs bool
+	SI              bool
+
+	CalculateCathodeFallLength bool
+	CathodeFallLengthPrecision float64
+	LR                         float64
 }
 
 func (mp *ModelParameters) toSI() {
@@ -72,7 +65,7 @@ func (mp *ModelParameters) toSI() {
 		mp.GapLength *= 0.01
 		mp.CathodeFallLength *= 0.01
 
-		mp.CathodeCurrent *= (1e-6 * 1e2 * 1e2)
+		mp.CathodeCurrentDensity *= (1e-6 * 1e2 * 1e2)
 		mp.ConstEField *= 1.e2
 
 		if mp.PressureInmBars {
@@ -85,12 +78,8 @@ func (mp *ModelParameters) toSI() {
 
 func (mp *ModelParameters) checkMetrizeSetDefaults(modelName string, config *Config, meta *toml.MetaData) bool {
 	noParams := false
-	if !meta.IsDefined("Models", modelName, "CrossSections") {
-		if meta.IsDefined("CrossSections") {
-			mp.CrossSections = config.CrossSections
-		} else {
-			noParams = true
-		}
+	if !meta.IsDefined("CrossSections") {
+		noParams = true
 	}
 	if !meta.IsDefined("Models", modelName, "GapLength") {
 		if meta.IsDefined("GapLength") {
@@ -99,11 +88,38 @@ func (mp *ModelParameters) checkMetrizeSetDefaults(modelName string, config *Con
 			noParams = true
 		}
 	}
+	if !meta.IsDefined("Models", modelName, "CalculateCathodeFallLength") {
+		if meta.IsDefined("CalculateCathodeFallLength") {
+			mp.CalculateCathodeFallLength = config.CalculateCathodeFallLength
+		}
+	}
+
+	if !meta.IsDefined("Models", modelName, "LR") {
+		if meta.IsDefined("LR") {
+			mp.LR = config.LR
+		} else {
+			mp.LR = 0.01
+		}
+	}
+
 	if !meta.IsDefined("Models", modelName, "CathodeFallLength") {
 		if meta.IsDefined("CathodeFallLength") {
 			mp.CathodeFallLength = config.CathodeFallLength
-		} else {
+		} else if !mp.CalculateCathodeFallLength {
 			noParams = true
+			// if meta.IsDefined("Gamma") && meta.IsDefined("CathodeCurrentDensity") {
+			// 	mp.CathodeFallLength = math.Sqrt(2.*(1.+config.Gamma)*driftVelHelium(ENRatio float64)*mp.CathodeFallPotential*e0 / config.CathodeCurrentDensity)
+			// } else {
+			// 	noParams = true
+			// }
+		} else {
+			if !meta.IsDefined("Models", modelName, "CathodeFallLengthPrecision") {
+				if meta.IsDefined("CathodeFallLengthPrecision") {
+					mp.CathodeFallLengthPrecision = config.CathodeFallLengthPrecision
+				} else {
+					mp.CathodeFallLengthPrecision = 5e-6
+				}
+			}
 		}
 	}
 	if !meta.IsDefined("Models", modelName, "CathodeFallPotential") {
@@ -119,13 +135,33 @@ func (mp *ModelParameters) checkMetrizeSetDefaults(modelName string, config *Con
 		return false
 	}
 
-	if !meta.IsDefined("Models", modelName, "CathodeCurrent") {
-		if meta.IsDefined("CathodeCurrent") {
-			mp.CathodeCurrent = config.CathodeCurrent
+	if !meta.IsDefined("Models", modelName, "CathodeCurrentDensity") {
+		if meta.IsDefined("CathodeCurrentDensity") {
+			mp.CathodeCurrentDensity = config.CathodeCurrentDensity
 		} else {
-			mp.CathodeCurrent = 2.84 //[A / m^2]
+			mp.CathodeCurrentDensity = 2.84 //[mqA / cm^2]
 		}
 	}
+
+	if !meta.IsDefined("Models", modelName, "Pressure") {
+		if meta.IsDefined("Pressure") {
+			mp.Pressure = config.Pressure
+		} else {
+			mp.Pressure = 101325. / 760. // this is 133.322 Pa = 1 Torr
+		}
+	}
+
+	if meta.IsDefined("Models", modelName, "CathodeCurrentPerPressureSquared") {
+		if meta.IsDefined("Models", modelName, "CathodeArea") {
+			//mA*mbar^-2                            mbar         mbar            cm^-2
+			mp.CathodeCurrentDensity = 1000. * mp.CathodeCurrentPerPressureSquared * mp.Pressure * mp.Pressure / mp.CathodeArea
+			// * 1000 to translate from [mA * cm^-2] to [mqA * cm^-2]
+		} else if meta.IsDefined("CathodeArea") {
+			mp.CathodeCurrentDensity = 1000. * mp.CathodeCurrentPerPressureSquared * mp.Pressure * mp.Pressure / config.CathodeArea
+		}
+
+	}
+
 	if !meta.IsDefined("Models", modelName, "ConstEField") {
 		if meta.IsDefined("ConstEField") {
 			mp.ConstEField = config.ConstEField
@@ -147,13 +183,6 @@ func (mp *ModelParameters) checkMetrizeSetDefaults(modelName string, config *Con
 			mp.DeltaE = 0.1
 		}
 	}
-	if !meta.IsDefined("Models", modelName, "ZeroECorrectionFactor") {
-		if meta.IsDefined("ZeroECorrectionFactor") {
-			mp.ZeroECorrectionFactor = config.ZeroECorrectionFactor
-		} else {
-			mp.ZeroECorrectionFactor = 10.
-		}
-	}
 	if !meta.IsDefined("Models", modelName, "DeltaMu") {
 		if meta.IsDefined("DeltaMu") {
 			mp.DeltaMu = config.DeltaMu
@@ -166,14 +195,6 @@ func (mp *ModelParameters) checkMetrizeSetDefaults(modelName string, config *Con
 			mp.NElectrons = config.NElectrons
 		} else {
 			mp.NElectrons = 100
-		}
-	}
-
-	if !meta.IsDefined("Models", modelName, "Pressure") {
-		if meta.IsDefined("Pressure") {
-			mp.Pressure = config.Pressure
-		} else {
-			mp.Pressure = 101325. / 760. // this is 133.322 Pa = 1 Torr
 		}
 	}
 	if !meta.IsDefined("Models", modelName, "MakeDir") {
@@ -199,6 +220,7 @@ func (mp *ModelParameters) checkMetrizeSetDefaults(modelName string, config *Con
 			mp.PressureInmBars = config.PressureInmBars
 		}
 	}
+	println("inmbars", config.PressureInmBars, mp.PressureInmBars)
 	if !meta.IsDefined("Models", modelName, "PressureInTorrs") {
 		mp.PressureInTorrs = false
 		if meta.IsDefined("PressureInTorrs") {

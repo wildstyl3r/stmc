@@ -63,7 +63,7 @@ func (p *Particle) M(i int, s *Model) float64 {
 	}
 	return ternarySearchMaxF(func(eKin float64) float64 {
 		potential := -(p.totEnergy - eKin)
-		return s.gasDensity * s.crossSections.TotalCrossSectionAt(eKin) * math.Sqrt(eKin) / math.Abs(s.EFieldFromL(s.LfromV(potential)))
+		return -s.gasDensity * s.crossSections.TotalCrossSectionAt(eKin) * math.Sqrt(eKin) / s.EFieldFromL(s.LfromV(potential))
 	}, eLeft, eRight, 0.00001)
 }
 

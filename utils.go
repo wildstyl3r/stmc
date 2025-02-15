@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"math"
 	"math/rand"
 )
@@ -9,8 +10,10 @@ const k float64 = 1.380649e-23
 const electronCharge = 1.602176634e-19 // C
 const me float64 = 9.1093837139e-31    // [kg]
 const Torr float64 = 101325. / 760.    // [Pa]
+const Townsend float64 = 1.e-21        // V * m^2
+const e0 float64 = 8.8541878188e-12    // [m^-3 kg^-1 s^4 A^2]
 
-func ternarySearchMaxF(f func(float64) float64, left, right, eps float64) float64 {
+func ternarySearchMax(f func(float64) float64, left, right, eps float64) float64 {
 	for right-left > eps {
 		a := (left*2. + right) / 3.
 		b := (left + right*2.) / 3.
@@ -20,7 +23,21 @@ func ternarySearchMaxF(f func(float64) float64, left, right, eps float64) float6
 			left = a
 		}
 	}
-	return f((left + right) / 2.)
+	return (left + right) / 2.
+}
+
+func ternarySearchMaxF(f func(float64) float64, left, right, eps float64) float64 {
+	return f(ternarySearchMax(f, left, right, eps))
+}
+
+func argmax[T cmp.Ordered](arr []T) int {
+	argmax := 0
+	for i := range arr {
+		if cmp.Compare[T](arr[i], arr[argmax]) > 1 {
+			argmax = i
+		}
+	}
+	return argmax
 }
 
 func R() float64 {
