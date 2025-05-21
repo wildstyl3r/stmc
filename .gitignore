@@ -9,3 +9,4 @@ cross_sec
 __pycache__
 *.prof
 *__
+.vscode/
