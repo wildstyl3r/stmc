@@ -19,9 +19,11 @@ type Particle struct {
 	eStar             float64 //[eV]
 	totEnergy         float64 //aka Vcap
 	_debug_IonEjected bool
+
+	origin int
 }
 
-func (m *Model) newParticle() Particle {
+func (m *Model) newParticle(origin int) Particle {
 	y, z := uniformOnDisk(m.parameters.CathodeRadius)
 	eta := rand.Float64() * 2. * math.Pi
 	eKinetic := 4. + rand.Float64()
@@ -37,6 +39,7 @@ func (m *Model) newParticle() Particle {
 		c1:         -m.parameters.CathodeFallLength,
 		c2:         m.parameters.CathodeFallLength * math.Sqrt(eKinetic*mu*mu/m.parameters.CathodeFallPotential),
 		prevMuSign: mu,
+		origin:     origin,
 	}
 	p.recalcParams(m)
 	return p

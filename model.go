@@ -30,8 +30,8 @@ type Model struct {
 	energyGrid              []float64
 	gridBoundSqrt           []float64
 
-	collisionAtCell     map[string][]int
-	energyLossByProcess map[string][]float64
+	collisionAtCell     map[lxgata.CollisionType][][]uint16
+	energyLossByProcess map[lxgata.CollisionType][]float64
 
 	outOfEnergyAtCell []int
 }
@@ -59,22 +59,29 @@ func newModel(CathodeFallLength float64, parameters ModelParameters) Model {
 	m.xStep = m.parameters.GapLength / float64(m.numCells+1)
 	m.eStep = 0.01 // eV
 
-	m.collisionAtCell = map[string][]int{
-		string(lxgata.IONIZATION): make([]int, m.numCells+1),
-		string(lxgata.EXCITATION): make([]int, m.numCells+1),
-		string(lxgata.ELASTIC):    make([]int, m.numCells+1),
-		string(lxgata.EFFECTIVE):  make([]int, m.numCells+1),
-		string(lxgata.ATTACHMENT): make([]int, m.numCells+1),
-		string(lxgata.ROTATION):   make([]int, m.numCells+1),
-		string("NULL"):            make([]int, m.numCells+1),
-	}
-	m.energyLossByProcess = map[string][]float64{
-		string(lxgata.IONIZATION): make([]float64, m.numCells+1),
-		string(lxgata.EXCITATION): make([]float64, m.numCells+1),
-		string(lxgata.ELASTIC):    make([]float64, m.numCells+1),
-		string(lxgata.EFFECTIVE):  make([]float64, m.numCells+1),
-		string(lxgata.ATTACHMENT): make([]float64, m.numCells+1),
-		string(lxgata.ROTATION):   make([]float64, m.numCells+1),
+	m.collisionAtCell = make(map[lxgata.CollisionType][][]uint16)
+	m.energyLossByProcess = make(map[lxgata.CollisionType][]float64)
+	for _, process := range []lxgata.CollisionType{
+		lxgata.IONIZATION,
+		lxgata.EXCITATION,
+		lxgata.ELASTIC,
+		lxgata.EFFECTIVE,
+		lxgata.ATTACHMENT,
+		lxgata.ROTATION,
+		lxgata.CollisionType("NULL")} {
+		if m.parameters.CalculateStdError {
+			m.energyLossByProcess[process] = make([]float64, m.numCells+1)
+			m.collisionAtCell[process] = make([][]uint16, m.numCells+1)
+			for c := range m.numCells + 1 {
+				m.collisionAtCell[process][c] = make([]uint16, parameters.NElectrons)
+			}
+		} else {
+			m.energyLossByProcess[process] = make([]float64, m.numCells+1)
+			m.collisionAtCell[process] = make([][]uint16, m.numCells+1)
+			for c := range m.numCells + 1 {
+				m.collisionAtCell[process][c] = make([]uint16, 1)
+			}
+		}
 	}
 	m.lookUpPotential = make([]float64, m.numCells+2)
 	for cell := range m.lookUpPotential {
@@ -287,7 +294,7 @@ func (m *Model) run() {
 		go func() {
 			for collision := range collflow {
 				if collision.x < m.numCells+1 {
-					m.collisionAtCell[collision.collType][collision.x]++
+					m.collisionAtCell[collision.collType][collision.x][collision.origin]++
 					if collision.collType != "NULL" {
 						m.energyLossByProcess[collision.collType][collision.x] += collision.energyLoss
 					}
@@ -298,8 +305,12 @@ func (m *Model) run() {
 	}
 
 	computeflow := make(chan *Particle, m.parameters.NElectrons*100)
-	for range m.parameters.NElectrons {
-		particle := m.newParticle()
+	for i := range m.parameters.NElectrons {
+		origin := 0
+		if m.parameters.CalculateStdError {
+			origin = i
+		}
+		particle := m.newParticle(origin)
 		computeWg.Add(1)
 		computeflow <- &particle
 	}
@@ -357,7 +368,7 @@ func (m *Model) run() {
 							cosChiScattered = math.Sqrt(eScattered / particlePtr.eKinetic)
 							particlePtr.eKinetic = eScattered
 						}
-						collflow <- CollisionEvent{int((particlePtr.x + m.xStep*0.5) / m.xStep), energyLoss, string(collision.Type)}
+						collflow <- CollisionEvent{int((particlePtr.x + m.xStep*0.5) / m.xStep), energyLoss, collision.Type, particlePtr.origin}
 						if collision.Type == lxgata.ATTACHMENT {
 							break
 						}
@@ -366,7 +377,7 @@ func (m *Model) run() {
 						currentCell := int(particlePtr.x / m.xStep)
 						if currentCell < m.numCells && m.parameters.CountNulls {
 							select {
-							case collflow <- CollisionEvent{currentCell, 0, "NULL"}:
+							case collflow <- CollisionEvent{currentCell, 0, "NULL", particlePtr.origin}:
 							default:
 							}
 

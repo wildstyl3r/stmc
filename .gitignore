@@ -1,6 +1,8 @@
 *.toml
 *.txt
 *.sh
+*.exe
+stmc
 Ar*
 go.sum
 outputs

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -32,9 +33,10 @@ type DataFlags struct {
 }
 
 type DataExtractor struct {
-	model       *Model
-	cathodeFlux float64
-	collisions  map[string][]float64
+	model           *Model
+	cathodeFlux     float64
+	collisions      map[lxgata.CollisionType][]float64
+	collisionsError map[lxgata.CollisionType][]float64
 }
 
 func newDataFlags() DataFlags {
@@ -95,17 +97,23 @@ func newDataFlags() DataFlags {
 					saveFlag:   flag.Bool("cc", false, "save collision counters"),
 					fileSuffix: "cc",
 				},
-				columnNames: []string{"x (cm)", "N_i(cm^{-1} Torr^{-1})"},
+				columnNames: []string{"x (cm)", "N_i(cm^{-1} Torr^{-1})", "Standard error"},
 				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
 					for label := range de.collisions {
-						labels = append(labels, label)
+						labels = append(labels, string(label))
+						if de.model.parameters.CalculateStdError {
+							labels = append(labels, string(label)+"_conf_interval")
+						}
 					}
 					sort.Strings(labels)
 					for x := range de.model.numCells {
 						args = append(args, de.model.xStep*float64(x))
 						var row []float64
 						for _, label := range labels {
-							row = append(row, de.collisions[label][x])
+							row = append(row, de.collisions[lxgata.CollisionType(label)][x])
+							if de.model.parameters.CalculateStdError {
+								row = append(row, de.collisionsError[lxgata.CollisionType(label)][x])
+							}
 						}
 						values = append(values, row)
 					}
@@ -119,14 +127,20 @@ func newDataFlags() DataFlags {
 					saveFlag:   flag.Bool("nst", true, "save normalized source term"),
 					fileSuffix: "nst",
 				},
-				columnNames: []string{"x (cm)", "N_i(cm^{-1} Torr^{-1})"},
+				columnNames: []string{"x (cm)", "N_i(cm^{-1} Torr^{-1})", "Standard error"},
 				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
 					labels = append(labels, string(lxgata.IONIZATION))
+					if de.model.parameters.CalculateStdError {
+						labels = append(labels, string(lxgata.IONIZATION)+"_conf_interval")
+					}
 					sort.Strings(labels)
 					for x := range de.model.numCells {
 						args = append(args, de.model.xStep*float64(x))
 						var row []float64
-						row = append(row, de.collisions[string(lxgata.IONIZATION)][x])
+						row = append(row, de.collisions[lxgata.IONIZATION][x])
+						if de.model.parameters.CalculateStdError {
+							row = append(row, de.collisionsError[lxgata.IONIZATION][x])
+						}
 						values = append(values, row)
 					}
 					return args, values, labels
@@ -143,7 +157,7 @@ func newDataFlags() DataFlags {
 				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
 					for x := range de.model.numCells {
 						args = append(args, de.model.xStep*float64(x))
-						row := []float64{de.model.energyLossByProcess[string(lxgata.IONIZATION)][x]}
+						row := []float64{de.model.energyLossByProcess[lxgata.IONIZATION][x]}
 						values = append(values, row)
 					}
 					return args, values, []string{string(lxgata.IONIZATION)}
@@ -176,25 +190,29 @@ func newDataFlags() DataFlags {
 
 func newDataExtractor(model *Model) *DataExtractor {
 	de := DataExtractor{
-		model:       model,
-		cathodeFlux: model.parameters.CathodeCurrentDensity / electronCharge, // [m^{-2} s^{-1}]
-		collisions:  map[string][]float64{},
+		model:           model,
+		cathodeFlux:     model.parameters.CathodeCurrentDensity / electronCharge, // [m^{-2} s^{-1}]
+		collisions:      map[lxgata.CollisionType][]float64{},
+		collisionsError: map[lxgata.CollisionType][]float64{},
 	}
 	if de.model.parameters._dataFlags.outputPath != "" && de.model.parameters._dataFlags.outputPath[len(de.model.parameters._dataFlags.outputPath)-1] != '/' {
 		de.model.parameters._dataFlags.outputPath += "/"
 	}
 
-	de.collisions = make(map[string][]float64)
+	// de.collisions = make(map[lxgata.CollisionType][]float64)
 
 	if model.parameters._verbose {
-		collCounters := make(map[string]float64)
+		collCounters := make(map[lxgata.CollisionType]float64)
 
 		for key, val := range model.collisionAtCell {
 			if model.collisionAtCell[key] != nil {
 				de.collisions[key] = make([]float64, de.model.numCells)
+				de.collisionsError[key] = make([]float64, de.model.numCells)
 				for xIndex := range model.numCells {
-					de.collisions[key][xIndex] = float64(val[xIndex]) / (float64(model.parameters.NElectrons) * model.xStep * model.parameters.Pressure)
-					collCounters[key] += float64(model.collisionAtCell[key][xIndex])
+					de.collisions[key][xIndex] = float64(sumSlice(val[xIndex])) / (float64(model.parameters.NElectrons) * model.xStep * model.parameters.Pressure)
+					de.collisionsError[key][xIndex] = quantile95 * math.Sqrt(float64(variance(val[xIndex], true))) / (math.Sqrt(float64(model.parameters.NElectrons)) * model.xStep * model.parameters.Pressure)
+					// 1.96 is double-sided quantile for 95% confidence
+					collCounters[key] += float64(sumSlice(model.collisionAtCell[key][xIndex]))
 				}
 			}
 

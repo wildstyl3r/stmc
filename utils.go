@@ -14,7 +14,10 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/exp/constraints"
+
 	"github.com/facette/natsort"
+	"github.com/wildstyl3r/lxgata"
 )
 
 const kBolzmann float64 = 1.380649e-23
@@ -22,6 +25,7 @@ const electronCharge = 1.602176634e-19                   // C
 const electornMass float64 = 9.1093837139e-31            // [kg]
 const Townsend float64 = 1.e-21                          // V * m^2
 const freeSpacePermittivityE0 float64 = 8.8541878188e-12 // [m^-3 kg^{-1} s^4 A^2]
+const quantile95 = 1.96
 
 func ternarySearchMax(f func(float64) float64, left, right, eps float64) float64 {
 	for right-left > eps {
@@ -63,7 +67,11 @@ func argmax[T cmp.Ordered](arr []T) (argmax int) {
 	return
 }
 
-func sumSlice(arr []float64) (r float64) {
+type Number interface {
+	constraints.Float | constraints.Integer
+}
+
+func sumSlice[T Number](arr []T) (r T) {
 	for i := range arr {
 		r += arr[i]
 	}
@@ -79,21 +87,39 @@ func diameterOfSet(s []float64) (d float64) {
 	return
 }
 
-func average(s []float64) (mean float64) {
+func average[T Number](s []T) (mean float64) {
 	for i := range s {
-		mean += s[i]
+		mean += float64(s[i])
 	}
 	mean /= float64(len(s))
 	return
 }
 
-func meanAndVariance(s []float64) (mean, variance float64) {
+func averageFromInt(s []int) (mean float64) {
+	for i := range s {
+		mean += float64(s[i])
+	}
+	mean /= float64(len(s))
+	return
+}
+
+func meanAndVariance[T Number](s []T, unbiased bool) (mean, variance float64) {
 	mean = average(s)
 	for i := range s {
-		variance += (s[i] - mean) * (s[i] - mean)
+		variance += (float64(s[i]) - mean) * (float64(s[i]) - mean)
 	}
-	variance /= float64(len(s))
+	if unbiased {
+		variance /= float64(len(s) - 1)
+	} else {
+		variance /= float64(len(s))
+	}
+
 	return
+}
+
+func variance[T Number](s []T, unbiased bool) float64 {
+	_, v := meanAndVariance(s, unbiased)
+	return v
 }
 
 func intAbs(a int) int {
@@ -202,7 +228,8 @@ func getFilename(filePath string) string {
 type CollisionEvent struct {
 	x          int
 	energyLoss float64
-	collType   string
+	collType   lxgata.CollisionType
+	origin     int
 }
 
 type CSV [][]string

@@ -4,6 +4,10 @@ import argparse
 import os
 import sys
 import csv
+from matplotlib import rc
+rc('text', usetex=True)
+rc('text.latex',preamble=r'\usepackage[utf8]{inputenc}')
+rc('text.latex',preamble=r'\usepackage[russian]{babel}')
 
 parser = argparse.ArgumentParser(description='Make plot from all csv files in given directory.')
 parser.add_argument('dirname', help="directory with data to plot")
@@ -50,8 +54,8 @@ plt.rcParams['text.usetex'] = True
 fig, axs = plt.subplots(1)
 if args.stack:
     for filename in datafiles.keys():
-        for column in datafiles[filename]:
-            print(filename, datafiles[filename][column])
+        # for column in datafiles[filename]:
+            # print(filename, datafiles[filename][column])
         if len (labels) > i:
             name += ": " + labels[i]
         try:
@@ -61,21 +65,33 @@ if args.stack:
 else:
     for filename in datafiles.keys():
         for column in datafiles[filename]:
-            label = f"{filename}: {datafiles[filename][column].name}"
-            if args.filter is None or all(f in label for f in include):
-                if args.exclude is None or all(e not in label for e in exclude):
-                    axs.plot(datafiles[filename][column], "o-", label=label)
+            # print(filename, datafiles[filename][column])
+            if not column.endswith("_conf_interval"):
+                label = f"{filename}: {datafiles[filename][column].name}"
+                if args.filter is None or all(f in label for f in include):
+                    if args.exclude is None or all(e not in label for e in exclude):
+                        #for (xs, yrows, name) in datafiles[filename][column]:
+                        axs.errorbar(
+                            datafiles[filename].index, column, fmt="o", ms=1,
+                            yerr=column + "_conf_interval" if column + "_conf_interval" in datafiles[filename] else None,
+                            label=label, data=datafiles[filename])
     if args.compare:
+        plt.gca().set_prop_cycle(None)
         for filename in datafiles_c:
             if args.norm:
                 for (xs, yrows, name) in data_c:
-                    axs.plot(xs, [[y / max_y_c for y in yrow] for yrow in yrows], "o-", label=list(name + l for l in labels) if len(labels) > 0 else name)
+                    axs.errorbar(xs, [[y / max_y_c for y in yrow] for yrow in yrows], fmt="-", yerr=None, label=list(name + l for l in labels) if len(labels) > 0 else name)
             else:
                 for column in datafiles_c[filename]:
-                    label = f"{filename}: {datafiles_c[filename][column].name}"
-                    if args.filter is None or all(f in label for f in include):
-                        if args.exclude is None or all(e not in label for e in exclude):
-                            axs.plot(datafiles_c[filename][column], "o-", label=label)
+                    if not column.endswith("_conf_interval"):
+                        label = f"{filename}: {datafiles_c[filename][column].name}"
+                        if args.filter is None or all(f in label for f in include):
+                            if args.exclude is None or all(e not in label for e in exclude):
+                                axs.errorbar(
+                                    datafiles_c[filename].index, column,
+                                    fmt="-",
+                                    yerr=column + "_conf_interval" if column + "_conf_interval" in datafiles_c[filename] else None,
+                                    label=label,data=datafiles_c[filename])
 
 axs.legend()
 if len(measures) > 0:

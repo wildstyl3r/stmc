@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"runtime"
 	"runtime/pprof"
@@ -18,11 +19,12 @@ import (
 func main() {
 	startTime := time.Now()
 	cpuprofile := flag.String("cpuprofile", "", "write cpu profile to file")
+	memprofile := flag.String("memprofile", "", "write memory profile to `file`")
 	threads := flag.Int("j", runtime.NumCPU(), "threads to run")
 	verbose := flag.Bool("v", true, "verbose")
 	debug := flag.Bool("d", false, "debug")
-	dataExtractorFlags := newDataFlags()                                                                                   //Donko/cvc_45mbarcm3Dup
-	configFileNamePointer := flag.String("i", "inputs/petrovic1997/0.5Torr_cm.toml", "model configuration in toml format") //"inputs/val/BM_He", "model configuration in toml format")
+	dataExtractorFlags := newDataFlags()                                                                                //Donko/cvc_45mbarcm3Dup
+	configFileNamePointer := flag.String("i", "inputs/klyarfeld/0.18Torr3D.toml", "model configuration in toml format") //"inputs/val/BM_He", "model configuration in toml format")
 	rootFindingAlgorithm := flag.String("alg", "s", "root finder algorithm for gamma calculation ([s]tochastic approximation, [b]inary search, [t]ernary search)")
 	flag.Parse()
 
@@ -69,7 +71,7 @@ func main() {
 		}
 
 		if parameters.CalculateCathodeFallLength {
-			var gammaLoss, gammaIntegral, gammaAnalytic float64
+			var gammaLoss, gammaIntegral, gammaVariance, gammaCI, gammaAnalytic float64
 			if *verbose {
 				fmt.Print("calculating dc iteratively:\n")
 			}
@@ -99,11 +101,11 @@ func main() {
 						strconv.FormatFloat(parameters.CathodeFallPotential/(dc*parameters.gasDensity*Townsend), 'f', 10, 64),
 						strconv.FormatFloat(gamma[i], 'f', 10, 64),
 						strconv.FormatFloat(gammaAnalytic, 'f', 10, 64),
-						strconv.FormatFloat(gammaLoss, 'f', 10, 64),
+						strconv.FormatFloat(gammaLoss, 'f', 10, 64), //strconv.FormatFloat(gammaVariance, 'f', 10, 64),
 					})
 				}
-				gammaMean, gammaVariance := meanAndVariance(gamma)
-				intSMean, intSVariance := meanAndVariance(intS)
+				gammaMean, gammaVariance := meanAndVariance(gamma, true)
+				intSMean, intSVariance := meanAndVariance(intS, true)
 				fmt.Printf("[%s] gamma mean: %.9f, gamma variance: %.9f, integral S mean: %.9f, integral S variance: %.9f\n", modelName, gammaMean, gammaVariance, intSMean, intSVariance)
 				debugFile, err := openFile(true, dataExtractorFlags.outputPath, "debug", getFilename(*configFileNamePointer)+modelName)
 
@@ -141,12 +143,13 @@ func main() {
 					initialDc := 0.5 * (initialDcL + initialDcR)
 
 					gammaI := []float64{}
-					dc = stochasticApproximation(minDc, maxDc, initialDc, approxLossDerivative, parameters.CathodeFallLengthPrecision, 4, func(dc float64) float64 {
+					dc = stochasticApproximation(minDc, maxDc, initialDc, approxLossDerivative, parameters.CathodeFallLengthPrecision, quantile95, 10, func(dc float64) float64 {
 						gammaLoss, gammaIntegral, gammaAnalytic, dataExtractor = gammaCalculationStep(itp, dc, parameters, Difference)
 						gammaI = append(gammaI, gammaIntegral)
 						return gammaLoss
 					})
-					gammaIntegral = average(gammaI[len(gammaI)-4:])
+					gammaIntegral, gammaVariance = meanAndVariance(gammaI[len(gammaI)-10:], true)
+					gammaCI = 2 * math.Sqrt(gammaVariance) * quantile95 / math.Sqrt(float64(10))
 					gammaLoss = gammaAnalytic - gammaIntegral
 
 				case "b":
@@ -166,7 +169,15 @@ func main() {
 					}, minDc, min(maxDc, parameters.GapLength), parameters.CathodeFallLengthPrecision) //0, parameters.GapLength, parameters.CathodeFallLengthPrecision)
 				}
 				dataExtractor.save(modelName)
-				gammaData = append(gammaData, []string{strconv.FormatFloat(parameters.CathodeFallPotential/(dc*parameters.gasDensity*Townsend), 'f', 10, 64), strconv.FormatFloat(gammaIntegral, 'f', 10, 64), strconv.FormatFloat(gammaAnalytic, 'f', 10, 64), strconv.FormatFloat(gammaLoss, 'f', 10, 64), strconv.FormatFloat(dc, 'f', 10, 64)})
+				gammaData = append(gammaData,
+					[]string{
+						strconv.FormatFloat(parameters.CathodeFallPotential/(dc*parameters.gasDensity*Townsend), 'f', 10, 64),
+						strconv.FormatFloat(gammaIntegral, 'f', 10, 64),
+						strconv.FormatFloat(gammaAnalytic, 'f', 10, 64),
+						strconv.FormatFloat(gammaLoss, 'f', 10, 64),
+						strconv.FormatFloat(dc, 'f', 10, 64),
+						strconv.FormatFloat(gammaCI, 'f', 10, 64),
+					})
 				println("saved d_c and γ")
 			}
 
@@ -183,8 +194,22 @@ func main() {
 		writeAsCSV(
 			gammaData,
 			dataExtractorFlags.outputPath, "gamma", *configFileNamePointer,
-			[]string{"E/N", "integrated secondary emission coefficient", "analytic secondary emission coefficient", "final gamma loss", "sheath length"},
+			[]string{"E/N", "integrated secondary emission coefficient", "analytic secondary emission coefficient", "final gamma loss", "sheath length", "integrated secondary emission coefficient_conf_interval"},
 		)
 	}
 	fmt.Printf("Total elapsed time: %v\n\n", time.Since(startTime))
+	if *memprofile != "" {
+		f, err := os.Create(*memprofile)
+		if err != nil {
+			log.Fatal("could not create memory profile: ", err)
+		}
+		defer f.Close() // error handling omitted for example
+		runtime.GC()    // get up-to-date statistics
+		// Lookup("allocs") creates a profile similar to go test -memprofile.
+		// Alternatively, use Lookup("heap") for a profile
+		// that has inuse_space as the default index.
+		if err := pprof.Lookup("allocs").WriteTo(f, 0); err != nil {
+			log.Fatal("could not write memory profile: ", err)
+		}
+	}
 }

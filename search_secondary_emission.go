@@ -29,17 +29,41 @@ func SnApproxIntegral(S0, lambda, dc, L float64) float64 {
 	return -S0 * lambda * (math.Exp(-(L-dc)/lambda) - 1.)
 }
 
+func findNumberDensityMaximumIndex(de *DataExtractor) (xMaximum int) {
+	dcIndex := min(int(de.model.parameters.CathodeFallLength/de.model.xStep), de.model.numCells-2)
+	exactSnAtDc := de.collisions[lxgata.IONIZATION][dcIndex] + (de.model.parameters.CathodeFallLength-float64(dcIndex)*de.model.xStep)/de.model.xStep*(de.collisions[lxgata.IONIZATION][dcIndex+1]-de.collisions[lxgata.IONIZATION][dcIndex])
+	C1 := 0.5 * (exactSnAtDc + de.collisions[lxgata.IONIZATION][dcIndex])
+	for i := dcIndex; i < len(de.collisions[lxgata.IONIZATION]); i++ {
+		for j := 0; j < i; j++ {
+			C1 += de.collisions[lxgata.IONIZATION][j]
+		}
+	}
+	// C1 *= de.model.xStep
+	C1 *= -1
+	C1 /= de.model.parameters.GapLength - de.model.inverseCathodeFallLength
+
+	intS := 0.
+	maxIndex := 0
+	for ; maxIndex < len(de.collisions[lxgata.IONIZATION]); maxIndex++ {
+		intS += de.collisions[lxgata.IONIZATION][maxIndex]
+		if C1-intS < 0 {
+			break
+		}
+	}
+	return maxIndex
+}
+
 func findXNumberDensityMaximum(de *DataExtractor) (xMaximum float64) {
-	dcIndex := argmax(de.collisions[string(lxgata.IONIZATION)])
+	dcIndex := argmax(de.collisions[lxgata.IONIZATION])
 	dc := de.model.xStep * float64(dcIndex)
-	if de.collisions[string(lxgata.IONIZATION)] != nil {
-		S0 := de.collisions[string(lxgata.IONIZATION)][dcIndex] //* de.model.parameters.Pressure //* Torr / de.model.parameters.Pressure / de.cathodeFlux
+	if de.collisions[lxgata.IONIZATION] != nil {
+		S0 := de.collisions[lxgata.IONIZATION][dcIndex] //* de.model.parameters.Pressure //* Torr / de.model.parameters.Pressure / de.cathodeFlux
 		L := de.model.parameters.GapLength
 		var lambda float64
 		{
 			SrInt := 0.
-			for i := dcIndex; i < len(de.collisions[string(lxgata.IONIZATION)]); i++ {
-				SrInt += de.collisions[string(lxgata.IONIZATION)][i]
+			for i := dcIndex; i < len(de.collisions[lxgata.IONIZATION]); i++ {
+				SrInt += de.collisions[lxgata.IONIZATION][i]
 			}
 			SrInt *= de.model.xStep //* de.model.parameters.Pressure //* Torr / de.model.parameters.Pressure / de.cathodeFlux
 			lambda = ternarySearchMax(func(lambda float64) float64 {
@@ -63,12 +87,12 @@ func findXNumberDensityMaximum(de *DataExtractor) (xMaximum float64) {
 
 func gammaIntegralF(de *DataExtractor) float64 {
 	//calculate xMaximum
-	xMaximum := findXNumberDensityMaximum(de)
-	indexOfMaximum := min(int(xMaximum/de.model.xStep), len(de.collisions[string(lxgata.IONIZATION)]))
+	// xMaximum := findXNumberDensityMaximum(de)
+	indexOfMaximum := findNumberDensityMaximumIndex(de) //min(int(xMaximum/de.model.xStep), len(de.collisions[lxgata.IONIZATION]))
 	// print("x_max/step: ", int(x_max/de.model.xStep), " len: ", len(de.collisions[string(lxgata.IONIZATION)]), "\n")
-	sourceTermIntegral := de.collisions[string(lxgata.IONIZATION)][0]
-	for i := 1; i < indexOfMaximum; i++ {
-		sourceTermIntegral += de.collisions[string(lxgata.IONIZATION)][i]
+	sourceTermIntegral := 0. //de.collisions[lxgata.IONIZATION][0]
+	for i := range indexOfMaximum {
+		sourceTermIntegral += de.collisions[lxgata.IONIZATION][i]
 	}
 	sourceTermIntegral *= de.model.xStep * de.model.parameters.Pressure //* Torr / de.model.parameters.Pressure / de.cathodeFlux
 	return 1 / sourceTermIntegral                                       // -> NaN -??
