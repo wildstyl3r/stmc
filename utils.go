@@ -95,14 +95,6 @@ func average[T Number](s []T) (mean float64) {
 	return
 }
 
-func averageFromInt(s []int) (mean float64) {
-	for i := range s {
-		mean += float64(s[i])
-	}
-	mean /= float64(len(s))
-	return
-}
-
 func meanAndVariance[T Number](s []T, unbiased bool) (mean, variance float64) {
 	mean = average(s)
 	for i := range s {
