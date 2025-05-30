@@ -14,6 +14,10 @@ import (
 	"time"
 
 	"github.com/wildstyl3r/lxgata"
+	"github.com/wildstyl3r/stmc/internal/config"
+	"github.com/wildstyl3r/stmc/internal/constants"
+	"github.com/wildstyl3r/stmc/internal/model"
+	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
 func main() {
@@ -23,7 +27,7 @@ func main() {
 	threads := flag.Int("j", runtime.NumCPU(), "threads to run")
 	verbose := flag.Bool("v", true, "verbose")
 	debug := flag.Bool("d", false, "debug")
-	dataExtractorFlags := NewDataFlags()                                                                                 //Donko/cvc_45mbarcm3Dup
+	dataExtractorFlags := model.NewDataFlags()                                                                           //Donko/cvc_45mbarcm3Dup
 	configFileNamePointer := flag.String("i", "inputs/donko2009/240Pa_cm_3D.toml", "model configuration in toml format") //"inputs/val/BM_He", "model configuration in toml format")
 	rootFindingAlgorithm := flag.String("alg", "s", "root finder algorithm for gamma calculation ([s]tochastic approximation, [b]inary search, [t]ernary search)")
 	flag.Parse()
@@ -37,13 +41,13 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 	fmt.Printf("CONFIG: %s\n", *configFileNamePointer)
-	var config, meta = LoadConfig(strings.TrimSuffix(*configFileNamePointer, ".toml"))
+	var config, meta = config.LoadConfig(strings.TrimSuffix(*configFileNamePointer, ".toml"))
 
 	if config.OutputDir != "" && config.OutputDir != "." {
-		outputDir := strings.TrimSuffix(config.OutputDir, "/") + "/" + getFilename(*configFileNamePointer) + "/"
+		outputDir := strings.TrimSuffix(config.OutputDir, "/") + "/" + utils.GetFilename(*configFileNamePointer) + "/"
 		fmt.Printf("OUTPUT DIR: %s\n", outputDir)
 		os.MkdirAll(config.OutputDir, 0750)
-		dataExtractorFlags.outputPath += outputDir
+		dataExtractorFlags.SetOutputPath(outputDir)
 	} else {
 		panic(fmt.Errorf("output folder not specified"))
 	}
@@ -52,20 +56,19 @@ func main() {
 	if err != nil {
 		panic(fmt.Errorf("invalid cross section file: %w", err))
 	}
-	var gammaData CSV
+	var gammaData utils.CSV
 
 	for modelName, parameters := range config.Models {
-		parameters._crossSections = &crossSections
-		parameters._verbose = *verbose
-		parameters._threads = *threads
-		parameters._dataFlags = &dataExtractorFlags
+		parameters.SetCrossSectionsData(&crossSections)
+		parameters.SetVerbosity(*verbose)
+		parameters.SetThreads(*threads)
 
 		modelStartTime := time.Now()
 		fmt.Printf("Current time: %s\n", modelStartTime.UTC().Format(time.UnixDate))
 
 		runtime.GC()
 		fmt.Println("\n" + modelName)
-		if !parameters.checkUnify(modelName, &config, &meta) {
+		if !parameters.CheckAndUnify(modelName, &config, &meta) {
 			fmt.Printf("found a problem in the config for [%v], skipping\n", modelName)
 			continue
 		}
@@ -77,7 +80,7 @@ func main() {
 			}
 			iteration := 1
 			itp := &iteration
-			minDc, maxDc := estimateCathodeFallLengthLimits(&parameters)
+			minDc, maxDc := model.EstimateCathodeFallLengthLimits(&parameters)
 			if *debug {
 				dcStep := 0.00001
 				nSteps := int((maxDc - minDc) / dcStep)
@@ -87,27 +90,27 @@ func main() {
 				debugData := [][]string{{"dc", "E/N", "integrated secondary emission coefficient", "analytic secondary emission coefficient", "gamma difference"}}
 				for i := range gamma {
 					dc := float64(i)*dcStep + minDc
-					var lossType LossType
+					var lossType utils.LossType
 					switch *rootFindingAlgorithm {
 					case "t":
-						lossType = MSE
+						lossType = utils.MSE
 					case "b", "s":
-						lossType = Difference
+						lossType = utils.Difference
 					}
-					gammaLoss, gamma[i], gammaAnalytic, _ = gammaCalculationStep(itp, dc, parameters, lossType)
+					gammaLoss, gamma[i], gammaAnalytic, _ = model.GammaCalculationStep(itp, dc, parameters, lossType)
 					intS[i] = 1. / gamma[i]
 					debugData = append(debugData, []string{
 						strconv.FormatFloat(dc, 'f', 10, 64),
-						strconv.FormatFloat(parameters.CathodeFallPotential/(dc*parameters.gasDensity*Townsend), 'f', 10, 64),
+						strconv.FormatFloat(parameters.CathodeFallPotential/(dc*parameters.GasDensity*constants.Townsend), 'f', 10, 64),
 						strconv.FormatFloat(gamma[i], 'f', 10, 64),
 						strconv.FormatFloat(gammaAnalytic, 'f', 10, 64),
 						strconv.FormatFloat(gammaLoss, 'f', 10, 64), //strconv.FormatFloat(gammaVariance, 'f', 10, 64),
 					})
 				}
-				gammaMean, gammaVariance := meanAndVariance(gamma, true)
-				intSMean, intSVariance := meanAndVariance(intS, true)
+				gammaMean, gammaVariance := utils.MeanAndVariance(gamma, true)
+				intSMean, intSVariance := utils.MeanAndVariance(intS, true)
 				fmt.Printf("[%s] gamma mean: %.9f, gamma variance: %.9f, integral S mean: %.9f, integral S variance: %.9f\n", modelName, gammaMean, gammaVariance, intSMean, intSVariance)
-				debugFile, err := openFile(true, dataExtractorFlags.outputPath, "debug", getFilename(*configFileNamePointer)+modelName)
+				debugFile, err := utils.OpenFile(true, dataExtractorFlags.GetOutputPath(), "debug", utils.GetFilename(*configFileNamePointer)+modelName)
 
 				if err != nil {
 					println("unable to save dc and secondary emission coefficient: ", err.Error())
@@ -119,43 +122,35 @@ func main() {
 				}
 			} else {
 				var dc float64
-				var dataExtractor *DataExtractor
+				var dataExtractor *model.DataExtractor
 				switch *rootFindingAlgorithm {
 				case "s":
 					fmt.Println("calculating gamma with stochastic approximation")
-					var fLeft, fRight, initialDcL, initialDcR float64 // := f(left+0.5*thetaPrecision), f(right-0.5*thetaPrecision)
+					var fLeft, fRight, initialDc float64 // := f(left+0.5*thetaPrecision), f(right-0.5*thetaPrecision)
 					{
 						var gILeft, gIRight float64
-						fLeft, gILeft, _, _ = gammaCalculationStep(nil, minDc+parameters.CathodeFallLengthPrecision, parameters, Difference)
-						fRight, gIRight, _, _ = gammaCalculationStep(nil, maxDc-parameters.CathodeFallLengthPrecision, parameters, Difference)
+						fLeft, gILeft, _, _ = model.GammaCalculationStep(nil, minDc+parameters.CathodeFallLengthPrecision, parameters, utils.Difference)
+						fRight, gIRight, _, _ = model.GammaCalculationStep(nil, maxDc-parameters.CathodeFallLengthPrecision, parameters, utils.Difference)
 
 						meanGI := 0.5 * (gILeft + gIRight)
-						initialDcL, initialDcR = binarySearch(func(dc float64) bool {
-							return meanGI < gammaAnalyticF(
-								dc,
-								parameters.CathodeCurrentDensity,
-								parameters.CathodeFallPotential,
-								parameters.gasDensity,
-								ionDriftVelocity[parameters.Species])
-						}, minDc, maxDc, parameters.CathodeFallLengthPrecision*0.1)
+						initialDc = model.GetApproximateDcForGamma(meanGI, minDc, maxDc, parameters)
 					}
 					approxLossDerivative := (fRight - fLeft) / (maxDc - minDc - 2*parameters.CathodeFallLengthPrecision)
-					initialDc := 0.5 * (initialDcL + initialDcR)
 
 					gammaI := []float64{}
-					dc = stochasticApproximation(minDc, maxDc, initialDc, approxLossDerivative, parameters.CathodeFallLengthPrecision, quantile95, 10, func(dc float64) float64 {
-						gammaLoss, gammaIntegral, gammaAnalytic, dataExtractor = gammaCalculationStep(itp, dc, parameters, Difference)
+					dc = utils.StochasticApproximation(minDc, maxDc, initialDc, approxLossDerivative, parameters.CathodeFallLengthPrecision, constants.Quantile95, 10, func(dc float64) float64 {
+						gammaLoss, gammaIntegral, gammaAnalytic, dataExtractor = model.GammaCalculationStep(itp, dc, parameters, utils.Difference)
 						gammaI = append(gammaI, gammaIntegral)
 						return gammaLoss
 					})
-					gammaIntegral, gammaVariance = meanAndVariance(gammaI[len(gammaI)-10:], true)
-					gammaCI = 2 * math.Sqrt(gammaVariance) * quantile95 / math.Sqrt(float64(10))
+					gammaIntegral, gammaVariance = utils.MeanAndVariance(gammaI[len(gammaI)-10:], true)
+					gammaCI = 2 * math.Sqrt(gammaVariance) * constants.Quantile95 / math.Sqrt(float64(10))
 					gammaLoss = gammaAnalytic - gammaIntegral
 
 				case "b":
 					fmt.Println("calculating gamma with naive bisection")
-					dcLeft, dcRight := binarySearch(func(dc float64) bool {
-						gammaLoss, gammaIntegral, gammaAnalytic, dataExtractor = gammaCalculationStep(itp, dc, parameters, Difference)
+					dcLeft, dcRight := utils.BinarySearch(func(dc float64) bool {
+						gammaLoss, gammaIntegral, gammaAnalytic, dataExtractor = model.GammaCalculationStep(itp, dc, parameters, utils.Difference)
 						return gammaLoss > 0
 					}, minDc, min(maxDc, parameters.GapLength), parameters.CathodeFallLengthPrecision) //0, parameters.GapLength, parameters.CathodeFallLengthPrecision)
 					dc = 0.5 * (dcLeft + dcRight)
@@ -163,15 +158,15 @@ func main() {
 				case "t":
 					fmt.Println("calculating gamma with naive ternary search")
 					fmt.Printf("min dc: %f, max dc: %f, gap len: %f\n", minDc, maxDc, parameters.GapLength)
-					dc = ternarySearchMax(func(dc float64) float64 {
-						gammaLoss, gammaIntegral, gammaAnalytic, dataExtractor = gammaCalculationStep(itp, dc, parameters, MSE)
+					dc = utils.TernarySearchMax(func(dc float64) float64 {
+						gammaLoss, gammaIntegral, gammaAnalytic, dataExtractor = model.GammaCalculationStep(itp, dc, parameters, utils.MSE)
 						return -gammaLoss
 					}, minDc, min(maxDc, parameters.GapLength), parameters.CathodeFallLengthPrecision) //0, parameters.GapLength, parameters.CathodeFallLengthPrecision)
 				}
-				dataExtractor.save(modelName)
+				dataExtractor.Save(modelName, dataExtractorFlags)
 				gammaData = append(gammaData,
 					[]string{
-						strconv.FormatFloat(parameters.CathodeFallPotential/(dc*parameters.gasDensity*Townsend), 'f', 10, 64),
+						strconv.FormatFloat(parameters.CathodeFallPotential/(dc*parameters.GasDensity*constants.Townsend), 'f', 10, 64),
 						strconv.FormatFloat(gammaIntegral, 'f', 10, 64),
 						strconv.FormatFloat(gammaAnalytic, 'f', 10, 64),
 						strconv.FormatFloat(gammaLoss, 'f', 10, 64),
@@ -182,18 +177,18 @@ func main() {
 			}
 
 		} else {
-			model := newModel(parameters.CathodeFallLength, parameters)
-			model.run()
-			dataExtractor := newDataExtractor(&model)
+			m := model.NewModel(parameters.CathodeFallLength, parameters)
+			m.Run()
+			dataExtractor := model.NewDataExtractor(&m)
 
-			dataExtractor.save(modelName)
+			dataExtractor.Save(modelName, dataExtractorFlags)
 		}
 		fmt.Printf("Elapsed time: %v\n", time.Since(modelStartTime))
 	}
 	if len(gammaData) > 0 {
-		writeAsCSV(
+		utils.WriteAsCSV(
 			gammaData,
-			dataExtractorFlags.outputPath, "gamma", *configFileNamePointer,
+			dataExtractorFlags.GetOutputPath(), "gamma", *configFileNamePointer,
 			[]string{"E/N", "integrated secondary emission coefficient", "analytic secondary emission coefficient", "final gamma loss", "sheath length", "integrated secondary emission coefficient_conf_interval"},
 		)
 	}

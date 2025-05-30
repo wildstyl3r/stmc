@@ -1,5 +1,7 @@
 package config
 
+import "github.com/wildstyl3r/stmc/internal/utils"
+
 var unitToSI = map[string]float64{
 	"Pa":   1,              // [Pa]
 	"bar":  1e5,            // [Pa]
@@ -16,35 +18,35 @@ var unitToSI = map[string]float64{
 type UnitClass int
 
 const (
-	length UnitClass = iota
-	current
-	pressure
-	energy
+	Length UnitClass = iota
+	Current
+	Pressure
+	Energy
 )
 
 var unitsInClass = map[UnitClass][]string{
-	length:   {"mm", "cm", "m"},
-	current:  {"mkA", "mA", "A"},
-	pressure: {"Torr", "mbar", "bar", "Pa"},
-	energy:   {"eV", "J"},
+	Length:   {"mm", "cm", "m"},
+	Current:  {"mkA", "mA", "A"},
+	Pressure: {"Torr", "mbar", "bar", "Pa"},
+	Energy:   {"eV", "J"},
 }
 
 var classesOfUnits = map[string]UnitClass{
-	"Pa":   pressure,
-	"bar":  pressure,
-	"mbar": pressure,
-	"Torr": pressure,
-	"m":    length,
-	"cm":   length,
-	"mm":   length,
-	"A":    current,
-	"mA":   current,
-	"mkA":  current,
+	"Pa":   Pressure,
+	"bar":  Pressure,
+	"mbar": Pressure,
+	"Torr": Pressure,
+	"m":    Length,
+	"cm":   Length,
+	"mm":   Length,
+	"A":    Current,
+	"mA":   Current,
+	"mkA":  Current,
 }
 
 type UnitElement = struct {
-	class UnitClass
-	power int
+	Class UnitClass
+	Power int
 }
 
 func checkUnits(units []string) (extended, conflicts []string) {
@@ -68,10 +70,10 @@ func checkUnits(units []string) (extended, conflicts []string) {
 func SI(v float64, classes []UnitElement, units []string, direct bool) float64 {
 	for i := range classes {
 		uc := classes[i]
-		unit := intersect(unitsInClass[uc.class], units)
-		absPower := intAbs(uc.power)
+		unit := utils.Intersect(unitsInClass[uc.Class], units)
+		absPower := utils.IntAbs(uc.Power)
 		if direct {
-			if uc.power > 0 {
+			if uc.Power > 0 {
 				for range absPower {
 					v *= unitToSI[*unit]
 				}
@@ -81,7 +83,7 @@ func SI(v float64, classes []UnitElement, units []string, direct bool) float64 {
 				}
 			}
 		} else {
-			if uc.power > 0 {
+			if uc.Power > 0 {
 				for range absPower {
 					v /= unitToSI[*unit]
 				}

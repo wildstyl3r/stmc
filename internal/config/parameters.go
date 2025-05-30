@@ -11,6 +11,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/wildstyl3r/lxgata"
+	"github.com/wildstyl3r/stmc/internal/constants"
+	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
 type Config struct {
@@ -35,7 +37,7 @@ func (c *Config) isDefined(path []string, meta *toml.MetaData) bool {
 	}
 }
 
-func loadConfig(configFileName string) (Config, toml.MetaData) {
+func LoadConfig(configFileName string) (Config, toml.MetaData) {
 	var config Config
 	config.isDefinedMap = map[string]struct{}{}
 	meta, err := toml.DecodeFile(configFileName+".toml", &config)
@@ -64,20 +66,20 @@ func loadConfig(configFileName string) (Config, toml.MetaData) {
 			fmt.Printf("Simultaneous CVC file listing and direct model specification not supported\n")
 			os.Exit(0)
 		}
-		cvc, err := readFloatPairs(config.CVC)
+		cvc, err := utils.ReadFloatPairs(config.CVC)
 		if err != nil {
 			fmt.Printf("CVC file reading error: %v\n", err)
 			os.Exit(0)
 		}
-		filename := getFilename(config.CVC)
+		filename := utils.GetFilename(config.CVC)
 		config.Models = make(map[string]ModelParameters, len(cvc))
 		for line := range cvc {
 			modelName := filename + "_l" + strconv.Itoa(line+1)
-			if config.CurrentDividedByPressure2 && !slices.Contains(valueUnits["CathodeCurrent"], UnitElement{class: pressure, power: -2}) {
-				valueUnits["CathodeCurrent"] = append(valueUnits["CathodeCurrent"], UnitElement{class: pressure, power: -2})
+			if config.CurrentDividedByPressure2 && !slices.Contains(valueUnits["CathodeCurrent"], UnitElement{Class: Pressure, Power: -2}) {
+				valueUnits["CathodeCurrent"] = append(valueUnits["CathodeCurrent"], UnitElement{Class: Pressure, Power: -2})
 			}
-			if config.CurrentDividedByArea && !slices.Contains(valueUnits["CathodeCurrent"], UnitElement{class: length, power: -2}) {
-				valueUnits["CathodeCurrent"] = append(valueUnits["CathodeCurrent"], UnitElement{class: length, power: -2})
+			if config.CurrentDividedByArea && !slices.Contains(valueUnits["CathodeCurrent"], UnitElement{Class: Length, Power: -2}) {
+				valueUnits["CathodeCurrent"] = append(valueUnits["CathodeCurrent"], UnitElement{Class: Length, Power: -2})
 			}
 			config.Models[modelName] = ModelParameters{
 				CathodeCurrent:       cvc[line][0],
@@ -124,12 +126,43 @@ type ModelParameters struct {
 
 	CountNulls bool
 
-	gasDensity     float64
+	GasDensity     float64
 	_crossSections *lxgata.Collisions
 	_outputUnits   []string
 	_verbose       bool
 	_threads       int
-	_dataFlags     *DataFlags
+}
+
+func (p *ModelParameters) CrossSectionsData() *lxgata.Collisions {
+	return p._crossSections
+}
+
+func (p *ModelParameters) SetCrossSectionsData(cd *lxgata.Collisions) {
+	p._crossSections = cd
+}
+
+func (p *ModelParameters) OutputUnits() []string {
+	return p._outputUnits
+}
+
+func (p *ModelParameters) SetOutputUnits(u []string) {
+	p._outputUnits = u
+}
+
+func (p *ModelParameters) Verbose() bool {
+	return p._verbose
+}
+
+func (p *ModelParameters) SetVerbosity(verbose bool) {
+	p._verbose = verbose
+}
+
+func (p *ModelParameters) Threads() int {
+	return p._threads
+}
+
+func (p *ModelParameters) SetThreads(threads int) {
+	p._threads = threads
 }
 
 var defaultValues = map[string]any{ // in SI
@@ -169,30 +202,30 @@ var fieldsDerivable map[string][]string = map[string][]string{
 
 var valueUnits = map[string][]UnitElement{
 	"GapLength": {
-		{class: length, power: 1},
+		{Class: Length, Power: 1},
 	},
 	"CathodeFallLength": {
-		{class: length, power: 1},
+		{Class: Length, Power: 1},
 	},
 	"CathodeCurrentDensity": {
-		{class: current, power: 1},
-		{class: length, power: -2},
+		{Class: Current, Power: 1},
+		{Class: Length, Power: -2},
 	},
 	"CathodeCurrent": {
-		{class: current, power: 1},
+		{Class: Current, Power: 1},
 	},
 	"ConstEField": {
-		{class: length, power: 1},
+		{Class: Length, Power: 1},
 	},
 	"PressureGapLength": {
-		{class: pressure, power: 1},
-		{class: length, power: 1},
+		{Class: Pressure, Power: 1},
+		{Class: Length, Power: 1},
 	},
 	"Pressure": {
-		{class: pressure, power: 1},
+		{Class: Pressure, Power: 1},
 	},
 	"CathodeRadius": {
-		{class: length, power: 1},
+		{Class: Length, Power: 1},
 	},
 }
 
@@ -201,16 +234,16 @@ var calculableFields = map[string]func(
 	[]string,
 ) []string{
 	"CathodeCurrent": func(mp *ModelParameters, definedFields []string) []string {
-		if slices.Contains(definedFields, "CathodeRadius") || slices.Contains(valueUnits["CathodeCurrent"], UnitElement{class: length, power: -2}) {
+		if slices.Contains(definedFields, "CathodeRadius") || slices.Contains(valueUnits["CathodeCurrent"], UnitElement{Class: Length, Power: -2}) {
 			temporary := mp.CathodeCurrent
-			if slices.Contains(valueUnits["CathodeCurrent"], UnitElement{class: pressure, power: -2}) {
+			if slices.Contains(valueUnits["CathodeCurrent"], UnitElement{Class: Pressure, Power: -2}) {
 				if slices.Contains(definedFields, "Pressure") {
 					temporary *= mp.Pressure * mp.Pressure
 				} else {
 					return nil
 				}
 			}
-			if !slices.Contains(valueUnits["CathodeCurrent"], UnitElement{class: length, power: -2}) {
+			if !slices.Contains(valueUnits["CathodeCurrent"], UnitElement{Class: Length, Power: -2}) {
 				area := math.Pi * mp.CathodeRadius * mp.CathodeRadius
 				temporary /= area
 			}
@@ -294,7 +327,7 @@ field value priority:
 5. default
 */
 
-func (modelConfig *ModelParameters) checkUnify(modelName string, config *Config, meta *toml.MetaData) bool {
+func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Config, meta *toml.MetaData) bool {
 	globalAmbiguities, globalMissingDeps := config.checkFieldProblems([]string{}, meta, config)
 	localAmbiguities, localMissingDeps := modelConfig.checkFieldProblems([]string{"Models", modelName}, meta, config)
 	if len(globalAmbiguities) > 0 {
@@ -419,7 +452,7 @@ func (modelConfig *ModelParameters) checkUnify(modelName string, config *Config,
 	}
 
 	modelConfig.CathodeFallPotential += config.AddPotential
-	modelConfig.gasDensity = modelConfig.Pressure / (kBolzmann * modelConfig.Temperature)
+	modelConfig.GasDensity = modelConfig.Pressure / (constants.KBolzmann * modelConfig.Temperature)
 	var conflict []string
 	units, conflict := checkUnits(config.OutputUnits)
 	if len(conflict) > 0 {

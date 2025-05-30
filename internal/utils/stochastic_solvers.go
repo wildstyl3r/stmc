@@ -1,4 +1,4 @@
-package sec
+package utils
 
 import (
 	"fmt"
@@ -6,7 +6,14 @@ import (
 	"math/rand"
 )
 
-func stochasticApproximation(leftBound, rightBound,
+type LossType int
+
+const (
+	MSE LossType = iota
+	Difference
+)
+
+func StochasticApproximation(leftBound, rightBound,
 	initialTheta,
 	approxFDerivative,
 	thetaPrecision,
@@ -37,7 +44,7 @@ func stochasticApproximation(leftBound, rightBound,
 		}
 
 		if len(thetas) > minSteps {
-			varianceThetaNow := variance(thetas[len(thetas)-minSteps:], true)
+			varianceThetaNow := Variance(thetas[len(thetas)-minSteps:], true)
 			confidenceInterval = 2 * math.Sqrt(varianceThetaNow) * quantile / math.Sqrt(float64(minSteps))
 		}
 	}

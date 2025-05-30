@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+
+	"github.com/wildstyl3r/stmc/internal/constants"
+	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
 type Particle struct {
@@ -24,7 +27,7 @@ type Particle struct {
 }
 
 func (m *Model) newParticle(origin int) Particle {
-	y, z := UniformOnDisk(m.parameters.CathodeRadius)
+	y, z := utils.UniformOnDisk(m.Parameters.CathodeRadius)
 	eta := rand.Float64() * 2. * math.Pi
 	eKinetic := 4. + rand.Float64()
 	mu := rand.Float64()
@@ -36,8 +39,8 @@ func (m *Model) newParticle(origin int) Particle {
 		mu:         mu,
 		sinEta:     math.Sin(eta),
 		cosEta:     math.Cos(eta),
-		c1:         -m.parameters.CathodeFallLength,
-		c2:         m.parameters.CathodeFallLength * math.Sqrt(eKinetic*mu*mu/m.parameters.CathodeFallPotential),
+		c1:         -m.Parameters.CathodeFallLength,
+		c2:         m.Parameters.CathodeFallLength * math.Sqrt(eKinetic*mu*mu/m.Parameters.CathodeFallPotential),
 		prevMuSign: mu,
 		origin:     origin,
 	}
@@ -52,7 +55,7 @@ func (p *Particle) setEnergy(eKinetic float64, s *Model, zeroChangeAcceptable bo
 		panic("eKinetic < p.eStar")
 	}
 	if math.Abs(p.eKinetic-eKinetic) < 1e-16 && !zeroChangeAcceptable {
-		fmt.Printf("need to be at cell: %f coord by V is %f, coord real is %f\n", s.LfromV(-(p.totEnergy-p.eKinetic))/s.xStep, s.LfromV(-(p.totEnergy - p.eKinetic)), p.x)
+		fmt.Printf("need to be at cell: %f coord by V is %f, coord real is %f\n", s.LfromV(-(p.totEnergy-p.eKinetic))/s.XStep, s.LfromV(-(p.totEnergy - p.eKinetic)), p.x)
 		panic("no change in energy")
 	}
 	p.eKinetic = eKinetic
@@ -79,11 +82,11 @@ func (p *Particle) recalcParams(s *Model) {
 		println("wtf, tot energy greater than might ever be")
 	}
 
-	if s.parameters.Volumetric {
+	if s.Parameters.Volumetric {
 		cosBt, sinBt := math.Cos(p.prevBt), math.Sin(p.prevBt)
-		b := math.Sqrt(2.*electronCharge/electornMass*s.parameters.CathodeFallPotential) / s.parameters.CathodeFallLength
-		vx := math.Copysign(eV2electronVelocity(p.eKinetic-p.eStar), p.mu)
-		currentXminusD := p.x - s.parameters.CathodeFallLength
+		b := math.Sqrt(2.*constants.ElectronCharge/constants.ElectornMass*s.Parameters.CathodeFallPotential) / s.Parameters.CathodeFallLength
+		vx := math.Copysign(utils.EV2electronVelocity(p.eKinetic-p.eStar), p.mu)
+		currentXminusD := p.x - s.Parameters.CathodeFallLength
 		lower := math.FMA(b*cosBt, cosBt, sinBt*vx)
 		p.c1 = math.FMA(currentXminusD*b, cosBt, -sinBt*vx) / lower
 		p.c2 = math.FMA(b*sinBt, currentXminusD, vx*cosBt) / lower
@@ -101,9 +104,9 @@ func (p *Particle) M(i int, s *Model) float64 {
 	if eRight <= 0. {
 		panic("stf")
 	}
-	return ternarySearchMaxF(func(eKin float64) float64 {
+	return utils.TernarySearchMaxF(func(eKin float64) float64 {
 		potential := -(p.totEnergy - eKin)
-		return -s.parameters.gasDensity * s.parameters._crossSections.TotalCrossSectionAt(eKin) * math.Sqrt(eKin) / s.EFieldFromL(s.LfromV(potential))
+		return -s.Parameters.GasDensity * s.Parameters.CrossSectionsData().TotalCrossSectionAt(eKin) * math.Sqrt(eKin) / s.EFieldFromL(s.LfromV(potential))
 	}, eLeft, eRight, 0.00001)
 }
 
@@ -118,7 +121,7 @@ func (p *Particle) redirect(cosChi, cosPhi float64, m *Model) {
 	oldCosTheta := p.mu
 
 	p.mu = math.FMA(p.mu, cosChi, -sinTheta*cosPhi_sinChi)
-	if m.parameters.Volumetric {
+	if m.Parameters.Volumetric {
 		sinTheta_cosChi_plus_cosTheta_cosPhi_sinPhi := math.FMA(sinTheta, cosChi, oldCosTheta*cosPhi_sinChi)
 		sinPhi_sinChi := math.Sqrt(math.FMA(cosPhi, -cosPhi, 1.) * math.FMA(cosChi, -cosChi, 1.))
 		nu := math.FMA(p.cosEta, sinTheta_cosChi_plus_cosTheta_cosPhi_sinPhi, p.sinEta*sinPhi_sinChi)
@@ -149,7 +152,7 @@ func (p *Particle) xAnalytic(bt float64, m *Model) float64 {
 
 func (p *Particle) updateExtraDims(m *Model) {
 	/// updates particle's y and z, and sets new prev_bt value
-	b := math.Sqrt(2.*electronCharge/electornMass*m.parameters.CathodeFallPotential) / m.parameters.CathodeFallLength
+	b := math.Sqrt(2.*constants.ElectronCharge/constants.ElectornMass*m.Parameters.CathodeFallPotential) / m.Parameters.CathodeFallLength
 	var bt float64
 	btCathodeFallLength := math.Atan(-p.c1 / p.c2)
 	if math.IsNaN(btCathodeFallLength) {
@@ -164,7 +167,7 @@ func (p *Particle) updateExtraDims(m *Model) {
 	}
 	//check negative mu case
 	if p.prevMuSign > 0 && p.mu > 0 {
-		bt = ternarySearchMax(func(bt float64) float64 {
+		bt = utils.TernarySearchMax(func(bt float64) float64 {
 			bt_x := p.xAnalytic(bt, m)
 			return -(p.x - bt_x) * (p.x - bt_x)
 		}, p.prevBt, btCathodeFallLength, 1e-6)
@@ -173,7 +176,7 @@ func (p *Particle) updateExtraDims(m *Model) {
 		}
 	} else if p.prevMuSign <= 0 && p.mu > 0 {
 		btBeforeReverse := btReverse - p.prevBt
-		btAfterReverse := ternarySearchMax(func(bt float64) float64 {
+		btAfterReverse := utils.TernarySearchMax(func(bt float64) float64 {
 			bt_x := p.xAnalytic(bt, m)
 			return -(p.x - bt_x) * (p.x - bt_x)
 		}, btReverse, btCathodeFallLength, 1e-6)
@@ -182,7 +185,7 @@ func (p *Particle) updateExtraDims(m *Model) {
 			panic("bt is NaN in case pMu < 0 && mu > 0")
 		}
 	} else if p.prevMuSign <= 0 && p.mu <= 0 {
-		bt = ternarySearchMax(func(bt float64) float64 {
+		bt = utils.TernarySearchMax(func(bt float64) float64 {
 			bt_x := p.xAnalytic(bt, m)
 			return -(p.x - bt_x) * (p.x - bt_x)
 		}, p.prevBt, btReverse, 1e-6)
@@ -194,7 +197,7 @@ func (p *Particle) updateExtraDims(m *Model) {
 		panic("should-be-impossible condition: prev mu > 0, current mu < 0")
 	}
 	t := bt / b
-	p.y = p.sinEta * eV2electronVelocity(p.eStar) * t
-	p.z = p.cosEta * eV2electronVelocity(p.eStar) * t
+	p.y = p.sinEta * utils.EV2electronVelocity(p.eStar) * t
+	p.z = p.cosEta * utils.EV2electronVelocity(p.eStar) * t
 	p.prevBt = bt
 }
