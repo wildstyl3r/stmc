@@ -172,6 +172,12 @@ func newDataFlags() DataFlags {
 				},
 				columnNames: []string{"x (cm)", "cm ^ -1"},
 				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					for label := range de.collisions {
+						labels = append(labels, string(label))
+						if de.model.parameters.CalculateStdError {
+							labels = append(labels, string(label)+"_conf_interval")
+						}
+					}
 					sort.Strings(labels)
 					for x := range de.model.numCells {
 						args = append(args, de.model.xStep*float64(x))
@@ -183,6 +189,23 @@ func newDataFlags() DataFlags {
 				},
 				xUnit: []UnitElement{{class: length, power: 1}},
 				yUnit: []UnitElement{{class: length, power: -1}},
+			},
+			"Plasma density": {
+				DataItem: DataItem{
+					saveFlag:   flag.Bool("n", true, "save plasma density"),
+					fileSuffix: "n",
+				},
+				columnNames: []string{"x (cm)", "cm ^ -3"},
+				values: func(de *DataExtractor) (args []float64, values [][]float64, labels []string) {
+					density := glowDischargeDensity(de)
+					for x := range de.model.numCells {
+						args = append(args, de.model.xStep*float64(x))
+						values = append(values, []float64{density[x]})
+					}
+					return args, values, []string{"Plasma density n(x)"}
+				},
+				xUnit: []UnitElement{{class: length, power: 1}},
+				yUnit: []UnitElement{{class: length, power: -3}},
 			},
 		},
 	}

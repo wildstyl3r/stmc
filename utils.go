@@ -131,6 +131,18 @@ func intAbs(a int) int {
 
 }
 
+func tableIntegrate(s []float64, multiply func(float64) float64, step float64) (sum float64) {
+	for i := range s {
+		if multiply == nil {
+			sum += s[i]
+		} else {
+			sum += s[i] * multiply(float64(i)*step)
+		}
+	}
+	sum *= step
+	return
+}
+
 func R() float64 {
 	return -math.Log(rand.Float64())
 }

@@ -25,77 +25,51 @@ var ionDriftVelocity = map[string](func(V, dc, N float64) float64){
 	},
 }
 
-func SnApproxIntegral(S0, lambda, dc, L float64) float64 {
-	return -S0 * lambda * (math.Exp(-(L-dc)/lambda) - 1.)
-}
+func glowDischargeDensity(de *DataExtractor) (density []float64) {
+	density = make([]float64, len(de.collisions[lxgata.IONIZATION]))
 
-func findNumberDensityMaximumIndex(de *DataExtractor) (xMaximum int) {
 	dcIndex := min(int(de.model.parameters.CathodeFallLength/de.model.xStep), de.model.numCells-2)
 	exactSnAtDc := de.collisions[lxgata.IONIZATION][dcIndex] + (de.model.parameters.CathodeFallLength-float64(dcIndex)*de.model.xStep)/de.model.xStep*(de.collisions[lxgata.IONIZATION][dcIndex+1]-de.collisions[lxgata.IONIZATION][dcIndex])
-	C1 := 0.5 * (exactSnAtDc + de.collisions[lxgata.IONIZATION][dcIndex])
-	for i := dcIndex; i < len(de.collisions[lxgata.IONIZATION]); i++ {
-		for j := 0; j < i; j++ {
-			C1 += de.collisions[lxgata.IONIZATION][j]
+	C1 := 0.5 * (exactSnAtDc + de.collisions[lxgata.IONIZATION][dcIndex]) * de.model.xStep
+	{
+		accum := tableIntegrate(de.collisions[lxgata.IONIZATION][:dcIndex], nil, de.model.xStep)
+		for i := dcIndex; i < len(de.collisions[lxgata.IONIZATION]); i++ {
+			C1 += accum
+			accum += de.collisions[lxgata.IONIZATION][i] * de.model.xStep
+		}
+		C1 *= -de.model.xStep
+		C1 /= (de.model.parameters.GapLength - de.model.parameters.CathodeFallLength)
+	}
+	C2 := 0.
+	{
+		accum := 0.
+		for i := range de.collisions[lxgata.IONIZATION] {
+			C2 -= accum
+			accum += de.collisions[lxgata.IONIZATION][i] * de.model.xStep //tableIntegrate(de.collisions[lxgata.IONIZATION][:i], nil, de.model.xStep)
+		}
+		C2 *= de.model.xStep
+		C2 -= C1 * de.model.parameters.GapLength
+	}
+	{
+		sum := 0.
+		accum := 0.
+		for j := range de.collisions[lxgata.IONIZATION] {
+			sum += accum
+			accum += de.collisions[lxgata.IONIZATION][j] * de.model.xStep
+			density[j] = -(sum*de.model.xStep + C1*float64(j)*de.model.xStep + C2)
 		}
 	}
-	// C1 *= de.model.xStep
-	C1 *= -1
-	C1 /= de.model.parameters.GapLength - de.model.inverseCathodeFallLength
-
-	intS := 0.
-	maxIndex := 0
-	for ; maxIndex < len(de.collisions[lxgata.IONIZATION]); maxIndex++ {
-		intS += de.collisions[lxgata.IONIZATION][maxIndex]
-		if C1-intS < 0 {
-			break
-		}
-	}
-	return maxIndex
-}
-
-func findXNumberDensityMaximum(de *DataExtractor) (xMaximum float64) {
-	dcIndex := argmax(de.collisions[lxgata.IONIZATION])
-	dc := de.model.xStep * float64(dcIndex)
-	if de.collisions[lxgata.IONIZATION] != nil {
-		S0 := de.collisions[lxgata.IONIZATION][dcIndex] //* de.model.parameters.Pressure //* Torr / de.model.parameters.Pressure / de.cathodeFlux
-		L := de.model.parameters.GapLength
-		var lambda float64
-		{
-			SrInt := 0.
-			for i := dcIndex; i < len(de.collisions[lxgata.IONIZATION]); i++ {
-				SrInt += de.collisions[lxgata.IONIZATION][i]
-			}
-			SrInt *= de.model.xStep //* de.model.parameters.Pressure //* Torr / de.model.parameters.Pressure / de.cathodeFlux
-			lambda = ternarySearchMax(func(lambda float64) float64 {
-				analyticInt := SnApproxIntegral(S0, lambda, dc, L)
-				return -(analyticInt - SrInt) * (analyticInt - SrInt)
-			}, 0.001, 1000, 1.e-8)
-		}
-		//K := S0 * lambda * lambda / de.model.parameters.DAmbipolar //not important since we only need maximum
-		if de.model.parameters.ParallelPlaneHollowCathode {
-			xMaximum = L
-		} else {
-			xMaximum = ternarySearchMax(func(x float64) float64 {
-				return glowDischargeNumberDensity(x, dc, L, lambda) //, D_amb float64)
-			}, dc, L, 1.e-8)
-		}
-		return xMaximum
-	} else {
-		return math.NaN()
-	}
+	return
 }
 
 func gammaIntegralF(de *DataExtractor) float64 {
 	//calculate xMaximum
 	// xMaximum := findXNumberDensityMaximum(de)
-	indexOfMaximum := findNumberDensityMaximumIndex(de) //min(int(xMaximum/de.model.xStep), len(de.collisions[lxgata.IONIZATION]))
+	indexOfMaximum := argmax(glowDischargeDensity(de))
 	// print("x_max/step: ", int(x_max/de.model.xStep), " len: ", len(de.collisions[string(lxgata.IONIZATION)]), "\n")
-	sourceTermIntegral := 0. //de.collisions[lxgata.IONIZATION][0]
-	for i := range indexOfMaximum {
-		sourceTermIntegral += de.collisions[lxgata.IONIZATION][i]
-	}
-	sourceTermIntegral *= de.model.xStep * de.model.parameters.Pressure //* Torr / de.model.parameters.Pressure / de.cathodeFlux
-	return 1 / sourceTermIntegral                                       // -> NaN -??
+	sourceTermIntegral := tableIntegrate(de.collisions[lxgata.IONIZATION][0:indexOfMaximum], nil, de.model.xStep) //0. //de.collisions[lxgata.IONIZATION][0]
+	sourceTermIntegral *= de.model.parameters.Pressure                                                            //* Torr / de.model.parameters.Pressure / de.cathodeFlux
+	return 1 / sourceTermIntegral                                                                                 // -> NaN -??
 
 }
 
@@ -149,10 +123,6 @@ func estimateCathodeFallLengthLimits(parameters *ModelParameters) (from float64,
 // 	// (S0 / (1 - math.Exp(-(L-2*d)/lambda))) *
 // 	return delta_plus(L, d, lambda, big_lambda)*(math.Exp(-(x-d)/big_lambda)+math.Exp(-(L-x-d)/big_lambda)) - math.Exp(-(x-d)/lambda) - math.Exp(-(L-x-d)/lambda)
 // }
-
-func glowDischargeNumberDensity(x, d, L, lambda float64) float64 {
-	return -(math.Exp(-(x-d)/lambda) - 1 - (math.Exp(-(L-d)/lambda)-1)*(x-d)/(L-d))
-}
 
 func gammaCalculationStep(itp *int, dc float64, parameters ModelParameters, lossType LossType) (loss, gammaIntegral, gammaAnalytic float64, dataExtractor *DataExtractor) {
 	if itp != nil {
