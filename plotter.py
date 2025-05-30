@@ -72,7 +72,7 @@ else:
                     if args.exclude is None or all(e not in label for e in exclude):
                         #for (xs, yrows, name) in datafiles[filename][column]:
                         axs.errorbar(
-                            datafiles[filename].index, column, fmt="o", ms=1,
+                            datafiles[filename].index, column, fmt="o-", ms=3,
                             yerr=column + "_conf_interval" if column + "_conf_interval" in datafiles[filename] else None,
                             label=label, data=datafiles[filename])
     if args.compare:

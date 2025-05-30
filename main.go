@@ -23,8 +23,8 @@ func main() {
 	threads := flag.Int("j", runtime.NumCPU(), "threads to run")
 	verbose := flag.Bool("v", true, "verbose")
 	debug := flag.Bool("d", false, "debug")
-	dataExtractorFlags := newDataFlags()                                                                                //Donko/cvc_45mbarcm3Dup
-	configFileNamePointer := flag.String("i", "inputs/klyarfeld/0.18Torr3D.toml", "model configuration in toml format") //"inputs/val/BM_He", "model configuration in toml format")
+	dataExtractorFlags := newDataFlags()                                                                                 //Donko/cvc_45mbarcm3Dup
+	configFileNamePointer := flag.String("i", "inputs/donko2009/240Pa_cm_3D.toml", "model configuration in toml format") //"inputs/val/BM_He", "model configuration in toml format")
 	rootFindingAlgorithm := flag.String("alg", "s", "root finder algorithm for gamma calculation ([s]tochastic approximation, [b]inary search, [t]ernary search)")
 	flag.Parse()
 

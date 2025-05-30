@@ -1,6 +1,5 @@
 *.toml
 *.txt
-*.sh
 *.exe
 stmc
 Ar*
