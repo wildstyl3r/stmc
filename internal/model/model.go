@@ -36,7 +36,7 @@ type Model struct {
 	outOfEnergyAtCell []int
 }
 
-func newModel(CathodeFallLength float64, parameters ModelParameters) Model {
+func NewModel(CathodeFallLength float64, parameters ModelParameters) Model {
 	m := Model{}
 	m.parameters = parameters
 	m.parameters.CathodeFallLength = CathodeFallLength
@@ -148,7 +148,7 @@ func (s *Model) EFieldFromPotential(V float64) (E float64) {
 
 func (m *Model) collisionSelector(eKinetic, totalCrossSectionPrimed float64) *lxgata.Collision {
 	var crossSections = m.parameters._crossSections.CrossSectionsAt(eKinetic)
-	var totalCrossSection = sumSlice(crossSections)
+	var totalCrossSection = SumSlice(crossSections)
 	var crossSectionAccum float64 = totalCrossSectionPrimed - totalCrossSection // the difference is null collision
 	var choice float64 = rand.Float64() * totalCrossSectionPrimed
 
@@ -285,7 +285,7 @@ func (m *Model) nextCollision(p *Particle) *lxgata.Collision {
 	return nil
 }
 
-func (m *Model) run() {
+func (m *Model) Run() {
 	var computeWg, stateWg sync.WaitGroup
 
 	collflow := make(chan CollisionEvent, 100000)

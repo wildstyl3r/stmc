@@ -24,7 +24,7 @@ type Particle struct {
 }
 
 func (m *Model) newParticle(origin int) Particle {
-	y, z := uniformOnDisk(m.parameters.CathodeRadius)
+	y, z := UniformOnDisk(m.parameters.CathodeRadius)
 	eta := rand.Float64() * 2. * math.Pi
 	eKinetic := 4. + rand.Float64()
 	mu := rand.Float64()

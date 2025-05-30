@@ -27,7 +27,7 @@ const Townsend float64 = 1.e-21                          // V * m^2
 const freeSpacePermittivityE0 float64 = 8.8541878188e-12 // [m^-3 kg^{-1} s^4 A^2]
 const quantile95 = 1.96
 
-func ternarySearchMax(f func(float64) float64, left, right, eps float64) float64 {
+func TernarySearchMax(f func(float64) float64, left, right, eps float64) float64 {
 	for right-left > eps {
 		a := math.FMA(left, 2., right) / 3.
 		b := math.FMA(right, 2., left) / 3.
@@ -42,7 +42,7 @@ func ternarySearchMax(f func(float64) float64, left, right, eps float64) float64
 
 // return the point of the condition support that is not farther than eps from the support boundary
 // invariant: at *right* condition must be TRUE
-func binarySearch(condition func(float64) bool, falseDom, trueDom, eps float64) (float64, float64) {
+func BinarySearch(condition func(float64) bool, falseDom, trueDom, eps float64) (float64, float64) {
 	for math.Abs(trueDom-falseDom) > eps {
 		c := (falseDom + trueDom) * 0.5
 		if condition(c) {
@@ -54,11 +54,11 @@ func binarySearch(condition func(float64) bool, falseDom, trueDom, eps float64) 
 	return falseDom, trueDom
 }
 
-func ternarySearchMaxF(f func(float64) float64, left, right, eps float64) float64 {
-	return f(ternarySearchMax(f, left, right, eps))
+func TernarySearchMaxF(f func(float64) float64, left, right, eps float64) float64 {
+	return f(TernarySearchMax(f, left, right, eps))
 }
 
-func argmax[T cmp.Ordered](arr []T) (argmax int) {
+func Argmax[T cmp.Ordered](arr []T) (argmax int) {
 	for i := range arr {
 		if cmp.Compare(arr[i], arr[argmax]) == 1 {
 			argmax = i
@@ -71,14 +71,14 @@ type Number interface {
 	constraints.Float | constraints.Integer
 }
 
-func sumSlice[T Number](arr []T) (r T) {
+func SumSlice[T Number](arr []T) (r T) {
 	for i := range arr {
 		r += arr[i]
 	}
 	return
 }
 
-func diameterOfSet(s []float64) (d float64) {
+func DiameterOfSet(s []float64) (d float64) {
 	for i := range s {
 		for j := i + 1; j < len(s); j++ {
 			d = max(d, math.Abs(s[i]-s[j]))
@@ -87,7 +87,7 @@ func diameterOfSet(s []float64) (d float64) {
 	return
 }
 
-func average[T Number](s []T) (mean float64) {
+func Average[T Number](s []T) (mean float64) {
 	for i := range s {
 		mean += float64(s[i])
 	}
@@ -95,8 +95,8 @@ func average[T Number](s []T) (mean float64) {
 	return
 }
 
-func meanAndVariance[T Number](s []T, unbiased bool) (mean, variance float64) {
-	mean = average(s)
+func MeanAndVariance[T Number](s []T, unbiased bool) (mean, variance float64) {
+	mean = Average(s)
 	for i := range s {
 		variance += (float64(s[i]) - mean) * (float64(s[i]) - mean)
 	}
@@ -109,8 +109,8 @@ func meanAndVariance[T Number](s []T, unbiased bool) (mean, variance float64) {
 	return
 }
 
-func variance[T Number](s []T, unbiased bool) float64 {
-	_, v := meanAndVariance(s, unbiased)
+func Variance[T Number](s []T, unbiased bool) float64 {
+	_, v := MeanAndVariance(s, unbiased)
 	return v
 }
 
@@ -253,7 +253,7 @@ func writeAsCSV(data CSV, path, subpath, filename string, columns []string) {
 	var scalarW *csv.Writer
 	println(filename, path)
 	clearName := getFilename(filename)
-	scalarParams, err := openFile(true, path, subpath, clearName)
+	scalarParams, err := OpenFile(true, path, subpath, clearName)
 	if err != nil {
 		println("unable to save dc and secondary emission coefficient: ", err.Error())
 		os.Exit(1)

@@ -1,4 +1,4 @@
-module wildstyl3r/stmc
+module github.com/wildstyl3r/stmc
 
 go 1.23.0
 

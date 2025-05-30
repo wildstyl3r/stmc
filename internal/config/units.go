@@ -1,4 +1,4 @@
-package main
+package config
 
 var unitToSI = map[string]float64{
 	"Pa":   1,              // [Pa]
