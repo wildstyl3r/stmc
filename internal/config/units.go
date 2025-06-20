@@ -13,6 +13,9 @@ var unitToSI = map[string]float64{
 	"A":    1,              // [A]
 	"mA":   1e-3,           // [A]
 	"mkA":  1e-6,           // [A]
+	"s":    1,
+	"ms":   1e-3,
+	"mks":  1e-6,
 }
 
 type UnitClass int
@@ -22,6 +25,7 @@ const (
 	Current
 	Pressure
 	Energy
+	Time
 )
 
 var unitsInClass = map[UnitClass][]string{
@@ -29,6 +33,7 @@ var unitsInClass = map[UnitClass][]string{
 	Current:  {"mkA", "mA", "A"},
 	Pressure: {"Torr", "mbar", "bar", "Pa"},
 	Energy:   {"eV", "J"},
+	Time:     {"mks", "ms", "s"},
 }
 
 var classesOfUnits = map[string]UnitClass{
@@ -42,6 +47,9 @@ var classesOfUnits = map[string]UnitClass{
 	"A":    Current,
 	"mA":   Current,
 	"mkA":  Current,
+	"mks":  Time,
+	"ms":   Time,
+	"s":    Time,
 }
 
 type UnitElement = struct {

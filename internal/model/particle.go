@@ -140,12 +140,12 @@ func (p *Particle) redirect(cosChi, cosPhi float64, m *Model) {
 	p.recalcParams(m)
 }
 
-func (p *Particle) xAnalytic(bt float64, m *Model) float64 {
+func (p *Particle) xAnalytic(bt, inverseCathodeFallLength float64) float64 {
 	return math.FMA(
 		p.c2, math.Sin(bt),
 		math.FMA(
 			p.c1, math.Cos(bt),
-			m.inverseCathodeFallLength,
+			inverseCathodeFallLength,
 		),
 	)
 }
@@ -168,7 +168,7 @@ func (p *Particle) updateExtraDims(m *Model) {
 	//check negative mu case
 	if p.prevMuSign > 0 && p.mu > 0 {
 		bt = utils.TernarySearchMax(func(bt float64) float64 {
-			bt_x := p.xAnalytic(bt, m)
+			bt_x := p.xAnalytic(bt, m.inverseCathodeFallLength)
 			return -(p.x - bt_x) * (p.x - bt_x)
 		}, p.prevBt, btCathodeFallLength, 1e-6)
 		if math.IsNaN(bt) {
@@ -177,7 +177,7 @@ func (p *Particle) updateExtraDims(m *Model) {
 	} else if p.prevMuSign <= 0 && p.mu > 0 {
 		btBeforeReverse := btReverse - p.prevBt
 		btAfterReverse := utils.TernarySearchMax(func(bt float64) float64 {
-			bt_x := p.xAnalytic(bt, m)
+			bt_x := p.xAnalytic(bt, m.inverseCathodeFallLength)
 			return -(p.x - bt_x) * (p.x - bt_x)
 		}, btReverse, btCathodeFallLength, 1e-6)
 		bt = btBeforeReverse + btAfterReverse
@@ -186,7 +186,7 @@ func (p *Particle) updateExtraDims(m *Model) {
 		}
 	} else if p.prevMuSign <= 0 && p.mu <= 0 {
 		bt = utils.TernarySearchMax(func(bt float64) float64 {
-			bt_x := p.xAnalytic(bt, m)
+			bt_x := p.xAnalytic(bt, m.inverseCathodeFallLength)
 			return -(p.x - bt_x) * (p.x - bt_x)
 		}, p.prevBt, btReverse, 1e-6)
 		if math.IsNaN(bt) {

@@ -7,8 +7,6 @@ import (
 	"slices"
 
 	"golang.org/x/exp/constraints"
-
-	"github.com/wildstyl3r/stmc/internal/constants"
 )
 
 func Argmax[T cmp.Ordered](arr []T) (argmax int) {
@@ -109,17 +107,4 @@ func Intersect(a, b []string) *string {
 		}
 	}
 	return nil
-}
-
-func EV2J(val float64) float64 {
-	return val * constants.ElectronCharge
-}
-
-func J2eV(val float64) float64 {
-	return val / constants.ElectronCharge
-}
-
-func EV2electronVelocity(energy float64) (v float64) {
-	v = math.Sqrt(2 * energy * constants.ElectronCharge / constants.ElectornMass)
-	return
 }

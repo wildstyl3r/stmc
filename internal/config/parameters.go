@@ -37,10 +37,10 @@ func (c *Config) isDefined(path []string, meta *toml.MetaData) bool {
 	}
 }
 
-func LoadConfig(configFileName string) (Config, toml.MetaData) {
+func LoadConfig(flags ConfigFlags) (Config, toml.MetaData) {
 	var config Config
 	config.isDefinedMap = map[string]struct{}{}
-	meta, err := toml.DecodeFile(configFileName+".toml", &config)
+	meta, err := toml.DecodeFile(strings.TrimSuffix(*flags.ConfigFileNamePointer, ".toml")+".toml", &config)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -95,6 +95,17 @@ func LoadConfig(configFileName string) (Config, toml.MetaData) {
 		}
 	}
 
+	if config.OutputDir != "" && config.OutputDir != "." {
+		outputDir := strings.TrimSuffix(config.OutputDir, "/") + "/" + utils.GetFilename(*flags.ConfigFileNamePointer) + "/"
+		fmt.Printf("OUTPUT DIR: %s\n", outputDir)
+		os.MkdirAll(config.OutputDir, 0750)
+	} else {
+		panic(fmt.Errorf("output folder not specified"))
+	}
+
+	config._verbose = *flags.Verbose
+	config._threads = *flags.Threads
+
 	return config, meta
 }
 
@@ -114,7 +125,10 @@ type ModelParameters struct {
 	// AmbipolarCharacterScale float64
 	CathodeRadius float64 // [cm]
 
-	DeltaE                     float64 // [eV]
+	AmbipolarDiffusionCoefficient         float64
+	AmbipolarDiffusionCharacteristicScale float64
+
+	EnergyStep                 float64 // [eV]
 	NElectrons                 int
 	MakeDir                    bool
 	ParallelPlaneHollowCathode bool
@@ -153,16 +167,8 @@ func (p *ModelParameters) Verbose() bool {
 	return p._verbose
 }
 
-func (p *ModelParameters) SetVerbosity(verbose bool) {
-	p._verbose = verbose
-}
-
 func (p *ModelParameters) Threads() int {
 	return p._threads
-}
-
-func (p *ModelParameters) SetThreads(threads int) {
-	p._threads = threads
 }
 
 var defaultValues = map[string]any{ // in SI
@@ -171,7 +177,7 @@ var defaultValues = map[string]any{ // in SI
 	"ConstEField":                -100.,          //[V/m]
 	"Temperature":                300.,           //[K]
 	"CathodeFallLengthPrecision": 1e-6,           //[m]
-	"DeltaE":                     0.1,
+	"EnergyStep":                 0.005,
 	"NElectrons":                 1000,
 	"MakeDir":                    true,
 	"ParallelPlaneHollowCathode": false,
@@ -180,7 +186,7 @@ var defaultValues = map[string]any{ // in SI
 	"CountNulls":                 false,
 }
 
-var defaultUnits = []string{"mkA", "cm", "Torr"}
+var defaultUnits = []string{"mkA", "cm", "Torr", "s"}
 
 var fieldsXor = map[string][]string{
 	"CalculateCathodeFallLength": {"CathodeFallLength"},
@@ -461,6 +467,9 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 	} else {
 		modelConfig._outputUnits = units
 	}
+
+	modelConfig._threads = config._threads
+	modelConfig._verbose = config._verbose
 
 	return allGood
 }

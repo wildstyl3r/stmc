@@ -69,9 +69,9 @@ func GetFilename(filePath string) string {
 
 func OpenFile(makeDir bool, outputPath string, fileSuffix, modelName string) (*os.File, error) {
 	if makeDir && fileSuffix != "" && fileSuffix != "." {
-		os.MkdirAll(outputPath+fileSuffix, 0750)
-		return os.Create(outputPath + fileSuffix + "/" + modelName + ".txt")
+		os.MkdirAll(outputPath+"/"+fileSuffix, 0750)
+		return os.Create(outputPath + "/" + fileSuffix + "/" + modelName + ".txt")
 	} else {
-		return os.Create(outputPath + modelName + "_" + fileSuffix + ".txt")
+		return os.Create(outputPath + "/" + modelName + "_" + fileSuffix + ".txt")
 	}
 }
