@@ -72,7 +72,7 @@ else:
                     if args.exclude is None or all(e not in label for e in exclude):
                         #for (xs, yrows, name) in datafiles[filename][column]:
                         axs.errorbar(
-                            datafiles[filename].index, column, fmt="o-", ms=3,
+                            datafiles[filename].index, column, fmt="o-", ms=3, capsize=3,
                             yerr=column + "_conf_interval" if column + "_conf_interval" in datafiles[filename] else None,
                             label=label, data=datafiles[filename])
     if args.compare:
@@ -80,7 +80,7 @@ else:
         for filename in datafiles_c:
             if args.norm:
                 for (xs, yrows, name) in data_c:
-                    axs.errorbar(xs, [[y / max_y_c for y in yrow] for yrow in yrows], fmt="-", yerr=None, label=list(name + l for l in labels) if len(labels) > 0 else name)
+                    axs.errorbar(xs, [[y / max_y_c for y in yrow] for yrow in yrows], fmt="-", capsize=3, yerr=None, label=list(name + l for l in labels) if len(labels) > 0 else name)
             else:
                 for column in datafiles_c[filename]:
                     if not column.endswith("_conf_interval"):
@@ -89,7 +89,7 @@ else:
                             if args.exclude is None or all(e not in label for e in exclude):
                                 axs.errorbar(
                                     datafiles_c[filename].index, column,
-                                    fmt="-",
+                                    fmt="-", capsize=3,
                                     yerr=column + "_conf_interval" if column + "_conf_interval" in datafiles_c[filename] else None,
                                     label=label,data=datafiles_c[filename])
 
