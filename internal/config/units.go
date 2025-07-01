@@ -1,8 +1,11 @@
 package config
 
-import "github.com/wildstyl3r/stmc/internal/utils"
+import (
+	"github.com/wildstyl3r/stmc/internal/constants"
+	"github.com/wildstyl3r/stmc/internal/utils"
+)
 
-var unitToSI = map[string]float64{
+var unitToSIeV = map[string]float64{
 	"Pa":   1,              // [Pa]
 	"bar":  1e5,            // [Pa]
 	"mbar": 1e2,            // [Pa]
@@ -16,6 +19,8 @@ var unitToSI = map[string]float64{
 	"s":    1,
 	"ms":   1e-3,
 	"mks":  1e-6,
+	"J":    1 / constants.ElectronCharge,
+	"eV":   1,
 }
 
 type UnitClass int
@@ -50,6 +55,8 @@ var classesOfUnits = map[string]UnitClass{
 	"mks":  Time,
 	"ms":   Time,
 	"s":    Time,
+	"eV":   Energy,
+	"J":    Energy,
 }
 
 type UnitElement = struct {
@@ -75,7 +82,7 @@ func checkUnits(units []string) (extended, conflicts []string) {
 	return
 }
 
-func SI(v float64, classes []UnitElement, units []string, direct bool) float64 {
+func SIeV(v float64, classes []UnitElement, units []string, direct bool) float64 {
 	for i := range classes {
 		uc := classes[i]
 		unit := utils.Intersect(unitsInClass[uc.Class], units)
@@ -83,21 +90,21 @@ func SI(v float64, classes []UnitElement, units []string, direct bool) float64 {
 		if direct {
 			if uc.Power > 0 {
 				for range absPower {
-					v *= unitToSI[*unit]
+					v *= unitToSIeV[*unit]
 				}
 			} else {
 				for range absPower {
-					v /= unitToSI[*unit]
+					v /= unitToSIeV[*unit]
 				}
 			}
 		} else {
 			if uc.Power > 0 {
 				for range absPower {
-					v /= unitToSI[*unit]
+					v /= unitToSIeV[*unit]
 				}
 			} else {
 				for range absPower {
-					v *= unitToSI[*unit]
+					v *= unitToSIeV[*unit]
 				}
 			}
 		}
