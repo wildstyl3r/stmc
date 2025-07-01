@@ -377,7 +377,7 @@ func (m *Model) Run() {
 		}()
 	}
 
-	var ooeflow chan int
+	ooeflow := make(chan int, m.Parameters.NElectrons*100)
 	stateWg.Add(1)
 	go func() {
 		for ooeEvent := range ooeflow {
