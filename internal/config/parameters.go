@@ -96,8 +96,8 @@ func LoadConfig(flags ConfigFlags) (Config, toml.MetaData) {
 	}
 
 	if config.OutputDir != "" && config.OutputDir != "." {
-		outputDir := strings.TrimSuffix(config.OutputDir, "/") + "/" + utils.GetFilename(*flags.ConfigFileNamePointer) + "/"
-		fmt.Printf("OUTPUT DIR: %s\n", outputDir)
+		config.OutputDir = strings.TrimSuffix(config.OutputDir, "/") + "/" + utils.GetFilename(*flags.ConfigFileNamePointer) + "/"
+		fmt.Printf("OUTPUT DIR: %s\n", config.OutputDir)
 		os.MkdirAll(config.OutputDir, 0750)
 	} else {
 		panic(fmt.Errorf("output folder not specified"))
@@ -128,7 +128,7 @@ type ModelParameters struct {
 	AmbipolarDiffusionCoefficient         float64
 	AmbipolarDiffusionCharacteristicScale float64
 
-	EnergyStep                 float64 // [eV]
+	EnergyStep, MuStep         float64 // [eV]
 	NElectrons                 int
 	MakeDir                    bool
 	ParallelPlaneHollowCathode bool
@@ -138,7 +138,8 @@ type ModelParameters struct {
 	CalculateCathodeFallLength bool
 	CathodeFallLengthPrecision float64
 
-	CountNulls bool
+	CountNulls            bool
+	CalculateDistribution bool
 
 	GasDensity     float64
 	_crossSections *lxgata.Collisions
@@ -171,13 +172,14 @@ func (p *ModelParameters) Threads() int {
 	return p._threads
 }
 
-var defaultValues = map[string]any{ // in SI
+var defaultValues = map[string]any{ // in SI-eV
 	"CathodeCurrentDensity":      0.0284,         //[A / m^2]
 	"Pressure":                   101325. / 760., //[Pa]
 	"ConstEField":                -100.,          //[V/m]
 	"Temperature":                300.,           //[K]
 	"CathodeFallLengthPrecision": 1e-6,           //[m]
-	"EnergyStep":                 0.005,
+	"EnergyStep":                 0.001,          //[eV]
+	"MuStep":                     5. / 180.,
 	"NElectrons":                 1000,
 	"MakeDir":                    true,
 	"ParallelPlaneHollowCathode": false,
@@ -186,7 +188,7 @@ var defaultValues = map[string]any{ // in SI
 	"CountNulls":                 false,
 }
 
-var defaultUnits = []string{"mkA", "cm", "Torr", "s"}
+var defaultUnits = []string{"mkA", "cm", "Torr", "s", "J"}
 
 var fieldsXor = map[string][]string{
 	"CalculateCathodeFallLength": {"CathodeFallLength"},
@@ -269,12 +271,12 @@ var calculableFields = map[string]func(
 	},
 }
 
-func (modelConfig *ModelParameters) toSI(parameterNames, units []string) {
+func (modelConfig *ModelParameters) toSIeV(parameterNames, units []string) {
 	modelConfigReflect := reflect.ValueOf(modelConfig).Elem()
 	for name := range parameterNames {
 		if modelConfigReflect.FieldByName(parameterNames[name]).CanFloat() {
 			value := modelConfigReflect.FieldByName(parameterNames[name]).Float()
-			value = SI(value, valueUnits[parameterNames[name]], units, true)
+			value = SIeV(value, valueUnits[parameterNames[name]], units, true)
 			modelConfigReflect.FieldByName(parameterNames[name]).SetFloat(value)
 		}
 	}
@@ -401,7 +403,7 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 		}
 	}
 
-	modelConfig.toSI(discoveredParameters, config.InputUnits)
+	modelConfig.toSIeV(discoveredParameters, config.InputUnits)
 
 	for fieldName := range defaultValues {
 		if _, x := excludeFromLoadingDefaultOrOuter[fieldName]; !x && !slices.Contains(discoveredParameters, fieldName) {

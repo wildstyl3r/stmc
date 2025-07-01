@@ -11,20 +11,19 @@ import (
 
 	"github.com/wildstyl3r/lxgata"
 	"github.com/wildstyl3r/stmc/internal/config"
-	"github.com/wildstyl3r/stmc/internal/constants"
 	"github.com/wildstyl3r/stmc/internal/datahub"
 	"github.com/wildstyl3r/stmc/internal/extensions"
 	"github.com/wildstyl3r/stmc/internal/model"
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
-type dataItem struct {
-	saveFlag   *bool
+type DataItem struct {
+	SaveFlag   *bool
 	fileSuffix string
 }
 
 type sequentialDataItem struct {
-	dataItem
+	DataItem
 	columnNames []string
 	values      func(*model.Model) (args []float64, values [][]float64, labels []string)
 	xUnit       []config.UnitElement
@@ -33,16 +32,28 @@ type sequentialDataItem struct {
 
 type DataFlags struct {
 	all         *bool
-	sequentials map[string]sequentialDataItem
+	Sequentials map[string]sequentialDataItem
 }
+
+const (
+	Potential                  = "Potential"
+	ElectricField              = "Electric field"
+	ElectricFieldFromPotential = "Electric field from potential"
+	LfromV                     = "Position from potential"
+	CollisionCounters          = "Collision counters"
+	NormalizedSourceTerm       = "Normalized source term"
+	PlasmaDensity              = "Plasma density"
+	MeanEnergy                 = "Mean energy"
+	MeanVelocityX              = "Mean velocity along x"
+)
 
 func NewDataFlags() DataFlags {
 	return DataFlags{
 		all: flag.Bool("all", false, "save every available metric"),
-		sequentials: map[string]sequentialDataItem{
-			"Potential": {
-				dataItem: dataItem{
-					saveFlag:   flag.Bool("p", false, "save potential"),
+		Sequentials: map[string]sequentialDataItem{
+			Potential: {
+				DataItem: DataItem{
+					SaveFlag:   flag.Bool("p", false, "save potential"),
 					fileSuffix: "V",
 				},
 				columnNames: []string{"x (cm)", "g (V)"},
@@ -56,9 +67,9 @@ func NewDataFlags() DataFlags {
 				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 				yUnit: []config.UnitElement{},
 			},
-			"Electric Field": {
-				dataItem: dataItem{
-					saveFlag:   flag.Bool("ef", false, "save Electric field"),
+			ElectricField: {
+				DataItem: DataItem{
+					SaveFlag:   flag.Bool("ef", false, "save Electric field"),
 					fileSuffix: "Efield",
 				},
 				columnNames: []string{"x (cm)", "E (V/m)"},
@@ -72,9 +83,9 @@ func NewDataFlags() DataFlags {
 				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 				yUnit: []config.UnitElement{{Class: config.Length, Power: -1}},
 			},
-			"Electric Field From Potential": {
-				dataItem: dataItem{
-					saveFlag:   flag.Bool("efp", false, "save Electric field at potential"),
+			ElectricFieldFromPotential: {
+				DataItem: DataItem{
+					SaveFlag:   flag.Bool("efp", false, "save Electric field at potential"),
 					fileSuffix: "efp",
 				},
 				columnNames: []string{"V", "E (V/m)"},
@@ -94,9 +105,9 @@ func NewDataFlags() DataFlags {
 				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 				yUnit: []config.UnitElement{{Class: config.Length, Power: -1}},
 			},
-			"LfromV": {
-				dataItem: dataItem{
-					saveFlag:   flag.Bool("lv", false, "save x from v"),
+			LfromV: {
+				DataItem: DataItem{
+					SaveFlag:   flag.Bool("lv", false, "save x from v"),
 					fileSuffix: "lv",
 				},
 				columnNames: []string{"g (V)", "x (cm)"},
@@ -116,9 +127,9 @@ func NewDataFlags() DataFlags {
 				xUnit: []config.UnitElement{},
 				yUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 			},
-			"Collision counters": {
-				dataItem: dataItem{
-					saveFlag:   flag.Bool("cc", false, "save collision counters"),
+			CollisionCounters: {
+				DataItem: DataItem{
+					SaveFlag:   flag.Bool("cc", false, "save collision counters"),
 					fileSuffix: "cc",
 				},
 				columnNames: []string{"x (cm)", "N_i(cm^{-1} Torr^{-1})", "Standard error"},
@@ -148,9 +159,9 @@ func NewDataFlags() DataFlags {
 				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 				yUnit: []config.UnitElement{{Class: config.Length, Power: -1}, {Class: config.Pressure, Power: -1}},
 			},
-			"Normalized source term": {
-				dataItem: dataItem{
-					saveFlag:   flag.Bool("nst", true, "save normalized source term"),
+			NormalizedSourceTerm: {
+				DataItem: DataItem{
+					SaveFlag:   flag.Bool("nst", true, "save normalized source term"),
 					fileSuffix: "nst",
 				},
 				columnNames: []string{"x (cm)", "N_i(cm^{-1} Torr^{-1})", "Standard error"},
@@ -177,8 +188,8 @@ func NewDataFlags() DataFlags {
 				yUnit: []config.UnitElement{{Class: config.Length, Power: -1}, {Class: config.Pressure, Power: -1}},
 			},
 			"Energy loss due to ionizations": {
-				dataItem: dataItem{
-					saveFlag:   flag.Bool("li", false, "save ionization energy losses"),
+				DataItem: DataItem{
+					SaveFlag:   flag.Bool("li", false, "save ionization energy losses"),
 					fileSuffix: "li",
 				},
 				columnNames: []string{"eV", "cm ^ -1"},
@@ -194,8 +205,8 @@ func NewDataFlags() DataFlags {
 				yUnit: []config.UnitElement{{Class: config.Length, Power: -1}},
 			},
 			"Out of energy for ionizations": {
-				dataItem: dataItem{
-					saveFlag:   flag.Bool("oe", false, "save ooe exit events count"),
+				DataItem: DataItem{
+					SaveFlag:   flag.Bool("oe", false, "save ooe exit events count"),
 					fileSuffix: "oe",
 				},
 				columnNames: []string{"x (cm)", "cm ^ -1"},
@@ -219,9 +230,9 @@ func NewDataFlags() DataFlags {
 				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 				yUnit: []config.UnitElement{{Class: config.Length, Power: -1}},
 			},
-			"Plasma density": {
-				dataItem: dataItem{
-					saveFlag:   flag.Bool("n", true, "save plasma density"),
+			PlasmaDensity: {
+				DataItem: DataItem{
+					SaveFlag:   flag.Bool("n", true, "save plasma density"),
 					fileSuffix: "n",
 				},
 				columnNames: []string{"x (cm)", "cm ^ -3"},
@@ -236,22 +247,54 @@ func NewDataFlags() DataFlags {
 				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 				yUnit: []config.UnitElement{{Class: config.Length, Power: -3}},
 			},
-			"Electron drift velocity x": {
-				dataItem: dataItem{
-					saveFlag:   flag.Bool("vx", true, "save drift velocity"),
+			MeanEnergy: {
+				DataItem: DataItem{
+					SaveFlag:   flag.Bool("e", false, "save mean energy"),
+					fileSuffix: "e",
+				},
+				columnNames: []string{"x (cm)", "eV"},
+				values: func(m *model.Model) (args []float64, values [][]float64, labels []string) {
+					for x := range m.NumCells {
+						meanEnergy := 0.
+						n := 0.
+						for j := range m.NumMuCells {
+							mu := (float64(j-m.NumMuCells/2) + 0.5) * m.MuStep
+							for iterator := m.Distribution[x][j].Front(); iterator != nil; iterator = iterator.Next() {
+								energy := iterator.Value.(float64)
+								divBy := mu * utils.EV2electronVelocity((math.Floor(energy/m.EStep)+0.5)*m.EStep)
+								meanEnergy += energy / divBy
+								n += 1. / divBy
+							}
+						}
+						args = append(args, m.XStep*(float64(x)+0.5))
+						values = append(values, []float64{meanEnergy / n})
+					}
+					return args, values, []string{"varepsilon (x)"}
+				},
+				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
+				yUnit: []config.UnitElement{{Class: config.Energy, Power: 1}},
+			},
+			MeanVelocityX: {
+				DataItem: DataItem{
+					SaveFlag:   flag.Bool("vx", false, "save drift velocity"),
 					fileSuffix: "vx",
 				},
 				columnNames: []string{"x (cm)", "cm s^-1"},
-				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
-					for x := range model.NumCells {
+				values: func(m *model.Model) (args []float64, values [][]float64, labels []string) {
+					for x := range m.NumCells {
+						vx := 0.
 						n := 0.
-						v := 0.
-						for e := range model.Distribution {
-							n += float64(model.Distribution[e][x])
-							v += float64(model.Distribution[e][x]) * math.Sqrt(2*utils.EV2J((float64(e)+0.5)*model.EStep)/constants.ElectornMass)
+						for j := range m.NumMuCells {
+							mu := (float64(j-m.NumMuCells/2) + 0.5) * m.MuStep
+							for iterator := m.Distribution[x][j].Front(); iterator != nil; iterator = iterator.Next() {
+								energy := iterator.Value.(float64)
+								divBy := mu * utils.EV2electronVelocity((math.Floor(energy/m.EStep)+0.5)*m.EStep)
+								vx += 1. / mu
+								n += 1. / divBy
+							}
 						}
-						args = append(args, model.XStep*(float64(x)+0.5))
-						values = append(values, []float64{v / n})
+						args = append(args, m.XStep*(float64(x)+0.5))
+						values = append(values, []float64{vx / n})
 					}
 					return args, values, []string{"Vx (x)"}
 				},
@@ -263,8 +306,8 @@ func NewDataFlags() DataFlags {
 }
 
 func Save(modelName string, model *model.Model, df DataFlags, outputPath string) {
-	for name, output := range df.sequentials {
-		if *output.saveFlag || *df.all {
+	for name, output := range df.Sequentials {
+		if *output.SaveFlag || *df.all {
 			var file *os.File
 			file, err := utils.OpenFile(model.Parameters.MakeDir, outputPath, output.fileSuffix, modelName)
 			if err != nil {
@@ -274,9 +317,9 @@ func Save(modelName string, model *model.Model, df DataFlags, outputPath string)
 				xColumnValue, yColumnValues, yLabels := output.values(model)
 				rows = append(rows, append([]string{""}, yLabels...))
 				for x := range xColumnValue {
-					row := []string{strconv.FormatFloat(config.SI(xColumnValue[x], output.xUnit, model.Parameters.OutputUnits(), false), 'f', -1, 64)}
+					row := []string{strconv.FormatFloat(config.SIeV(xColumnValue[x], output.xUnit, model.Parameters.OutputUnits(), false), 'f', -1, 64)}
 					for i := range yColumnValues[x] {
-						row = append(row, strconv.FormatFloat(config.SI(yColumnValues[x][i], output.yUnit, model.Parameters.OutputUnits(), false), 'f', -1, 64))
+						row = append(row, strconv.FormatFloat(config.SIeV(yColumnValues[x][i], output.yUnit, model.Parameters.OutputUnits(), false), 'f', -1, 64))
 					}
 					rows = append(rows, row)
 				}

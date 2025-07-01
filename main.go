@@ -64,6 +64,10 @@ func main() {
 			}
 		}
 		parameters.SetCrossSectionsData(speciesCrossSections[parameters.CrossSections])
+		if *dataExtractorFlags.Sequentials[output.MeanEnergy].DataItem.SaveFlag ||
+			*dataExtractorFlags.Sequentials[output.MeanVelocityX].DataItem.SaveFlag {
+			parameters.CalculateDistribution = true
+		}
 
 		if parameters.CalculateCathodeFallLength {
 			gammaData = append(gammaData, extensions.GammaCalculation(configFlags, parameters, modelName, config.OutputDir))

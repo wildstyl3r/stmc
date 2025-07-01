@@ -26,6 +26,6 @@ func J2eV(val float64) float64 {
 }
 
 func EV2electronVelocity(energy float64) (v float64) {
-	v = math.Sqrt(2 * energy * constants.ElectronCharge / constants.ElectornMass)
+	v = math.Sqrt(2. * EV2J(energy) / constants.ElectornMass)
 	return
 }
