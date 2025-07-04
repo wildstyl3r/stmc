@@ -5,7 +5,7 @@ import (
 	"runtime"
 )
 
-type ConfigFlags struct {
+type Flags struct {
 	CPUprofile, MEMprofile, ConfigFileNamePointer *string
 	Threads                                       *int
 	Verbose                                       *bool
@@ -14,8 +14,8 @@ type ConfigFlags struct {
 	// dataFlags
 }
 
-func NewConfigFlags() ConfigFlags {
-	return ConfigFlags{
+func NewConfigFlags() Flags {
+	return Flags{
 		CPUprofile:            flag.String("cpuprofile", "", "write cpu profile to file"),
 		MEMprofile:            flag.String("memprofile", "", "write memory profile to `file`"),
 		ConfigFileNamePointer: flag.String("i", "inputs/val/BM_He.toml", "model configuration in toml format"),

@@ -66,7 +66,7 @@ func EstimateCathodeFallLengthLimits(parameters *config.ModelParameters) (from f
 	return from, to
 }
 
-func GetApproximateDcForGamma(gamma, minDc, maxDc float64, parameters config.ModelParameters) float64 {
+func getApproximateCathodeFallLengthForGamma(gamma, minDc, maxDc float64, parameters config.ModelParameters) float64 {
 	initialDcL, initialDcR := utils.BinarySearch(func(dc float64) bool {
 		return gamma < gammaAnalyticF(
 			dc,
@@ -78,7 +78,7 @@ func GetApproximateDcForGamma(gamma, minDc, maxDc float64, parameters config.Mod
 	return 0.5 * (initialDcL + initialDcR)
 }
 
-func GammaCalculationStep(itp *int, dc float64, parameters config.ModelParameters, lossType utils.LossType) (loss, gammaIntegral, gammaAnalytic float64) {
+func gammaCalculationStep(itp *int, dc float64, parameters config.ModelParameters, lossType utils.LossType) (loss, gammaIntegral, gammaAnalytic float64) {
 	if itp != nil {
 		fmt.Printf("step %d\n", *itp)
 		*itp += 1
@@ -95,7 +95,7 @@ func GammaCalculationStep(itp *int, dc float64, parameters config.ModelParameter
 	return
 }
 
-func GammaCalculation(configFlags config.ConfigFlags, parameters config.ModelParameters, modelName string, outputDir string) []string {
+func GammaCalculation(configFlags config.Flags, parameters config.ModelParameters, modelName string, outputDir string) []string {
 	if *configFlags.Verbose {
 		fmt.Print("calculating dc iteratively:\n")
 	}
@@ -109,7 +109,7 @@ func GammaCalculation(configFlags config.ConfigFlags, parameters config.ModelPar
 	}
 }
 
-func bruteForceStepGammaCalculation(minDc, maxDc float64, configFlags config.ConfigFlags, itp *int, parameters config.ModelParameters, modelName, outputDir string) []string {
+func bruteForceStepGammaCalculation(minDc, maxDc float64, configFlags config.Flags, itp *int, parameters config.ModelParameters, modelName, outputDir string) []string {
 	dcStep := 0.00001
 	nSteps := int((maxDc - minDc) / dcStep)
 	fmt.Printf("GapLen: %f, nSteps: %d\n", parameters.GapLength, nSteps)
@@ -126,7 +126,7 @@ func bruteForceStepGammaCalculation(minDc, maxDc float64, configFlags config.Con
 			lossType = utils.Difference
 		}
 		var gammaAnalytic, gammaLoss float64
-		gammaLoss, gamma[i], gammaAnalytic = GammaCalculationStep(itp, dc, parameters, lossType)
+		gammaLoss, gamma[i], gammaAnalytic = gammaCalculationStep(itp, dc, parameters, lossType)
 		intS[i] = 1. / gamma[i]
 		debugData = append(debugData, []string{
 			strconv.FormatFloat(dc, 'f', 10, 64),
@@ -139,7 +139,7 @@ func bruteForceStepGammaCalculation(minDc, maxDc float64, configFlags config.Con
 	gammaMean, gammaVariance := utils.MeanAndVariance(gamma, true)
 	intSMean, intSVariance := utils.MeanAndVariance(intS, true)
 	fmt.Printf("[%s] gamma mean: %.9f, gamma variance: %.9f, integral S mean: %.9f, integral S variance: %.9f\n", modelName, gammaMean, gammaVariance, intSMean, intSVariance)
-	debugFile, err := utils.OpenFile(true, outputDir, "debug", utils.GetFilename(*configFlags.ConfigFileNamePointer)+modelName)
+	debugFile, err := utils.OpenFile(true, outputDir, "debug", utils.GetFilename(*configFlags.ConfigFileNamePointer)+modelName, utils.TypeTXT)
 
 	if err != nil {
 		println("unable to save dc and secondary emission coefficient: ", err.Error())
@@ -152,7 +152,7 @@ func bruteForceStepGammaCalculation(minDc, maxDc float64, configFlags config.Con
 	return nil
 }
 
-func advancedGammaCalculation(minDc, maxDc float64, configFlags config.ConfigFlags, itp *int, parameters config.ModelParameters) []string {
+func advancedGammaCalculation(minDc, maxDc float64, configFlags config.Flags, itp *int, parameters config.ModelParameters) []string {
 	var gammaLoss, gammaIntegral, gammaAnalytic, gammaCI float64
 	var dc float64
 	switch *configFlags.RootFindingAlgorithm {
@@ -161,17 +161,17 @@ func advancedGammaCalculation(minDc, maxDc float64, configFlags config.ConfigFla
 		var fLeftLoss, fRightLoss, initialDc float64 // := f(left+0.5*thetaPrecision), f(right-0.5*thetaPrecision)
 		{
 			var gILeft, gIRight float64
-			fLeftLoss, gILeft, _ = GammaCalculationStep(nil, minDc+parameters.CathodeFallLengthPrecision, parameters, utils.Difference)
-			fRightLoss, gIRight, _ = GammaCalculationStep(nil, maxDc-parameters.CathodeFallLengthPrecision, parameters, utils.Difference)
+			fLeftLoss, gILeft, _ = gammaCalculationStep(nil, minDc+parameters.CathodeFallLengthPrecision, parameters, utils.Difference)
+			fRightLoss, gIRight, _ = gammaCalculationStep(nil, maxDc-parameters.CathodeFallLengthPrecision, parameters, utils.Difference)
 
 			meanGI := 0.5 * (gILeft + gIRight)
-			initialDc = GetApproximateDcForGamma(meanGI, minDc, maxDc, parameters)
+			initialDc = getApproximateCathodeFallLengthForGamma(meanGI, minDc, maxDc, parameters)
 		}
 		approxLossDerivative := (fRightLoss - fLeftLoss) / (maxDc - minDc - 2*parameters.CathodeFallLengthPrecision)
 
 		gammaI := []float64{}
 		dc = utils.StochasticApproximation(minDc, maxDc, initialDc, approxLossDerivative, parameters.CathodeFallLengthPrecision, constants.Quantile95, 10, func(dc float64) float64 {
-			gammaLoss, gammaIntegral, gammaAnalytic = GammaCalculationStep(itp, dc, parameters, utils.Difference)
+			gammaLoss, gammaIntegral, gammaAnalytic = gammaCalculationStep(itp, dc, parameters, utils.Difference)
 			gammaI = append(gammaI, gammaIntegral)
 			return gammaLoss
 		})
@@ -183,7 +183,7 @@ func advancedGammaCalculation(minDc, maxDc float64, configFlags config.ConfigFla
 	case "b":
 		fmt.Println("calculating gamma with naive bisection")
 		dcLeft, dcRight := utils.BinarySearch(func(dc float64) bool {
-			gammaLoss, gammaIntegral, gammaAnalytic = GammaCalculationStep(itp, dc, parameters, utils.Difference)
+			gammaLoss, gammaIntegral, gammaAnalytic = gammaCalculationStep(itp, dc, parameters, utils.Difference)
 			return gammaLoss > 0
 		}, minDc, min(maxDc, parameters.GapLength), parameters.CathodeFallLengthPrecision) //0, parameters.GapLength, parameters.CathodeFallLengthPrecision)
 		dc = 0.5 * (dcLeft + dcRight)
@@ -192,7 +192,7 @@ func advancedGammaCalculation(minDc, maxDc float64, configFlags config.ConfigFla
 		fmt.Println("calculating gamma with naive ternary search")
 		fmt.Printf("min dc: %f, max dc: %f, gap len: %f\n", minDc, maxDc, parameters.GapLength)
 		dc = utils.TernarySearchMax(func(dc float64) float64 {
-			gammaLoss, gammaIntegral, gammaAnalytic = GammaCalculationStep(itp, dc, parameters, utils.MSE)
+			gammaLoss, gammaIntegral, gammaAnalytic = gammaCalculationStep(itp, dc, parameters, utils.MSE)
 			return -gammaLoss
 		}, minDc, min(maxDc, parameters.GapLength), parameters.CathodeFallLengthPrecision) //0, parameters.GapLength, parameters.CathodeFallLengthPrecision)
 	}

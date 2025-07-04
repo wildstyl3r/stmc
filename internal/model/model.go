@@ -1,7 +1,6 @@
 package model
 
 import (
-	"container/list"
 	"fmt"
 	"math"
 	"math/rand"
@@ -23,21 +22,24 @@ type Model struct {
 
 	Va float64 // additional voltage to avoid numeric negative energy beyond cathode fall
 
-	NumCells, NumMuCells int
+	NumCells int
 
-	EStep, XStep, MuStep float64
+	EStep, XStep float64
 
 	lookUpPotential         []float64
 	lookupTotalCrossSection []float64 // CS[energy]
 	LookupEnergy            []float64
 	LookupInverseVelocity   []float64
-	GridInverseMu           []float64
-	lookupMNumerator        []float64
+	// GridInverseMu           []float64
+	lookupMNumerator []float64
 
-	Distribution [][]*list.List
+	Distribution [][][]float64
 
 	CollisionAtCell     map[lxgata.CollisionType][][]uint16
 	EnergyLossByProcess map[lxgata.CollisionType][]float64
+
+	lookupCosinesAtAngleCellBounds  []float64
+	LookupCosinesAtAngleCellCenters []float64
 
 	OutOfEnergyAtCell []int
 }
@@ -64,8 +66,18 @@ func NewModel(CathodeFallLength float64, parameters config.ModelParameters) Mode
 
 	m.XStep = m.Parameters.GapLength / float64(m.NumCells+1)
 	m.EStep = m.Parameters.EnergyStep // eV
-	m.MuStep = m.Parameters.MuStep    // eV
-	m.NumMuCells = int(2. / m.MuStep)
+	// m.MuStep = m.Parameters.MuStep    // eV
+	// m.NumMuCells = int(2. / m.MuStep)
+
+	radianAngleStep := parameters.AngleStep / 360. * 2. * math.Pi
+	numAngleCells := int(360. / parameters.AngleStep)
+	m.lookupCosinesAtAngleCellBounds, m.LookupCosinesAtAngleCellCenters = make([]float64, numAngleCells), make([]float64, numAngleCells)
+	for a := range numAngleCells {
+		angle := float64(a) * radianAngleStep
+		nextAngle := float64(a+1) * radianAngleStep
+		m.lookupCosinesAtAngleCellBounds[a] = math.Cos(angle)
+		m.LookupCosinesAtAngleCellCenters[a] = math.Cos(0.5 * (angle + nextAngle))
+	}
 
 	m.CollisionAtCell = make(map[lxgata.CollisionType][][]uint16)
 	m.EnergyLossByProcess = make(map[lxgata.CollisionType][]float64)
@@ -108,22 +120,31 @@ func NewModel(CathodeFallLength float64, parameters config.ModelParameters) Mode
 		m.LookupInverseVelocity[gridNode] = 1. / utils.EV2electronVelocity(m.LookupEnergy[gridNode]+0.5*parameters.EnergyStep)
 		m.lookupMNumerator[gridNode] = m.Parameters.GasDensity * m.lookupTotalCrossSection[gridNode] * math.Sqrt(m.LookupEnergy[gridNode])
 	}
-	m.GridInverseMu = make([]float64, int(1./m.MuStep)+1)
-	for muNode := range m.GridInverseMu {
-		m.GridInverseMu[muNode] = 1. / (m.MuStep * (float64(muNode) + 0.5))
-	}
+	// m.GridInverseMu = make([]float64, int(1./m.MuStep)+1)
+	// for muNode := range m.GridInverseMu {
+	// 	m.GridInverseMu[muNode] = 1. / (m.MuStep * (float64(muNode) + 0.5))
+	// }
 
 	if m.Parameters.CalculateDistribution {
-		m.Distribution = make([][]*list.List, m.NumCells)
+		m.Distribution = make([][][]float64, m.NumCells)
 		for x := range m.Distribution {
-			m.Distribution[x] = make([]*list.List, m.NumMuCells) //list.New()
-			for mu := range m.NumMuCells {
-				m.Distribution[x][mu] = list.New()
+			m.Distribution[x] = make([][]float64, numAngleCells) //list.New()
+			for a := range numAngleCells {
+				m.Distribution[x][a] = make([]float64, 0)
 			}
 		}
 	}
 
 	return m
+}
+
+func (m *Model) getAngleCell(mu float64) int {
+	for a := range m.lookupCosinesAtAngleCellBounds {
+		if a+1 < len(m.lookupCosinesAtAngleCellBounds) && m.lookupCosinesAtAngleCellBounds[a] < mu && mu < m.lookupCosinesAtAngleCellBounds[a+1] {
+			return a
+		}
+	}
+	return len(m.lookupCosinesAtAngleCellBounds) - 1
 }
 
 func (m *Model) collisionSelector(eKinetic, x, M float64) *lxgata.Collision {
@@ -146,13 +167,13 @@ func (m *Model) collisionSelector(eKinetic, x, M float64) *lxgata.Collision {
 }
 
 type FlowElem struct {
-	x, mu  int
-	energy float64
+	x, angle int
+	energy   float64
 }
 
 type Flow []FlowElem
 
-func (m *Model) getFlowBetweenEnergies(startEnergy, endEnergy float64, p *Particle) (flow []FlowElem) {
+func (m *Model) getFlowBetweenEnergies(startEnergy, endEnergy, totalEnergy, radialEnergy float64) (flow []FlowElem) {
 	energyMin, energyMax := min(startEnergy, endEnergy), max(startEnergy, endEnergy)
 	var direction float64
 	if startEnergy < endEnergy {
@@ -160,15 +181,15 @@ func (m *Model) getFlowBetweenEnergies(startEnergy, endEnergy float64, p *Partic
 	} else {
 		direction = -1.
 	}
-	xMin, xMax := m.LfromV(-(p.totEnergy - energyMin)), m.LfromV(-(p.totEnergy - energyMax))
+	xMin, xMax := m.LfromV(-(totalEnergy - energyMin)), m.LfromV(-(totalEnergy - energyMax))
 	gridMinIndex, gridMaxIndex := int(xMin/m.XStep)+1, int(xMax/m.XStep)+1
 	if gridMinIndex < 0 {
 		panic("i<0")
 	}
 	for i := gridMinIndex; i < gridMaxIndex; i++ {
-		eKinetic := p.totEnergy + m.VfromL(float64(i)*m.XStep)
-		mu := math.Copysign(math.Sqrt((eKinetic-p.eStar)/eKinetic), direction)
-		flow = append(flow, FlowElem{i, int(math.Floor(mu/m.MuStep)) + m.NumMuCells/2, eKinetic})
+		eKinetic := totalEnergy + m.VfromL(float64(i)*m.XStep)
+		mu := math.Copysign(math.Sqrt((eKinetic-radialEnergy)/eKinetic), direction)
+		flow = append(flow, FlowElem{i, m.getAngleCell(mu), eKinetic})
 	}
 	return
 }
@@ -179,44 +200,11 @@ func (m *Model) nextCollision(p *Particle) (collisionType *lxgata.Collision, flo
 	minEnergy, maxEnergy := max(0, p.totEnergy-(m.Vc+m.Va)), p.totEnergy
 	var currentCellIndex int
 	minEnergyCellIndex, maxEnergyCellIndex := int(minEnergy/m.EStep), int(maxEnergy/m.EStep)+1
-	// sheathLengthEnergy := p.totEnergy - m.VfromL(m.Parameters.CathodeFallLength)
-	// sheathLengthEnergyCell := int(sheathLengthEnergy/m.EStep)
-	// var CFLWorkaround bool = false
 	// var cachedVelocity float64
 	// var isVelCached = false
 	// potential at dc = -Va
-	// flow = make([]FlowElem, 0)
 
 	alignedToEnergyGrid := false
-
-	getPossibleCollision := func(segmentStartEnergy, M float64) (collisionType *lxgata.Collision, reversalHappened bool, throwOut bool) {
-		var delta float64
-		if p.mu < 0 {
-			delta = math.Sqrt(segmentStartEnergy-p.eStar) - R/(2.*M) // == sqrt(pColl - p.eStar) i.e. abs(speed) equivalent along x axis
-			if delta < 0 {
-				R -= 2 * M * math.Sqrt(segmentStartEnergy-p.eStar)
-				p.mu = +0.
-				p.eKinetic = p.eStar
-				reversalHappened = true
-				return
-			}
-		} else {
-			delta = R/(2.*M) + math.Sqrt(segmentStartEnergy-p.eStar)
-		}
-		collisionEnergy := math.FMA(delta, delta, p.eStar) // R = 2M[sqrt(p.e-p.eStar) - sqrt(eColl - p.eStar)]
-
-		if m.Parameters.CalculateDistribution {
-			flow = append(flow, m.getFlowBetweenEnergies(segmentStartEnergy, collisionEnergy, p)...)
-		}
-		p.setEnergy(collisionEnergy, m, true, true)
-		if maxEnergy < collisionEnergy || p.x < 0 || m.Parameters.GapLength < p.x {
-			throwOut = true
-			return
-		}
-		return m.collisionSelector(collisionEnergy, p.x, M), false, false
-	}
-
-	// aroundSheathLength := false
 
 	for !alignedToEnergyGrid || (minEnergyCellIndex <= currentCellIndex && currentCellIndex <= maxEnergyCellIndex && 0 <= p.x && p.x < m.Parameters.GapLength) {
 		var lowEnergy, segmentStartEnergy, segmentEndEnergy, highEnergy float64
@@ -282,19 +270,48 @@ func (m *Model) nextCollision(p *Particle) (collisionType *lxgata.Collision, flo
 		}
 		G = 2 * M * (math.Sqrt(highEnergy-p.eStar) - math.Sqrt(lowEnergy-p.eStar))
 
+		collisionHappened := false
 		if G < R {
-			if m.Parameters.CalculateDistribution {
-				flow = append(flow, m.getFlowBetweenEnergies(segmentStartEnergy, segmentEndEnergy, p)...)
-			}
 			R -= G
 		} else {
-			var strangeReversalHappened bool
-			collisionType, strangeReversalHappened, throwOut = getPossibleCollision(segmentStartEnergy, M)
-			if !strangeReversalHappened {
-				return
-			} else {
-				reversalHappened = true
+			// collisionType, strangeReversalHappened, throwOut = getPossibleCollision(segmentStartEnergy, M)
+			{
+				var delta float64
+				if p.mu < 0 {
+					delta = math.Sqrt(segmentStartEnergy-p.eStar) - R/(2.*M) // == sqrt(pColl - p.eStar) i.e. abs(speed) equivalent along x axis
+					if delta < 0 {
+						R -= 2 * M * math.Sqrt(segmentStartEnergy-p.eStar)
+						segmentEndEnergy = p.eStar
+						reversalHappened = true
+					}
+				} else {
+					delta = R/(2.*M) + math.Sqrt(segmentStartEnergy-p.eStar)
+				}
+				if !reversalHappened {
+					collisionEnergy := math.FMA(delta, delta, p.eStar) // R = 2M[sqrt(p.e-p.eStar) - sqrt(eColl - p.eStar)]
+					segmentEndEnergy = collisionEnergy
+					p.setEnergy(collisionEnergy, m, true, true)
+					if maxEnergy < collisionEnergy || m.Parameters.GapLength < p.x {
+						arrivalAtGapEnd = true
+						return
+					}
+					if p.x < 0 {
+						arrivalAtCathode = true
+						return
+					}
+					collisionType = m.collisionSelector(collisionEnergy, p.x, M)
+					collisionHappened = true
+				}
+
 			}
+		}
+
+		if m.Parameters.CalculateDistribution {
+			flow = append(flow, m.getFlowBetweenEnergies(segmentStartEnergy, segmentEndEnergy, p.totEnergy, p.eStar)...)
+		}
+
+		if collisionHappened {
+			return
 		}
 
 		if arrivalAtCathode || arrivalAtGapEnd {
@@ -315,25 +332,7 @@ func (m *Model) nextCollision(p *Particle) (collisionType *lxgata.Collision, flo
 		// 	cellIndex--
 		// 	p.mu = -p.mu
 		// }
-
-		// if (p.totEnergy-leftBound) > m.Va &&
-		// 	m.Va > (p.totEnergy-rightBound) &&
-		// 	!CFLWorkaround {
-		// 	CFLWorkaround = true
-		// 	// isVelCached = false
-		// 	if (p.totEnergy - p.eKinetic) > m.Va {
-		// 		rightBound = p.totEnergy - m.Va
-		// 	} else {
-		// 		leftBound = p.totEnergy - m.Va
-		// 	}
-		// } else {
-		// 	CFLWorkaround = false
-		// }
-
 	}
-	// if p.totEnergy < ionizationThreshold && p.x < m.Parameters.GapLength {
-	// 	m.OutOfEnergyAtCell[int(p.x/m.XStep)]++
-	// }
 	return nil, flow, false
 }
 
@@ -369,7 +368,7 @@ func (m *Model) Run() {
 			for distUpdate := range distflow {
 				for i := range distUpdate {
 					if distUpdate[i].x < m.NumCells {
-						m.Distribution[distUpdate[i].x][distUpdate[i].mu].PushBack(distUpdate[i].energy)
+						m.Distribution[distUpdate[i].x][distUpdate[i].angle] = append(m.Distribution[distUpdate[i].x][distUpdate[i].angle], distUpdate[i].energy)
 					}
 				}
 			}
@@ -396,7 +395,8 @@ func (m *Model) Run() {
 		}
 		particle := m.newParticle(origin)
 		if m.Parameters.CalculateDistribution {
-			m.Distribution[0][int(math.Floor(particle.mu/m.MuStep))+m.NumMuCells/2].PushBack(particle.eKinetic)
+			angleCell := m.getAngleCell(particle.mu)
+			m.Distribution[0][angleCell] = append(m.Distribution[0][angleCell], particle.eKinetic)
 		}
 		computeWg.Add(1)
 		computeflow <- &particle
@@ -410,11 +410,12 @@ func (m *Model) Run() {
 				counter++
 				print("\r" + status[counter&0b11])
 				ionizationThreshold := m.Parameters.CrossSectionsData().MinThresholdOfKind(lxgata.IONIZATION)
+				flow := make([]FlowElem, 0)
 				for ionizationThreshold < particlePtr.totEnergy || m.Parameters.CalculateDistribution { //xCell :=int((particlePtr.x+0.5*m.XStep)/m.XStep); (!m.Parameters.ParallelPlaneHollowCathode && xCell < m.NumCells) ||
 					// (m.Parameters.ParallelPlaneHollowCathode && int(particlePtr.x/m.XStep) < m.NumCells+1) {
 					collision, distUpdate, throwOut := m.nextCollision(particlePtr /*, stateflow*/)
 					if m.Parameters.CalculateDistribution {
-						distflow <- distUpdate
+						flow = append(flow, distUpdate...)
 					}
 					if throwOut {
 						break
@@ -481,6 +482,7 @@ func (m *Model) Run() {
 				if particlePtr.totEnergy < ionizationThreshold {
 					ooeflow <- int(particlePtr.x / m.XStep)
 				}
+				distflow <- flow
 				computeWg.Done()
 			}
 		}()

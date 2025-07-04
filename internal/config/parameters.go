@@ -37,7 +37,7 @@ func (c *Config) isDefined(path []string, meta *toml.MetaData) bool {
 	}
 }
 
-func LoadConfig(flags ConfigFlags) (Config, toml.MetaData) {
+func LoadConfig(flags Flags) (Config, toml.MetaData) {
 	var config Config
 	config.isDefinedMap = map[string]struct{}{}
 	meta, err := toml.DecodeFile(strings.TrimSuffix(*flags.ConfigFileNamePointer, ".toml")+".toml", &config)
@@ -128,12 +128,12 @@ type ModelParameters struct {
 	AmbipolarDiffusionCoefficient         float64
 	AmbipolarDiffusionCharacteristicScale float64
 
-	EnergyStep, MuStep         float64 // [eV]
-	NElectrons                 int
-	MakeDir                    bool
-	ParallelPlaneHollowCathode bool
-	Volumetric                 bool
-	CalculateStdError          bool
+	EnergyStep, MuStep, AngleStep float64 // [eV]
+	NElectrons                    int
+	MakeDir                       bool
+	ParallelPlaneHollowCathode    bool
+	Volumetric                    bool
+	CalculateStdError             bool
 
 	CalculateCathodeFallLength bool
 	CathodeFallLengthPrecision float64
@@ -178,8 +178,8 @@ var defaultValues = map[string]any{ // in SI-eV
 	"ConstEField":                -100.,          //[V/m]
 	"Temperature":                300.,           //[K]
 	"CathodeFallLengthPrecision": 1e-6,           //[m]
-	"EnergyStep":                 0.001,          //[eV]
-	"MuStep":                     5. / 180.,
+	"EnergyStep":                 0.01,           //[eV]
+	"AngleStep":                  45.,
 	"NElectrons":                 1000,
 	"MakeDir":                    true,
 	"ParallelPlaneHollowCathode": false,
@@ -188,7 +188,7 @@ var defaultValues = map[string]any{ // in SI-eV
 	"CountNulls":                 false,
 }
 
-var defaultUnits = []string{"mkA", "cm", "Torr", "s", "J"}
+var defaultUnits = []string{"mkA", "cm", "Torr", "s", "eV"}
 
 var fieldsXor = map[string][]string{
 	"CalculateCathodeFallLength": {"CathodeFallLength"},

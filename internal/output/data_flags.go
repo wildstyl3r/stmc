@@ -2,6 +2,7 @@ package output
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"flag"
 	"log"
 	"math"
@@ -30,9 +31,15 @@ type sequentialDataItem struct {
 	yUnit       []config.UnitElement
 }
 
+type customDataItem struct {
+	DataItem
+	prepare func(*model.Model) []byte
+}
+
 type DataFlags struct {
 	all         *bool
 	Sequentials map[string]sequentialDataItem
+	Custom      map[string]customDataItem
 }
 
 const (
@@ -45,6 +52,9 @@ const (
 	PlasmaDensity              = "Plasma density"
 	MeanEnergy                 = "Mean energy"
 	MeanVelocityX              = "Mean velocity along x"
+	MeanVelocityR              = "Mean velocity orthogonal to x"
+	MeanVelocityAbs            = "Mean absolute velocity"
+	RawDistribution            = "Raw distribution"
 )
 
 func NewDataFlags() DataFlags {
@@ -249,7 +259,7 @@ func NewDataFlags() DataFlags {
 			},
 			MeanEnergy: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("e", false, "save mean energy"),
+					SaveFlag:   flag.Bool("e", true, "save mean energy"),
 					fileSuffix: "e",
 				},
 				columnNames: []string{"x (cm)", "eV"},
@@ -257,13 +267,13 @@ func NewDataFlags() DataFlags {
 					for x := range m.NumCells {
 						meanEnergy := 0.
 						n := 0.
-						for j := range m.NumMuCells {
-							mu := (float64(j-m.NumMuCells/2) + 0.5) * m.MuStep
-							for iterator := m.Distribution[x][j].Front(); iterator != nil; iterator = iterator.Next() {
-								energy := iterator.Value.(float64)
-								divBy := mu * utils.EV2electronVelocity((math.Floor(energy/m.EStep)+0.5)*m.EStep)
-								meanEnergy += energy / divBy
-								n += 1. / divBy
+						for a := range m.Distribution[x] {
+							// mu := m.LookupCosinesAtAngleCellCenters[a]
+							for i := range m.Distribution[x][a] {
+								energy := m.Distribution[x][a][i]
+								// velocityX := mu * utils.EV2electronVelocity((math.Floor(energy/m.EStep)+0.5)*m.EStep)
+								meanEnergy += energy // velocityX
+								n += 1.              // velocityX
 							}
 						}
 						args = append(args, m.XStep*(float64(x)+0.5))
@@ -284,13 +294,14 @@ func NewDataFlags() DataFlags {
 					for x := range m.NumCells {
 						vx := 0.
 						n := 0.
-						for j := range m.NumMuCells {
-							mu := (float64(j-m.NumMuCells/2) + 0.5) * m.MuStep
-							for iterator := m.Distribution[x][j].Front(); iterator != nil; iterator = iterator.Next() {
-								energy := iterator.Value.(float64)
-								divBy := mu * utils.EV2electronVelocity((math.Floor(energy/m.EStep)+0.5)*m.EStep)
-								vx += 1. / mu
-								n += 1. / divBy
+						for a := range m.Distribution[x] {
+							mu := m.LookupCosinesAtAngleCellCenters[a]
+							for i := range m.Distribution[x][a] {
+								energy := m.Distribution[x][a][i]
+								velocity := utils.EV2electronVelocity((math.Floor(energy/m.EStep) + 0.5) * m.EStep)
+								velocityX := velocity * mu
+								vx += velocityX
+								n += 1. // velocityX
 							}
 						}
 						args = append(args, m.XStep*(float64(x)+0.5))
@@ -301,6 +312,81 @@ func NewDataFlags() DataFlags {
 				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 				yUnit: []config.UnitElement{{Class: config.Length, Power: 1}, {Class: config.Time, Power: -1}},
 			},
+			MeanVelocityR: {
+				DataItem: DataItem{
+					SaveFlag:   flag.Bool("vr", false, "save mean transversal velocity"),
+					fileSuffix: "vr",
+				},
+				columnNames: []string{"x (cm)", "cm s^-1"},
+				values: func(m *model.Model) (args []float64, values [][]float64, labels []string) {
+					for x := range m.NumCells {
+						vx := 0.
+						n := 0.
+						for a := range m.Distribution[x] {
+							mu := m.LookupCosinesAtAngleCellCenters[a]
+							sinTheta := math.Sqrt(1 - mu*mu)
+							for i := range m.Distribution[x][a] {
+								energy := m.Distribution[x][a][i]
+								velocity := utils.EV2electronVelocity((math.Floor(energy/m.EStep) + 0.5) * m.EStep)
+								velocityX := mu * velocity
+								velocityR := sinTheta * velocity
+								vx += velocityR / velocityX
+								n += 1. / velocityX
+							}
+						}
+						args = append(args, m.XStep*(float64(x)+0.5))
+						values = append(values, []float64{vx / n})
+					}
+					return args, values, []string{"Vr (x)"}
+				},
+				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
+				yUnit: []config.UnitElement{{Class: config.Length, Power: 1}, {Class: config.Time, Power: -1}},
+			},
+			MeanVelocityAbs: {
+				DataItem: DataItem{
+					SaveFlag:   flag.Bool("va", false, "save mean transversal velocity"),
+					fileSuffix: "va",
+				},
+				columnNames: []string{"x (cm)", "cm s^-1"},
+				values: func(m *model.Model) (args []float64, values [][]float64, labels []string) {
+					for x := range m.NumCells {
+						vx := 0.
+						n := 0.
+						for a := range m.Distribution[x] {
+							mu := m.LookupCosinesAtAngleCellCenters[a]
+							for i := range m.Distribution[x][a] {
+								energy := m.Distribution[x][a][i]
+								velocity := utils.EV2electronVelocity((math.Floor(energy/m.EStep) + 0.5) * m.EStep)
+								velocityX := mu * velocity
+								vx += velocity / velocityX
+								n += 1. / velocityX
+							}
+						}
+						args = append(args, m.XStep*(float64(x)+0.5))
+						values = append(values, []float64{vx / n})
+					}
+					return args, values, []string{"Vr (x)"}
+				},
+				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
+				yUnit: []config.UnitElement{{Class: config.Length, Power: 1}, {Class: config.Time, Power: -1}},
+			},
+		},
+		Custom: map[string]customDataItem{
+			RawDistribution: {
+				DataItem: DataItem{
+					SaveFlag:   flag.Bool("raw", true, "save raw distribution"),
+					fileSuffix: "raw",
+				},
+				prepare: func(m *model.Model) []byte {
+					jsonData, err := json.Marshal(m.Distribution)
+					if err != nil {
+						print("unable to jsonify raw distribution", err)
+						return nil
+					} else {
+						return jsonData
+					}
+				},
+			},
 		},
 	}
 }
@@ -309,7 +395,7 @@ func Save(modelName string, model *model.Model, df DataFlags, outputPath string)
 	for name, output := range df.Sequentials {
 		if *output.SaveFlag || *df.all {
 			var file *os.File
-			file, err := utils.OpenFile(model.Parameters.MakeDir, outputPath, output.fileSuffix, modelName)
+			file, err := utils.OpenFile(model.Parameters.MakeDir, outputPath, output.fileSuffix, modelName, utils.TypeTXT)
 			if err != nil {
 				println("unable to save "+name+": ", err)
 			} else {
@@ -330,6 +416,25 @@ func Save(modelName string, model *model.Model, df DataFlags, outputPath string)
 				}
 				if err := w.Error(); err != nil {
 					log.Fatalln("error writing csv:", err)
+				}
+			}
+		}
+	}
+	for name, output := range df.Custom {
+		if *output.SaveFlag || *df.all {
+			var file *os.File
+			file, err := utils.OpenFile(model.Parameters.MakeDir, outputPath, output.fileSuffix, modelName, utils.TypeJson)
+			if err != nil {
+				println("unable to save "+name+": ", err)
+			} else {
+				data := output.prepare(model)
+				if data != nil {
+					file.Write(data)
+					file.Sync()
+					file.Close()
+					if model.Parameters.Verbose() {
+						println(name + " saved")
+					}
 				}
 			}
 		}

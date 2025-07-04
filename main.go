@@ -39,6 +39,9 @@ func main() {
 
 	speciesCrossSections := make(map[string]*lxgata.Collisions)
 	if crossSections, err := lxgata.LoadCrossSections(config.CrossSections); err == nil {
+		for cs := range crossSections {
+			crossSections[cs].Expand(0.001, true)
+		}
 		speciesCrossSections[config.CrossSections] = &crossSections
 	} else {
 		panic(fmt.Errorf("invalid cross section file: %w", err))

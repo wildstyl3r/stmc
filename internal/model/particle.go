@@ -96,20 +96,6 @@ func (p *Particle) recalcParams(s *Model) {
 	}
 }
 
-func (p *Particle) M(i int, s *Model) float64 {
-	eLeft, eRight := p.totEnergy+s.lookUpPotential[i], p.totEnergy+s.lookUpPotential[i+1]
-	if eLeft < 0. {
-		eLeft = 0.
-	}
-	if eRight <= 0. {
-		panic("stf")
-	}
-	return utils.TernarySearchMaxF(func(eKin float64) float64 {
-		potential := -(p.totEnergy - eKin)
-		return -s.Parameters.GasDensity * s.Parameters.CrossSectionsData().TotalCrossSectionAt(eKin) * math.Sqrt(eKin) / s.EFieldFromL(s.LfromV(potential))
-	}, eLeft, eRight, 0.00001)
-}
-
 func (p *Particle) redirect(cosChi, cosPhi float64, m *Model) {
 	//cos (theta1) = cos(theta)*cos(chi) - sin(theta)*cos(phi)*sin(chi)
 	sinChi := math.Sqrt(math.FMA(cosChi, -cosChi, 1.))

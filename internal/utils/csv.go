@@ -25,7 +25,7 @@ func WriteAsCSV(data CSV, path, subpath, filename string, columns []string) {
 	var scalarW *csv.Writer
 	println(filename, path)
 	clearName := GetFilename(filename)
-	scalarParams, err := OpenFile(true, path, subpath, clearName)
+	scalarParams, err := OpenFile(true, path, subpath, clearName, TypeTXT)
 	if err != nil {
 		println("unable to save dc and secondary emission coefficient: ", err.Error())
 		os.Exit(1)
