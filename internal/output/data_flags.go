@@ -12,6 +12,7 @@ import (
 
 	"github.com/wildstyl3r/lxgata"
 	"github.com/wildstyl3r/stmc/internal/config"
+	"github.com/wildstyl3r/stmc/internal/constants"
 	"github.com/wildstyl3r/stmc/internal/datahub"
 	"github.com/wildstyl3r/stmc/internal/extensions"
 	"github.com/wildstyl3r/stmc/internal/model"
@@ -242,7 +243,7 @@ func NewDataFlags() DataFlags {
 			},
 			PlasmaDensity: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("n", true, "save plasma density"),
+					SaveFlag:   flag.Bool("n", false, "save plasma density"),
 					fileSuffix: "n",
 				},
 				columnNames: []string{"x (cm)", "cm ^ -3"},
@@ -259,26 +260,47 @@ func NewDataFlags() DataFlags {
 			},
 			MeanEnergy: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("e", true, "save mean energy"),
+					SaveFlag:   flag.Bool("e", false, "save mean energy"),
 					fileSuffix: "e",
 				},
 				columnNames: []string{"x (cm)", "eV"},
-				values: func(m *model.Model) (args []float64, values [][]float64, labels []string) {
-					for x := range m.NumCells {
-						meanEnergy := 0.
-						n := 0.
-						for a := range m.Distribution[x] {
-							// mu := m.LookupCosinesAtAngleCellCenters[a]
-							for i := range m.Distribution[x][a] {
-								energy := m.Distribution[x][a][i]
-								// velocityX := mu * utils.EV2electronVelocity((math.Floor(energy/m.EStep)+0.5)*m.EStep)
-								meanEnergy += energy // velocityX
-								n += 1.              // velocityX
-							}
-						}
-						args = append(args, m.XStep*(float64(x)+0.5))
-						values = append(values, []float64{meanEnergy / n})
+				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
+
+					electronDensity := make([]float64, model.NumCells)
+					meanEnergy := make([]float64, model.NumCells)
+
+					var lookUpVelocity []float64 = make([]float64, model.NumECells+1)
+
+					var energyRoot2Velocity float64 = math.Sqrt(2. / constants.ElectornMass)
+					for eIndex := range lookUpVelocity {
+						lookUpVelocity[eIndex] = math.Sqrt(utils.EV2J(model.Parameters.EnergyDiscretizationStep*(float64(eIndex)+0.5))) * energyRoot2Velocity
 					}
+
+					for xIndex := 0; xIndex < model.NumCells; xIndex++ {
+						s := 0
+						for eIndex := 0; eIndex < model.NumECells; eIndex++ {
+							currentEnergy := model.Parameters.EnergyDiscretizationStep * (float64(eIndex) + 0.5)
+							fXE := 0.
+							for muIndex := 0; muIndex < model.NumMuCells; muIndex++ {
+								s += model.Distribution[xIndex][eIndex][muIndex]
+								currentMu := max(-1, min(model.Parameters.MuDiscretizationStep*(float64(muIndex)+0.5)-1., 1))
+
+								f := 0.
+								if math.Abs(currentMu) > 0.0001 {
+									f = 1 / (lookUpVelocity[eIndex] * math.Abs(currentMu)) * float64(model.Distribution[xIndex][eIndex][muIndex])
+								}
+								fXE += f
+							}
+
+							electronDensity[xIndex] += fXE
+
+							meanEnergy[xIndex] += fXE * currentEnergy
+						}
+						meanEnergy[xIndex] /= electronDensity[xIndex]
+						args = append(args, model.XStep*(float64(xIndex)+0.5))
+						values = append(values, []float64{meanEnergy[xIndex]})
+					}
+
 					return args, values, []string{"varepsilon (x)"}
 				},
 				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
@@ -290,82 +312,41 @@ func NewDataFlags() DataFlags {
 					fileSuffix: "vx",
 				},
 				columnNames: []string{"x (cm)", "cm s^-1"},
-				values: func(m *model.Model) (args []float64, values [][]float64, labels []string) {
-					for x := range m.NumCells {
-						vx := 0.
-						n := 0.
-						for a := range m.Distribution[x] {
-							mu := m.LookupCosinesAtAngleCellCenters[a]
-							for i := range m.Distribution[x][a] {
-								energy := m.Distribution[x][a][i]
-								velocity := utils.EV2electronVelocity((math.Floor(energy/m.EStep) + 0.5) * m.EStep)
-								velocityX := velocity * mu
-								vx += velocityX
-								n += 1. // velocityX
+				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
+
+					electronDensity := make([]float64, model.NumCells)
+					flux := make([]float64, model.NumCells)
+
+					var lookUpVelocity []float64 = make([]float64, model.NumECells+1)
+
+					var energyRoot2Velocity float64 = math.Sqrt(2. / constants.ElectornMass)
+					for eIndex := range lookUpVelocity {
+						lookUpVelocity[eIndex] = math.Sqrt(utils.EV2J(model.Parameters.EnergyDiscretizationStep*(float64(eIndex)+0.5))) * energyRoot2Velocity
+					}
+
+					for xIndex := range model.NumCells {
+						for eIndex := range model.NumECells {
+							fXE := 0.
+							v_x_fXE := 0.
+							for muIndex := range model.NumMuCells {
+								currentMu := max(-1, min(model.Parameters.MuDiscretizationStep*(float64(muIndex)+0.5)-1., 1))
+
+								f := 0.
+								if math.Abs(currentMu) > 0.0001 {
+									f = 1 / (lookUpVelocity[eIndex] * math.Abs(currentMu)) * float64(model.Distribution[xIndex][eIndex][muIndex])
+								}
+								fXE += f
+
+								v_x_fXE += f * lookUpVelocity[eIndex] * currentMu
 							}
+
+							electronDensity[xIndex] += fXE
+							flux[xIndex] += v_x_fXE
 						}
-						args = append(args, m.XStep*(float64(x)+0.5))
-						values = append(values, []float64{vx / n})
+						args = append(args, model.XStep*(float64(xIndex)+0.5))
+						values = append(values, []float64{flux[xIndex] / electronDensity[xIndex]})
 					}
 					return args, values, []string{"Vx (x)"}
-				},
-				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
-				yUnit: []config.UnitElement{{Class: config.Length, Power: 1}, {Class: config.Time, Power: -1}},
-			},
-			MeanVelocityR: {
-				DataItem: DataItem{
-					SaveFlag:   flag.Bool("vr", false, "save mean transversal velocity"),
-					fileSuffix: "vr",
-				},
-				columnNames: []string{"x (cm)", "cm s^-1"},
-				values: func(m *model.Model) (args []float64, values [][]float64, labels []string) {
-					for x := range m.NumCells {
-						vx := 0.
-						n := 0.
-						for a := range m.Distribution[x] {
-							mu := m.LookupCosinesAtAngleCellCenters[a]
-							sinTheta := math.Sqrt(1 - mu*mu)
-							for i := range m.Distribution[x][a] {
-								energy := m.Distribution[x][a][i]
-								velocity := utils.EV2electronVelocity((math.Floor(energy/m.EStep) + 0.5) * m.EStep)
-								velocityX := mu * velocity
-								velocityR := sinTheta * velocity
-								vx += velocityR / velocityX
-								n += 1. / velocityX
-							}
-						}
-						args = append(args, m.XStep*(float64(x)+0.5))
-						values = append(values, []float64{vx / n})
-					}
-					return args, values, []string{"Vr (x)"}
-				},
-				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
-				yUnit: []config.UnitElement{{Class: config.Length, Power: 1}, {Class: config.Time, Power: -1}},
-			},
-			MeanVelocityAbs: {
-				DataItem: DataItem{
-					SaveFlag:   flag.Bool("va", false, "save mean transversal velocity"),
-					fileSuffix: "va",
-				},
-				columnNames: []string{"x (cm)", "cm s^-1"},
-				values: func(m *model.Model) (args []float64, values [][]float64, labels []string) {
-					for x := range m.NumCells {
-						vx := 0.
-						n := 0.
-						for a := range m.Distribution[x] {
-							mu := m.LookupCosinesAtAngleCellCenters[a]
-							for i := range m.Distribution[x][a] {
-								energy := m.Distribution[x][a][i]
-								velocity := utils.EV2electronVelocity((math.Floor(energy/m.EStep) + 0.5) * m.EStep)
-								velocityX := mu * velocity
-								vx += velocity / velocityX
-								n += 1. / velocityX
-							}
-						}
-						args = append(args, m.XStep*(float64(x)+0.5))
-						values = append(values, []float64{vx / n})
-					}
-					return args, values, []string{"Vr (x)"}
 				},
 				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 				yUnit: []config.UnitElement{{Class: config.Length, Power: 1}, {Class: config.Time, Power: -1}},
@@ -374,7 +355,7 @@ func NewDataFlags() DataFlags {
 		Custom: map[string]customDataItem{
 			RawDistribution: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("raw", true, "save raw distribution"),
+					SaveFlag:   flag.Bool("raw", false, "save raw distribution"),
 					fileSuffix: "raw",
 				},
 				prepare: func(m *model.Model) []byte {

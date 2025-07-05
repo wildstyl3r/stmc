@@ -9,9 +9,11 @@ import (
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
-const NormalizedCollisionRateKey = "NormalizedCollisionRate"
-const NormalizedCollisionRateCIKey = "NormalizedCollisionRateCI"
-const TotalCollisionsKey = "TotalCollisions"
+const (
+	NormalizedCollisionRateKey   = "NormalizedCollisionRate"
+	NormalizedCollisionRateCIKey = "NormalizedCollisionRateCI"
+	TotalCollisionsKey           = "TotalCollisions"
+)
 
 func NormalizedCollisionRate(model *model.Model) ([]string, []any) {
 	collisions := map[lxgata.CollisionType][]float64{}

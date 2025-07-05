@@ -9,8 +9,10 @@ import (
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
-const GlowDischargeDensityKey = "GlowDischargeDensity"
-const SimplifiedGlowDischargeDensityKey = "SimplifiedGlowDischargeDensity"
+const (
+	GlowDischargeDensityKey           = "GlowDischargeDensity"
+	SimplifiedGlowDischargeDensityKey = "SimplifiedGlowDischargeDensity"
+)
 
 func GlowDischargeDensity(model *model.Model) ([]string, []any) {
 	ionizations := datahub.Get(NormalizedCollisionRateKey, model).(map[lxgata.CollisionType][]float64)[lxgata.IONIZATION]

@@ -128,12 +128,13 @@ type ModelParameters struct {
 	AmbipolarDiffusionCoefficient         float64
 	AmbipolarDiffusionCharacteristicScale float64
 
-	EnergyStep, MuStep, AngleStep float64 // [eV]
-	NElectrons                    int
-	MakeDir                       bool
-	ParallelPlaneHollowCathode    bool
-	Volumetric                    bool
-	CalculateStdError             bool
+	EnergyStep, AngleStep                          float64 // [eV]
+	EnergyDiscretizationStep, MuDiscretizationStep float64
+	NElectrons                                     int
+	MakeDir                                        bool
+	ParallelPlaneHollowCathode                     bool
+	Volumetric                                     bool
+	CalculateStdError                              bool
 
 	CalculateCathodeFallLength bool
 	CathodeFallLengthPrecision float64
@@ -178,7 +179,7 @@ var defaultValues = map[string]any{ // in SI-eV
 	"ConstEField":                -100.,          //[V/m]
 	"Temperature":                300.,           //[K]
 	"CathodeFallLengthPrecision": 1e-6,           //[m]
-	"EnergyStep":                 0.01,           //[eV]
+	"EnergyStep":                 0.001,          //[eV]
 	"AngleStep":                  45.,
 	"NElectrons":                 1000,
 	"MakeDir":                    true,
@@ -186,6 +187,8 @@ var defaultValues = map[string]any{ // in SI-eV
 	"CalculateCathodeFallLength": false,
 	"Volumetric":                 false,
 	"CountNulls":                 false,
+	"EnergyDiscretizationStep":   0.1,
+	"MuDiscretizationStep":       1 / 90.,
 }
 
 var defaultUnits = []string{"mkA", "cm", "Torr", "s", "eV"}
