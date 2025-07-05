@@ -484,7 +484,9 @@ func (m *Model) Run() {
 				if particlePtr.totEnergy < ionizationThreshold {
 					ooeflow <- int(particlePtr.x / m.XStep)
 				}
-				distflow <- flow
+				if m.Parameters.CalculateDistribution {
+					distflow <- flow
+				}
 				computeWg.Done()
 			}
 		}()
