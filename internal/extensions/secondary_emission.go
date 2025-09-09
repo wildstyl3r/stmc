@@ -16,16 +16,20 @@ import (
 )
 
 func gammaIntegralF(model *model.Model) float64 {
-	//calculate xMaximum
-	// xMaximum := findXNumberDensityMaximum(de)
-	indexOfMaximum := utils.Argmax(datahub.Get("GlowDischargeDensity", model).([]float64))
-	// print("x_max/step: ", int(x_max/model.XStep), " len: ", len(de.collisions[string(lxgata.IONIZATION)]), "\n")
-	sourceTermIntegral := utils.TableIntegrate(datahub.Get(datahub.KeyType(lxgata.IONIZATION), model).([]float64)[0:indexOfMaximum], nil, model.XStep) //0. //de.collisions[lxgata.IONIZATION][0]
-	sourceTermIntegral *= model.Parameters.Pressure                                                                                                    //* Torr / model.Parameters.Pressure / de.cathodeFlux
-	return 1 / sourceTermIntegral                                                                                                                      // -> NaN -??
+	ionizations := utils.GriddedInterval{
+		Step:   model.XStep,
+		Values: datahub.Get(datahub.KeyType(lxgata.IONIZATION), model).([]float64),
+	}
+	sourceTermIntegral, err := utils.TrapezoidIntegration(0, float64(utils.Argmax(datahub.Get("GlowDischargeDensity", model).([]float64)))*ionizations.Step, ionizations)
+	if err != nil {
+		fmt.Printf("error calculating integral gamma: %#v", err)
+	}
+	sourceTermIntegral *= model.Parameters.Pressure //* Torr / model.Parameters.Pressure / de.cathodeFlux
+	return 1 / sourceTermIntegral
 
 }
 
+// not applicable for UniformField
 func gammaAnalyticF(dc, j, Vc, N float64, ionDriftVelocity func(float64, float64, float64) float64) float64 {
 	return j*dc*dc/(2.*Vc*ionDriftVelocity(Vc, dc, N)*constants.FreeSpacePermittivityE0) - 1. //-> 0
 }
@@ -85,7 +89,8 @@ func gammaCalculationStep(itp *int, dc float64, parameters config.ModelParameter
 	} else {
 		fmt.Println("preliminary step")
 	}
-	model := model.NewModel(dc, parameters)
+	parameters.GapLength = dc
+	model := model.NewModel(parameters)
 	model.Run()
 	datahub.Reset(&model)
 	loss, gammaIntegral, gammaAnalytic = gammaWithLoss(&model, lossType)
@@ -133,7 +138,7 @@ func bruteForceStepGammaCalculation(minDc, maxDc float64, configFlags config.Fla
 			strconv.FormatFloat(parameters.CathodeFallPotential/(dc*parameters.GasDensity*constants.Townsend), 'f', 10, 64),
 			strconv.FormatFloat(gamma[i], 'f', 10, 64),
 			strconv.FormatFloat(gammaAnalytic, 'f', 10, 64),
-			strconv.FormatFloat(gammaLoss, 'f', 10, 64), //strconv.FormatFloat(gammaVariance, 'f', 10, 64),
+			strconv.FormatFloat(gammaLoss, 'f', 10, 64),
 		})
 	}
 	gammaMean, gammaVariance := utils.MeanAndVariance(gamma, true)
@@ -158,7 +163,7 @@ func advancedGammaCalculation(minDc, maxDc float64, configFlags config.Flags, it
 	switch *configFlags.RootFindingAlgorithm {
 	case "s":
 		fmt.Println("calculating gamma with stochastic approximation")
-		var fLeftLoss, fRightLoss, initialDc float64 // := f(left+0.5*thetaPrecision), f(right-0.5*thetaPrecision)
+		var fLeftLoss, fRightLoss, initialDc float64
 		{
 			var gILeft, gIRight float64
 			fLeftLoss, gILeft, _ = gammaCalculationStep(nil, minDc+parameters.CathodeFallLengthPrecision, parameters, utils.Difference)
@@ -185,7 +190,7 @@ func advancedGammaCalculation(minDc, maxDc float64, configFlags config.Flags, it
 		dcLeft, dcRight := utils.BinarySearch(func(dc float64) bool {
 			gammaLoss, gammaIntegral, gammaAnalytic = gammaCalculationStep(itp, dc, parameters, utils.Difference)
 			return gammaLoss > 0
-		}, minDc, min(maxDc, parameters.GapLength), parameters.CathodeFallLengthPrecision) //0, parameters.GapLength, parameters.CathodeFallLengthPrecision)
+		}, minDc, min(maxDc, parameters.GapLength), parameters.CathodeFallLengthPrecision)
 		dc = 0.5 * (dcLeft + dcRight)
 
 	case "t":
@@ -194,9 +199,8 @@ func advancedGammaCalculation(minDc, maxDc float64, configFlags config.Flags, it
 		dc = utils.TernarySearchMax(func(dc float64) float64 {
 			gammaLoss, gammaIntegral, gammaAnalytic = gammaCalculationStep(itp, dc, parameters, utils.MSE)
 			return -gammaLoss
-		}, minDc, min(maxDc, parameters.GapLength), parameters.CathodeFallLengthPrecision) //0, parameters.GapLength, parameters.CathodeFallLengthPrecision)
+		}, minDc, min(maxDc, parameters.GapLength), parameters.CathodeFallLengthPrecision)
 	}
-	// dataExtractor.Save(modelName, dataExtractorFlags, outputDir)
 
 	println("saved d_c and γ")
 	return []string{

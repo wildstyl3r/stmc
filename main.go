@@ -38,14 +38,6 @@ func main() {
 	extensions.Load()
 
 	speciesCrossSections := make(map[string]*lxgata.Collisions)
-	if crossSections, err := lxgata.LoadCrossSections(config.CrossSections); err == nil {
-		for cs := range crossSections {
-			crossSections[cs].Expand(0.001, true)
-		}
-		speciesCrossSections[config.CrossSections] = &crossSections
-	} else {
-		panic(fmt.Errorf("invalid cross section file: %w", err))
-	}
 	var gammaData utils.CSV
 
 	for modelName, parameters := range config.Models {
@@ -59,8 +51,8 @@ func main() {
 			continue
 		}
 
-		if _, exists := speciesCrossSections[parameters.CrossSections]; !exists {
-			if crossSections, err := lxgata.LoadCrossSections(parameters.CrossSections); err == nil {
+		if _, exists := speciesCrossSections[parameters.CrossSections+parameters.ScatteringMode]; !exists {
+			if crossSections, err := lxgata.LoadCrossSections(parameters.CrossSections, true, parameters.GetScatteringMode(), lxgata.Hartree); err == nil {
 				speciesCrossSections[parameters.CrossSections] = &crossSections
 			} else {
 				panic(fmt.Errorf("invalid cross section file: %w", err))
@@ -75,7 +67,7 @@ func main() {
 		if parameters.CalculateCathodeFallLength {
 			gammaData = append(gammaData, extensions.GammaCalculation(configFlags, parameters, modelName, config.OutputDir))
 		} else {
-			m := model.NewModel(parameters.CathodeFallLength, parameters)
+			m := model.NewModel(parameters)
 			datahub.Reset(&m)
 			m.Run()
 			// dataExtractor := output.NewDataExtractor(&m)

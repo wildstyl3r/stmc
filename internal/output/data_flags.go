@@ -34,7 +34,7 @@ type sequentialDataItem struct {
 
 type customDataItem struct {
 	DataItem
-	prepare func(*model.Model) []byte
+	prepare func(*model.Model) ([]byte, utils.ExportFileType)
 }
 
 type DataFlags struct {
@@ -269,7 +269,7 @@ func NewDataFlags() DataFlags {
 					electronDensity := make([]float64, model.NumCells)
 					meanEnergy := make([]float64, model.NumCells)
 
-					var lookUpVelocity []float64 = make([]float64, model.NumECells+1)
+					var lookUpVelocity []float64 = make([]float64, model.NumCellsE+1)
 
 					var energyRoot2Velocity float64 = math.Sqrt(2. / constants.ElectornMass)
 					for eIndex := range lookUpVelocity {
@@ -278,10 +278,10 @@ func NewDataFlags() DataFlags {
 
 					for xIndex := 0; xIndex < model.NumCells; xIndex++ {
 						s := 0
-						for eIndex := 0; eIndex < model.NumECells; eIndex++ {
+						for eIndex := 0; eIndex < model.NumCellsE; eIndex++ {
 							currentEnergy := model.Parameters.EnergyDiscretizationStep * (float64(eIndex) + 0.5)
 							fXE := 0.
-							for muIndex := 0; muIndex < model.NumMuCells; muIndex++ {
+							for muIndex := 0; muIndex < model.NumCellsMu; muIndex++ {
 								s += model.Distribution[xIndex][eIndex][muIndex]
 								currentMu := max(-1, min(model.Parameters.MuDiscretizationStep*(float64(muIndex)+0.5)-1., 1))
 
@@ -317,7 +317,7 @@ func NewDataFlags() DataFlags {
 					electronDensity := make([]float64, model.NumCells)
 					flux := make([]float64, model.NumCells)
 
-					var lookUpVelocity []float64 = make([]float64, model.NumECells+1)
+					var lookUpVelocity []float64 = make([]float64, model.NumCellsE+1)
 
 					var energyRoot2Velocity float64 = math.Sqrt(2. / constants.ElectornMass)
 					for eIndex := range lookUpVelocity {
@@ -325,10 +325,10 @@ func NewDataFlags() DataFlags {
 					}
 
 					for xIndex := range model.NumCells {
-						for eIndex := range model.NumECells {
+						for eIndex := range model.NumCellsE {
 							fXE := 0.
 							v_x_fXE := 0.
-							for muIndex := range model.NumMuCells {
+							for muIndex := range model.NumCellsMu {
 								currentMu := max(-1, min(model.Parameters.MuDiscretizationStep*(float64(muIndex)+0.5)-1., 1))
 
 								f := 0.
@@ -358,16 +358,37 @@ func NewDataFlags() DataFlags {
 					SaveFlag:   flag.Bool("raw", false, "save raw distribution"),
 					fileSuffix: "raw",
 				},
-				prepare: func(m *model.Model) []byte {
+				prepare: func(m *model.Model) ([]byte, utils.ExportFileType) {
 					jsonData, err := json.Marshal(m.Distribution)
 					if err != nil {
 						print("unable to jsonify raw distribution", err)
-						return nil
+						return nil, utils.ExportFileType("")
 					} else {
-						return jsonData
+						return jsonData, utils.TypeJson
 					}
 				},
 			},
+			// "Secondary electron yields": {
+			// 	DataItem: DataItem{
+			// 		SaveFlag:   flag.Bool("gamma", false, "save secondary electron yields"),
+			// 		fileSuffix: "gamma",
+			// 	},
+			// 	prepare: func(m *model.Model) ([]byte, utils.ExportFileType) {
+			// 		if m.Parameters.CalculateCathodeFallLength {
+			// 			return nil, utils.TypeCSV
+			// 		} else {
+			// 			density := datahub.Get("GlowDischargeDensity", m).([]float64)
+			// 			xMaxIndex := utils.Argmax(density)
+			// 			collisions := datahub.Get(extensions.NormalizedCollisionRateKey, m).(map[lxgata.CollisionType][]float64)
+			// 			M := utils.SumFloat64Slice(collisions[lxgata.IONIZATION][:xMaxIndex]) * m.XStep
+			// 			utils.WriteAsCSV(
+			// 				gammaData,
+			// 				config.OutputDir, "gamma", *configFlags.ConfigFileNamePointer,
+			// 				[]string{"E/N", "integrated secondary emission coefficient", "analytic secondary emission coefficient", "final gamma loss", "sheath length", "integrated secondary emission coefficient_conf_interval"},
+			// 			)
+			// 		}
+			// 	},
+			// },
 		},
 	}
 }
@@ -403,13 +424,13 @@ func Save(modelName string, model *model.Model, df DataFlags, outputPath string)
 	}
 	for name, output := range df.Custom {
 		if *output.SaveFlag || *df.all {
-			var file *os.File
-			file, err := utils.OpenFile(model.Parameters.MakeDir, outputPath, output.fileSuffix, modelName, utils.TypeJson)
-			if err != nil {
-				println("unable to save "+name+": ", err)
-			} else {
-				data := output.prepare(model)
-				if data != nil {
+			data, fileExt := output.prepare(model)
+			if data != nil {
+				var file *os.File
+				file, err := utils.OpenFile(model.Parameters.MakeDir, outputPath, output.fileSuffix, modelName, fileExt)
+				if err != nil {
+					println("unable to save "+name+": ", err)
+				} else {
 					file.Write(data)
 					file.Sync()
 					file.Close()
@@ -418,6 +439,7 @@ func Save(modelName string, model *model.Model, df DataFlags, outputPath string)
 					}
 				}
 			}
+
 		}
 	}
 }

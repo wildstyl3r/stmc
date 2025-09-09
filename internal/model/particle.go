@@ -59,6 +59,10 @@ func (p *Particle) setEnergy(eKinetic float64, s *Model, zeroChangeAcceptable bo
 		panic("no change in energy")
 	}
 	p.eKinetic = eKinetic
+
+	if math.IsNaN(eKinetic) {
+		panic("eKinetic is NaN")
+	}
 	p.mu = math.Copysign(math.Sqrt((eKinetic-p.eStar)/eKinetic), p.mu)
 	if setX {
 		potential := -(p.totEnergy - p.eKinetic)

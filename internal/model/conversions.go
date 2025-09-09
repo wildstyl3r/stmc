@@ -4,8 +4,8 @@ import "math"
 
 // g
 func (s *Model) VfromL(l float64) (V float64) {
-	cathodeFallPortion := l * s.inverseCathodeFallLength
 	if l < s.Parameters.CathodeFallLength {
+		cathodeFallPortion := l * s.inverseCathodeFallLength
 		V = s.Vc * (cathodeFallPortion*(2.-cathodeFallPortion) - 1.)
 	} else {
 		V = -s.Parameters.ConstEField * (l - s.Parameters.CathodeFallLength)

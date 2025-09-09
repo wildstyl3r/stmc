@@ -4,23 +4,27 @@ import "github.com/wildstyl3r/stmc/internal/model"
 
 type KeyType string
 type DataHubType map[KeyType]any
-type Extension func(*model.Model) ([]string, []any)
+type Extension func(*model.Model) ([]string, []any, error)
 
 var dataHubExtensions map[KeyType]Extension
 var modelPtr *model.Model
 var dataHub DataHubType
 
-func (dh DataHubType) calculate(name KeyType, model *model.Model) {
+func (dh DataHubType) calculate(name KeyType, model *model.Model) error {
 	if _, exists := dataHub[name]; !exists {
 		if calc, possible := dataHubExtensions[name]; !possible {
 			panic("unimplemented")
 		} else {
-			names, values := calc(model)
+			names, values, err := calc(model)
+			if err != nil {
+				return err
+			}
 			for i := range names {
 				dataHub[KeyType(names[i])] = values[i]
 			}
 		}
 	}
+	return nil
 }
 
 func Insert(name KeyType, value any) {

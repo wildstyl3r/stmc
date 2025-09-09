@@ -67,17 +67,19 @@ func GetFilename(filePath string) string {
 	return nameWithoutExt
 }
 
+type ExportFileType string
+
 const (
-	TypeTXT  = ".txt"
-	TypeJson = ".json"
-	TypeCSV  = ".csv"
+	TypeTXT  ExportFileType = ".txt"
+	TypeJson ExportFileType = ".json"
+	TypeCSV  ExportFileType = ".csv"
 )
 
-func OpenFile(makeDir bool, outputPath string, fileSuffix, modelName, fileExt string) (*os.File, error) {
+func OpenFile(makeDir bool, outputPath string, fileSuffix, modelName string, fileExt ExportFileType) (*os.File, error) {
 	if makeDir && fileSuffix != "" && fileSuffix != "." {
 		os.MkdirAll(outputPath+"/"+fileSuffix, 0750)
-		return os.Create(outputPath + "/" + fileSuffix + "/" + modelName + fileExt)
+		return os.Create(outputPath + "/" + fileSuffix + "/" + modelName + string(fileExt))
 	} else {
-		return os.Create(outputPath + "/" + modelName + "_" + fileSuffix + fileExt)
+		return os.Create(outputPath + "/" + modelName + "_" + fileSuffix + string(fileExt))
 	}
 }

@@ -6,6 +6,8 @@ import sys
 import csv
 from matplotlib import rc
 rc('text', usetex=True)
+rc('text.latex',preamble=r'\usepackage{amsmath}')
+rc('text.latex',preamble=r'\usepackage[T1,T2A]{fontenc}')
 rc('text.latex',preamble=r'\usepackage[utf8]{inputenc}')
 rc('text.latex',preamble=r'\usepackage[russian]{babel}')
 
@@ -73,7 +75,7 @@ else:
                     if args.exclude is None or all(e not in label for e in exclude):
                         #for (xs, yrows, name) in datafiles[filename][column]:
                         axs.errorbar(
-                            datafiles[filename].index, column, fmt="o-", ms=3, capsize=3,
+                            datafiles[filename].index, column, fmt="o-", ms=3, #capsize=3,
                             yerr=column + "_conf_interval" if column + "_conf_interval" in datafiles[filename] else None,
                             label=label, data=datafiles[filename])
     if args.compare:

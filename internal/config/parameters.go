@@ -103,6 +103,12 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 		panic(fmt.Errorf("output folder not specified"))
 	}
 
+	undecoded := meta.Undecoded()
+	if len(undecoded) > 0 {
+		fmt.Println("Found unknown fields: [", undecoded, "]. Aborting.")
+		os.Exit(0)
+	}
+
 	config._verbose = *flags.Verbose
 	config._threads = *flags.Threads
 
@@ -111,19 +117,22 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 
 type ModelParameters struct {
 	CrossSections         string
+	ScatteringMode        string
 	Species               string
-	GapLength             float64 // [сm]
-	PressureGapLength     float64 // [Pa*сm]
-	CathodeFallLength     float64 // [сm]
-	CathodeFallPotential  float64 // [V]
-	CathodeCurrentDensity float64 // [mkA cm^{-2}] // ==>[A m^{-2}] == [C s^{-1} m^{-2}]
+	GapLength             float64
+	PressureGapLength     float64
+	CathodeFallLength     float64
+	CathodeFallPotential  float64
+	CathodeCurrentDensity float64
 	CathodeCurrent        float64
+	UniformField          bool
 	ConstEField           float64 // [V / m]
-	Temperature           float64 // [K]
-	Pressure              float64 // [Pa]
+	FieldSmoothingEpsilon float64
+	Temperature           float64
+	Pressure              float64
 	// DAmbipolar              float64
 	// AmbipolarCharacterScale float64
-	CathodeRadius float64 // [cm]
+	CathodeRadius float64
 
 	AmbipolarDiffusionCoefficient         float64
 	AmbipolarDiffusionCharacteristicScale float64
@@ -142,11 +151,12 @@ type ModelParameters struct {
 	CountNulls            bool
 	CalculateDistribution bool
 
-	GasDensity     float64
-	_crossSections *lxgata.Collisions
-	_outputUnits   []string
-	_verbose       bool
-	_threads       int
+	GasDensity      float64
+	_crossSections  *lxgata.Collisions
+	_outputUnits    []string
+	_verbose        bool
+	_threads        int
+	_scatteringMode lxgata.ScatteringMode
 }
 
 func (p *ModelParameters) CrossSectionsData() *lxgata.Collisions {
@@ -173,13 +183,19 @@ func (p *ModelParameters) Threads() int {
 	return p._threads
 }
 
+func (p *ModelParameters) GetScatteringMode() lxgata.ScatteringMode {
+	return p._scatteringMode
+}
+
 var defaultValues = map[string]any{ // in SI-eV
 	"CathodeCurrentDensity":      0.0284,         //[A / m^2]
 	"Pressure":                   101325. / 760., //[Pa]
-	"ConstEField":                -100.,          //[V/m]
-	"Temperature":                300.,           //[K]
-	"CathodeFallLengthPrecision": 1e-6,           //[m]
-	"EnergyStep":                 0.001,          //[eV]
+	"UniformField":               false,
+	"ConstEField":                -100., //[V/m]
+	"FieldSmoothingEpsilon":      0.001, //[m]
+	"Temperature":                300.,  //[K]
+	"CathodeFallLengthPrecision": 1e-6,  //[m]
+	"EnergyStep":                 0.005, //[eV]
 	"AngleStep":                  45.,
 	"NElectrons":                 1000,
 	"MakeDir":                    true,
@@ -471,6 +487,19 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 		modelConfig._outputUnits = config.InputUnits
 	} else {
 		modelConfig._outputUnits = units
+	}
+
+	scatteringMode := map[string]lxgata.ScatteringMode{
+		"InelasticBorn":               lxgata.AnisotropicElasticIsotropicInelasticBorn,
+		"Coulomb":                     lxgata.AnisotropicAllCoulomb,
+		"ElasticCoulombInelasticBorn": lxgata.AnisotropicElasticCoulombInelasticBorn,
+		"Isotropic":                   lxgata.Isotropic,
+	}
+	if sm, ok := scatteringMode[modelConfig.ScatteringMode]; !ok {
+		fmt.Printf("Wrong scattering mode: %v\n", modelConfig.ScatteringMode)
+		allGood = false
+	} else {
+		modelConfig._scatteringMode = sm
 	}
 
 	modelConfig._threads = config._threads
