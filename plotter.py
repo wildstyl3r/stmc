@@ -35,7 +35,7 @@ def read_datafile(dirname):
             # if args.filter is None or args.filter in filename:
             if filename.endswith(".csv") or filename.endswith(".txt"):
                 dummy = pd.read_csv(dirname+'/'+filename, dtype=str)
-                datafiles[filename] = pd.read_csv(dirname+'/'+filename, header=(1 if not dummy.iloc[1].str.isnumeric().all() else 0), index_col=0)
+                datafiles[filename] = pd.read_csv(dirname+'/'+filename, header=1, index_col=0)
                 if first:
                     first = False
                     if args.measures is None:

@@ -242,7 +242,7 @@ var valueUnits = map[string][]UnitElement{
 		{Class: Current, Power: 1},
 	},
 	"ConstEField": {
-		{Class: Length, Power: 1},
+		{Class: Length, Power: -1},
 	},
 	"PressureGapLength": {
 		{Class: Pressure, Power: 1},
