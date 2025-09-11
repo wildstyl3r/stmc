@@ -13,7 +13,6 @@ import (
 	"github.com/wildstyl3r/lxgata"
 	"github.com/wildstyl3r/stmc/internal/config"
 	"github.com/wildstyl3r/stmc/internal/constants"
-	"github.com/wildstyl3r/stmc/internal/datahub"
 	"github.com/wildstyl3r/stmc/internal/extensions"
 	"github.com/wildstyl3r/stmc/internal/model"
 	"github.com/wildstyl3r/stmc/internal/utils"
@@ -145,8 +144,8 @@ func NewDataFlags() DataFlags {
 				},
 				columnNames: []string{"x (cm)", "N_i(cm^{-1} Torr^{-1})", "Standard error"},
 				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
-					collisions := datahub.Get(extensions.NormalizedCollisionRateKey, model).(map[lxgata.CollisionType][]float64)
-					collisionsCI := datahub.Get(extensions.NormalizedCollisionRateCIKey, model).(map[lxgata.CollisionType][]float64)
+					collisions := model.Get(extensions.NormalizedCollisionRateKey).(map[lxgata.CollisionType][]float64)
+					collisionsCI := model.Get(extensions.NormalizedCollisionRateCIKey).(map[lxgata.CollisionType][]float64)
 					for label := range collisions {
 						labels = append(labels, string(label))
 						if model.Parameters.CalculateStdError {
@@ -177,8 +176,8 @@ func NewDataFlags() DataFlags {
 				},
 				columnNames: []string{"x (cm)", "N_i(cm^{-1} Torr^{-1})", "Standard error"},
 				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
-					collisions := datahub.Get(extensions.NormalizedCollisionRateKey, model).(map[lxgata.CollisionType][]float64)
-					collisionsCI := datahub.Get(extensions.NormalizedCollisionRateCIKey, model).(map[lxgata.CollisionType][]float64)
+					collisions := model.Get(extensions.NormalizedCollisionRateKey).(map[lxgata.CollisionType][]float64)
+					collisionsCI := model.Get(extensions.NormalizedCollisionRateCIKey).(map[lxgata.CollisionType][]float64)
 					labels = append(labels, string(lxgata.IONIZATION))
 					if model.Parameters.CalculateStdError {
 						labels = append(labels, string(lxgata.IONIZATION)+"_conf_interval")
@@ -222,7 +221,7 @@ func NewDataFlags() DataFlags {
 				},
 				columnNames: []string{"x (cm)", "cm ^ -1"},
 				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
-					collisions := datahub.Get(extensions.NormalizedCollisionRateKey, model).(map[lxgata.CollisionType][]float64)
+					collisions := model.Get(extensions.NormalizedCollisionRateKey).(map[lxgata.CollisionType][]float64)
 					for label := range collisions {
 						labels = append(labels, string(label))
 						if model.Parameters.CalculateStdError {
@@ -248,7 +247,7 @@ func NewDataFlags() DataFlags {
 				},
 				columnNames: []string{"x (cm)", "cm ^ -3"},
 				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
-					density := datahub.Get("GlowDischargeDensity", model).([]float64)
+					density := model.Get("GlowDischargeDensity").([]float64)
 					for x := range model.NumCells {
 						args = append(args, model.XStep*(float64(x)+0.5))
 						values = append(values, []float64{density[x]})
@@ -377,9 +376,9 @@ func NewDataFlags() DataFlags {
 			// 		if m.Parameters.CalculateCathodeFallLength {
 			// 			return nil, utils.TypeCSV
 			// 		} else {
-			// 			density := datahub.Get("GlowDischargeDensity", m).([]float64)
+			// 			density := model.Get("GlowDischargeDensity", m).([]float64)
 			// 			xMaxIndex := utils.Argmax(density)
-			// 			collisions := datahub.Get(extensions.NormalizedCollisionRateKey, m).(map[lxgata.CollisionType][]float64)
+			// 			collisions := model.Get(extensions.NormalizedCollisionRateKey, m).(map[lxgata.CollisionType][]float64)
 			// 			M := utils.SumFloat64Slice(collisions[lxgata.IONIZATION][:xMaxIndex]) * m.XStep
 			// 			utils.WriteAsCSV(
 			// 				gammaData,

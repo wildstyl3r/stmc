@@ -40,6 +40,7 @@ type Model struct {
 	LookupCosinesAtAngleCellCenters []float64
 
 	OutOfEnergyAtCell []int
+	DataHub           *DataHubType
 }
 
 func NewModel(parameters config.ModelParameters) Model {
@@ -66,7 +67,7 @@ func NewModel(parameters config.ModelParameters) Model {
 		fmt.Printf("xCells: %d;\n", m.NumCells)
 	}
 
-	m.XStep = m.Parameters.GapLength / float64(m.NumCells+1)
+	m.XStep = m.Parameters.GapLength / float64(m.NumCells)
 	// m.MuStep = m.Parameters.MuStep    // eV
 	// m.NumMuCells = int(2. / m.MuStep)
 
@@ -82,13 +83,7 @@ func NewModel(parameters config.ModelParameters) Model {
 
 	m.CollisionAtCell = make(map[lxgata.CollisionType][][]uint16)
 	m.EnergyLossByProcess = make(map[lxgata.CollisionType][]float64)
-	for _, process := range []lxgata.CollisionType{
-		lxgata.IONIZATION,
-		lxgata.EXCITATION,
-		lxgata.ELASTIC,
-		lxgata.EFFECTIVE,
-		lxgata.ATTACHMENT,
-		lxgata.ROTATION} {
+	for _, process := range parameters.CrossSectionsData().GetTypes() {
 		if m.Parameters.CalculateStdError {
 			m.EnergyLossByProcess[process] = make([]float64, m.NumCells+1)
 			m.CollisionAtCell[process] = make([][]uint16, m.NumCells+1)
@@ -135,6 +130,8 @@ func NewModel(parameters config.ModelParameters) Model {
 			}
 		}
 	}
+
+	m.DataHub = NewDataHub()
 
 	return m
 }
@@ -412,7 +409,7 @@ func (m *Model) Run() {
 		stateWg.Done()
 	}()
 
-	computeflow := make(chan *Particle, m.Parameters.NElectrons*100)
+	computeflow := make(chan *Particle, m.Parameters.NElectrons*10000)
 	for i := range m.Parameters.NElectrons {
 		origin := 0
 		if m.Parameters.CalculateStdError {

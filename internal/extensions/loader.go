@@ -1,11 +1,11 @@
 package extensions
 
 import (
-	"github.com/wildstyl3r/stmc/internal/datahub"
+	"github.com/wildstyl3r/stmc/internal/model"
 )
 
-func Load() {
-	extensions := map[string]datahub.Extension{
+func LoadExtensions(dh *model.DataHubType) {
+	extensions := map[string]model.Extension{
 		NormalizedCollisionRateKey:   NormalizedCollisionRate,
 		NormalizedCollisionRateCIKey: NormalizedCollisionRate,
 		TotalCollisionsKey:           NormalizedCollisionRate,
@@ -14,6 +14,6 @@ func Load() {
 		SimplifiedGlowDischargeDensityKey: SimplifiedGlowDischargeDensity,
 	}
 	for name, ext := range extensions {
-		datahub.Register(name, ext)
+		dh.Register(name, ext)
 	}
 }

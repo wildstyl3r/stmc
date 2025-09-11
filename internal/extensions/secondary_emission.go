@@ -10,21 +10,20 @@ import (
 	"github.com/wildstyl3r/lxgata"
 	"github.com/wildstyl3r/stmc/internal/config"
 	"github.com/wildstyl3r/stmc/internal/constants"
-	"github.com/wildstyl3r/stmc/internal/datahub"
 	"github.com/wildstyl3r/stmc/internal/model"
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
-func gammaIntegralF(model *model.Model) float64 {
+func gammaIntegralF(m *model.Model) float64 {
 	ionizations := utils.GriddedInterval{
-		Step:   model.XStep,
-		Values: datahub.Get(datahub.KeyType(lxgata.IONIZATION), model).([]float64),
+		Step:   m.XStep,
+		Values: m.Get(model.DataHubKeyType(NormalizedCollisionRateKey)).(map[lxgata.CollisionType][]float64)[lxgata.IONIZATION],
 	}
-	sourceTermIntegral, err := utils.TrapezoidIntegration(0, float64(utils.Argmax(datahub.Get("GlowDischargeDensity", model).([]float64)))*ionizations.Step, ionizations)
+	sourceTermIntegral, err := utils.TrapezoidIntegration(0, float64(utils.Argmax(m.Get("SimplifiedGlowDischargeDensity").([]float64)))*ionizations.Step, ionizations)
 	if err != nil {
 		fmt.Printf("error calculating integral gamma: %#v", err)
 	}
-	sourceTermIntegral *= model.Parameters.Pressure //* Torr / model.Parameters.Pressure / de.cathodeFlux
+	sourceTermIntegral *= m.Parameters.Pressure //* Torr / model.Parameters.Pressure / de.cathodeFlux
 	return 1 / sourceTermIntegral
 
 }
@@ -89,10 +88,10 @@ func gammaCalculationStep(itp *int, dc float64, parameters config.ModelParameter
 	} else {
 		fmt.Println("preliminary step")
 	}
-	parameters.GapLength = dc
+	parameters.CathodeFallLength = dc
 	model := model.NewModel(parameters)
+	LoadExtensions(model.DataHub)
 	model.Run()
-	datahub.Reset(&model)
 	loss, gammaIntegral, gammaAnalytic = gammaWithLoss(&model, lossType)
 	if parameters.Verbose() {
 		fmt.Printf("d_c: %v\nsecondary emission coefficient\n\t integral: %6f\n\t analytic:%6f\n", dc, gammaIntegral, gammaAnalytic)

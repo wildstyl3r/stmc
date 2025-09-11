@@ -11,7 +11,6 @@ import (
 
 	"github.com/wildstyl3r/lxgata"
 	"github.com/wildstyl3r/stmc/internal/config"
-	"github.com/wildstyl3r/stmc/internal/datahub"
 	"github.com/wildstyl3r/stmc/internal/extensions"
 	"github.com/wildstyl3r/stmc/internal/model"
 	"github.com/wildstyl3r/stmc/internal/output"
@@ -34,8 +33,6 @@ func main() {
 	}
 	fmt.Printf("CONFIG: %s\n", *configFlags.ConfigFileNamePointer)
 	var config, meta = config.LoadConfig(configFlags)
-	datahub.Init()
-	extensions.Load()
 
 	speciesCrossSections := make(map[string]*lxgata.Collisions)
 	var gammaData utils.CSV
@@ -68,7 +65,8 @@ func main() {
 			gammaData = append(gammaData, extensions.GammaCalculation(configFlags, parameters, modelName, config.OutputDir))
 		} else {
 			m := model.NewModel(parameters)
-			datahub.Reset(&m)
+
+			extensions.LoadExtensions(m.DataHub)
 			m.Run()
 			// dataExtractor := output.NewDataExtractor(&m)
 
