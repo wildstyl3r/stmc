@@ -18,6 +18,10 @@ func Argmax[T cmp.Ordered](arr []T) (argmax int) {
 	return
 }
 
+func Max[T cmp.Ordered](arr []T) (max T) {
+	return arr[Argmax(arr)]
+}
+
 func Argsort(s []float64, abs bool) (indices []int) {
 	indices = make([]int, len(s))
 	for i := range indices {

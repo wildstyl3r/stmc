@@ -143,7 +143,7 @@ type ModelParameters struct {
 	MakeDir                                        bool
 	ParallelPlaneHollowCathode                     bool
 	Volumetric                                     bool
-	CalculateStdError                              bool
+	// CalculateStdError                              bool
 
 	CalculateCathodeFallLength bool
 	CathodeFallLengthPrecision float64

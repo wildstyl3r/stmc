@@ -78,7 +78,7 @@ func main() {
 		utils.WriteAsCSV(
 			gammaData,
 			config.OutputDir, "gamma", *configFlags.ConfigFileNamePointer,
-			[]string{"E/N", "integrated secondary emission coefficient", "analytic secondary emission coefficient", "final gamma loss", "sheath length", "integrated secondary emission coefficient_conf_interval"},
+			[]string{"E/N", "integrated secondary emission coefficient", "analytic secondary emission coefficient", "final gamma loss", "sheath length", "integrated secondary emission coefficient_conf_interval", "last step integrated SEC", "last step SEC relative error"},
 		)
 	}
 	fmt.Printf("Total elapsed time: %v\n\n", time.Since(startTime))

@@ -14,17 +14,23 @@ import (
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
-func gammaIntegralF(m *model.Model) float64 {
-	ionizations := utils.GriddedInterval{
-		Step:   m.XStep,
-		Values: m.Get(model.DataHubKeyType(NormalizedCollisionRateKey)).(map[lxgata.CollisionType][]float64)[lxgata.IONIZATION],
+func gammaIntegralF(m *model.Model) (gamma, gammaCI float64) {
+	maxIndex := utils.Argmax(m.Get("SimplifiedGlowDischargeDensity").([]float64))
+
+	sumPerElectron := make([]float64, m.Parameters.NElectrons)
+	for e := range sumPerElectron {
+		for x := range maxIndex {
+			sumPerElectron[e] += float64(m.CollisionAtCell[lxgata.IONIZATION][x][e])
+		}
 	}
-	sourceTermIntegral, err := utils.TrapezoidIntegration(0, float64(utils.Argmax(m.Get("SimplifiedGlowDischargeDensity").([]float64)))*ionizations.Step, ionizations)
-	if err != nil {
-		fmt.Printf("error calculating integral gamma: %#v", err)
-	}
-	sourceTermIntegral *= m.Parameters.Pressure //* Torr / model.Parameters.Pressure / de.cathodeFlux
-	return 1 / sourceTermIntegral
+
+	sumMean, sumVariance := utils.MeanAndVariance(sumPerElectron, true)
+	sumConfidenceInterval := utils.NormalConfidenceInterval(constants.Quantile95, sumVariance, m.Parameters.NElectrons)
+	gamma = 1 / sumMean
+	gammaCI = sumConfidenceInterval / (sumMean * sumMean)
+	fmt.Printf("gamma CI: %f\n", gammaCI)
+
+	return gamma, gammaCI
 
 }
 
@@ -33,14 +39,14 @@ func gammaAnalyticF(dc, j, Vc, N float64, ionDriftVelocity func(float64, float64
 	return j*dc*dc/(2.*Vc*ionDriftVelocity(Vc, dc, N)*constants.FreeSpacePermittivityE0) - 1. //-> 0
 }
 
-func gammaWithLoss(model *model.Model, loss utils.LossType) (lossValue float64, gi float64, ga float64) {
+func gammaWithLoss(model *model.Model, loss utils.LossType) (lossValue, gi, ga, giConfInterval float64) {
 	ga = gammaAnalyticF(
 		model.Parameters.CathodeFallLength,
 		model.Parameters.CathodeCurrentDensity,
 		model.Parameters.CathodeFallPotential,
 		model.Parameters.GasDensity,
 		utils.IonDriftVelocity[model.Parameters.Species])
-	gi = gammaIntegralF(model)
+	gi, giConfInterval = gammaIntegralF(model)
 	switch loss {
 	case utils.MSE:
 		lossValue = (ga - gi) * (ga - gi)
@@ -81,7 +87,7 @@ func getApproximateCathodeFallLengthForGamma(gamma, minDc, maxDc float64, parame
 	return 0.5 * (initialDcL + initialDcR)
 }
 
-func gammaCalculationStep(itp *int, dc float64, parameters config.ModelParameters, lossType utils.LossType) (loss, gammaIntegral, gammaAnalytic float64) {
+func gammaCalculationStep(itp *int, dc float64, parameters config.ModelParameters, lossType utils.LossType) (loss, gammaIntegral, gammaAnalytic, gammaConfInterval float64) {
 	if itp != nil {
 		fmt.Printf("step %d\n", *itp)
 		*itp += 1
@@ -92,7 +98,7 @@ func gammaCalculationStep(itp *int, dc float64, parameters config.ModelParameter
 	model := model.NewModel(parameters)
 	LoadExtensions(model.DataHub)
 	model.Run()
-	loss, gammaIntegral, gammaAnalytic = gammaWithLoss(&model, lossType)
+	loss, gammaIntegral, gammaAnalytic, gammaConfInterval = gammaWithLoss(&model, lossType)
 	if parameters.Verbose() {
 		fmt.Printf("d_c: %v\nsecondary emission coefficient\n\t integral: %6f\n\t analytic:%6f\n", dc, gammaIntegral, gammaAnalytic)
 	}
@@ -119,7 +125,7 @@ func bruteForceStepGammaCalculation(minDc, maxDc float64, configFlags config.Fla
 	fmt.Printf("GapLen: %f, nSteps: %d\n", parameters.GapLength, nSteps)
 	gamma := make([]float64, nSteps)
 	intS := make([]float64, nSteps)
-	debugData := [][]string{{"dc", "E/N", "integrated secondary emission coefficient", "analytic secondary emission coefficient", "gamma difference"}}
+	debugData := [][]string{{"dc", "E/N", "integrated secondary emission coefficient", "analytic secondary emission coefficient", "gamma difference", "integral gamma CI approximation"}}
 	for i := range gamma {
 		dc := float64(i)*dcStep + minDc
 		var lossType utils.LossType
@@ -129,8 +135,8 @@ func bruteForceStepGammaCalculation(minDc, maxDc float64, configFlags config.Fla
 		case "b", "s":
 			lossType = utils.Difference
 		}
-		var gammaAnalytic, gammaLoss float64
-		gammaLoss, gamma[i], gammaAnalytic = gammaCalculationStep(itp, dc, parameters, lossType)
+		var gammaAnalytic, gammaLoss, integralGammaCI float64
+		gammaLoss, gamma[i], gammaAnalytic, integralGammaCI = gammaCalculationStep(itp, dc, parameters, lossType)
 		intS[i] = 1. / gamma[i]
 		debugData = append(debugData, []string{
 			strconv.FormatFloat(dc, 'f', 10, 64),
@@ -138,6 +144,7 @@ func bruteForceStepGammaCalculation(minDc, maxDc float64, configFlags config.Fla
 			strconv.FormatFloat(gamma[i], 'f', 10, 64),
 			strconv.FormatFloat(gammaAnalytic, 'f', 10, 64),
 			strconv.FormatFloat(gammaLoss, 'f', 10, 64),
+			strconv.FormatFloat(integralGammaCI, 'f', 10, 64),
 		})
 	}
 	gammaMean, gammaVariance := utils.MeanAndVariance(gamma, true)
@@ -157,7 +164,8 @@ func bruteForceStepGammaCalculation(minDc, maxDc float64, configFlags config.Fla
 }
 
 func advancedGammaCalculation(minDc, maxDc float64, configFlags config.Flags, itp *int, parameters config.ModelParameters) []string {
-	var gammaLoss, gammaIntegral, gammaAnalytic, gammaCI float64
+	var gammaLoss, gammaIntegral, gammaAnalytic, gammaCI, lastStepGammaConfidenceInterval float64
+	gammaI := []float64{}
 	var dc float64
 	switch *configFlags.RootFindingAlgorithm {
 	case "s":
@@ -165,17 +173,16 @@ func advancedGammaCalculation(minDc, maxDc float64, configFlags config.Flags, it
 		var fLeftLoss, fRightLoss, initialDc float64
 		{
 			var gILeft, gIRight float64
-			fLeftLoss, gILeft, _ = gammaCalculationStep(nil, minDc+parameters.CathodeFallLengthPrecision, parameters, utils.Difference)
-			fRightLoss, gIRight, _ = gammaCalculationStep(nil, maxDc-parameters.CathodeFallLengthPrecision, parameters, utils.Difference)
+			fLeftLoss, gILeft, _, _ = gammaCalculationStep(nil, minDc+parameters.CathodeFallLengthPrecision, parameters, utils.Difference)
+			fRightLoss, gIRight, _, _ = gammaCalculationStep(nil, maxDc-parameters.CathodeFallLengthPrecision, parameters, utils.Difference)
 
 			meanGI := 0.5 * (gILeft + gIRight)
 			initialDc = getApproximateCathodeFallLengthForGamma(meanGI, minDc, maxDc, parameters)
 		}
 		approxLossDerivative := (fRightLoss - fLeftLoss) / (maxDc - minDc - 2*parameters.CathodeFallLengthPrecision)
 
-		gammaI := []float64{}
 		dc = utils.StochasticApproximation(minDc, maxDc, initialDc, approxLossDerivative, parameters.CathodeFallLengthPrecision, constants.Quantile95, 10, func(dc float64) float64 {
-			gammaLoss, gammaIntegral, gammaAnalytic = gammaCalculationStep(itp, dc, parameters, utils.Difference)
+			gammaLoss, gammaIntegral, gammaAnalytic, lastStepGammaConfidenceInterval = gammaCalculationStep(itp, dc, parameters, utils.Difference)
 			gammaI = append(gammaI, gammaIntegral)
 			return gammaLoss
 		})
@@ -187,7 +194,7 @@ func advancedGammaCalculation(minDc, maxDc float64, configFlags config.Flags, it
 	case "b":
 		fmt.Println("calculating gamma with naive bisection")
 		dcLeft, dcRight := utils.BinarySearch(func(dc float64) bool {
-			gammaLoss, gammaIntegral, gammaAnalytic = gammaCalculationStep(itp, dc, parameters, utils.Difference)
+			gammaLoss, gammaIntegral, gammaAnalytic, lastStepGammaConfidenceInterval = gammaCalculationStep(itp, dc, parameters, utils.Difference)
 			return gammaLoss > 0
 		}, minDc, min(maxDc, parameters.GapLength), parameters.CathodeFallLengthPrecision)
 		dc = 0.5 * (dcLeft + dcRight)
@@ -196,7 +203,7 @@ func advancedGammaCalculation(minDc, maxDc float64, configFlags config.Flags, it
 		fmt.Println("calculating gamma with naive ternary search")
 		fmt.Printf("min dc: %f, max dc: %f, gap len: %f\n", minDc, maxDc, parameters.GapLength)
 		dc = utils.TernarySearchMax(func(dc float64) float64 {
-			gammaLoss, gammaIntegral, gammaAnalytic = gammaCalculationStep(itp, dc, parameters, utils.MSE)
+			gammaLoss, gammaIntegral, gammaAnalytic, lastStepGammaConfidenceInterval = gammaCalculationStep(itp, dc, parameters, utils.MSE)
 			return -gammaLoss
 		}, minDc, min(maxDc, parameters.GapLength), parameters.CathodeFallLengthPrecision)
 	}
@@ -209,5 +216,7 @@ func advancedGammaCalculation(minDc, maxDc float64, configFlags config.Flags, it
 		strconv.FormatFloat(gammaLoss, 'f', 10, 64),
 		strconv.FormatFloat(dc, 'f', 10, 64),
 		strconv.FormatFloat(gammaCI, 'f', 10, 64),
+		strconv.FormatFloat(gammaI[len(gammaI)-1], 'f', 10, 64),
+		strconv.FormatFloat(lastStepGammaConfidenceInterval, 'f', 10, 64),
 	}
 }

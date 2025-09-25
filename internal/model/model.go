@@ -84,18 +84,10 @@ func NewModel(parameters config.ModelParameters) Model {
 	m.CollisionAtCell = make(map[lxgata.CollisionType][][]uint16)
 	m.EnergyLossByProcess = make(map[lxgata.CollisionType][]float64)
 	for _, process := range parameters.CrossSectionsData().GetTypes() {
-		if m.Parameters.CalculateStdError {
-			m.EnergyLossByProcess[process] = make([]float64, m.NumCells+1)
-			m.CollisionAtCell[process] = make([][]uint16, m.NumCells+1)
-			for c := range m.NumCells + 1 {
-				m.CollisionAtCell[process][c] = make([]uint16, parameters.NElectrons)
-			}
-		} else {
-			m.EnergyLossByProcess[process] = make([]float64, m.NumCells+1)
-			m.CollisionAtCell[process] = make([][]uint16, m.NumCells+1)
-			for c := range m.NumCells + 1 {
-				m.CollisionAtCell[process][c] = make([]uint16, 1)
-			}
+		m.EnergyLossByProcess[process] = make([]float64, m.NumCells+1)
+		m.CollisionAtCell[process] = make([][]uint16, m.NumCells+1)
+		for c := range m.NumCells + 1 {
+			m.CollisionAtCell[process][c] = make([]uint16, parameters.NElectrons)
 		}
 	}
 	m.lookUpPotential = make([]float64, m.NumCells+2)
@@ -410,11 +402,7 @@ func (m *Model) Run() {
 	}()
 
 	computeflow := make(chan *Particle, m.Parameters.NElectrons*10000)
-	for i := range m.Parameters.NElectrons {
-		origin := 0
-		if m.Parameters.CalculateStdError {
-			origin = i
-		}
+	for origin := range m.Parameters.NElectrons {
 		particle := m.newParticle(origin)
 		if m.Parameters.CalculateDistribution {
 			// angleCell := m.getAngleCell(particle.mu)
@@ -457,8 +445,6 @@ func (m *Model) Run() {
 						particlePtr.eKinetic -= energyLoss
 						switch collision.Type {
 						case lxgata.ELASTIC:
-
-							// cosChiScattered = max(-1., min(1., (2.+particlePtr.eKinetic-2.*math.Pow(1.+particlePtr.eKinetic, rand.Float64()))/particlePtr.eKinetic))
 							energyLoss = particlePtr.eKinetic * 2. * collision.MassRatio * (1. - cosChiScattered)
 							particlePtr.eKinetic -= energyLoss
 

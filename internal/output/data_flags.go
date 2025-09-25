@@ -146,21 +146,23 @@ func NewDataFlags() DataFlags {
 				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
 					collisions := model.Get(extensions.NormalizedCollisionRateKey).(map[lxgata.CollisionType][]float64)
 					collisionsCI := model.Get(extensions.NormalizedCollisionRateCIKey).(map[lxgata.CollisionType][]float64)
+					processNames := make([]string, 0, len(collisions))
 					for label := range collisions {
-						labels = append(labels, string(label))
-						if model.Parameters.CalculateStdError {
-							labels = append(labels, string(label)+"_conf_interval")
-						}
+						processNames = append(processNames, string(label))
 					}
-					sort.Strings(labels)
+					sort.Strings(processNames)
+					for _, label := range processNames {
+						labels = append(labels, label)
+						labels = append(labels, label+"_conf_interval")
+					}
 					for x := range model.NumCells {
 						args = append(args, model.XStep*(float64(x)+0.5))
 						var row []float64
-						for _, label := range labels {
+						for _, label := range processNames {
 							row = append(row, collisions[lxgata.CollisionType(label)][x])
-							if model.Parameters.CalculateStdError {
-								row = append(row, collisionsCI[lxgata.CollisionType(label)][x])
-							}
+							// if model.Parameters.CalculateStdError {
+							row = append(row, collisionsCI[lxgata.CollisionType(label)][x])
+							// }
 						}
 						values = append(values, row)
 					}
@@ -179,17 +181,13 @@ func NewDataFlags() DataFlags {
 					collisions := model.Get(extensions.NormalizedCollisionRateKey).(map[lxgata.CollisionType][]float64)
 					collisionsCI := model.Get(extensions.NormalizedCollisionRateCIKey).(map[lxgata.CollisionType][]float64)
 					labels = append(labels, string(lxgata.IONIZATION))
-					if model.Parameters.CalculateStdError {
-						labels = append(labels, string(lxgata.IONIZATION)+"_conf_interval")
-					}
+					labels = append(labels, string(lxgata.IONIZATION)+"_conf_interval")
 					sort.Strings(labels)
 					for x := range model.NumCells {
 						args = append(args, model.XStep*(float64(x)+0.5))
 						var row []float64
 						row = append(row, collisions[lxgata.IONIZATION][x])
-						if model.Parameters.CalculateStdError {
-							row = append(row, collisionsCI[lxgata.IONIZATION][x])
-						}
+						row = append(row, collisionsCI[lxgata.IONIZATION][x])
 						values = append(values, row)
 					}
 					return args, values, labels
@@ -224,9 +222,7 @@ func NewDataFlags() DataFlags {
 					collisions := model.Get(extensions.NormalizedCollisionRateKey).(map[lxgata.CollisionType][]float64)
 					for label := range collisions {
 						labels = append(labels, string(label))
-						if model.Parameters.CalculateStdError {
-							labels = append(labels, string(label)+"_conf_interval")
-						}
+						labels = append(labels, string(label)+"_conf_interval")
 					}
 					sort.Strings(labels)
 					for x := range model.NumCells {

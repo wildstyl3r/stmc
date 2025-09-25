@@ -24,8 +24,9 @@ func NormalizedCollisionRate(model *model.Model) ([]string, []any, error) {
 			collisions[key] = make([]float64, model.NumCells)
 			collisionsCI[key] = make([]float64, model.NumCells)
 			for xIndex := range model.NumCells {
-				collisions[key][xIndex] = float64(utils.SumIntSlice(val[xIndex])) / (float64(model.Parameters.NElectrons) * model.XStep * model.Parameters.Pressure)
-				collisionsCI[key][xIndex] = constants.Quantile95 * math.Sqrt(float64(utils.Variance(val[xIndex], true))) /
+				xCollisionsMean, xCollisionsVariance := utils.MeanAndVariance(val[xIndex], true)
+				collisions[key][xIndex] = xCollisionsMean / (model.XStep * model.Parameters.Pressure)
+				collisionsCI[key][xIndex] = constants.Quantile95 * math.Sqrt(xCollisionsVariance) /
 					(math.Sqrt(float64(model.Parameters.NElectrons)) * model.XStep * model.Parameters.Pressure)
 				// 1.96 is double-sided quantile for 95% confidence
 				collCounters[key] += float64(utils.SumIntSlice(model.CollisionAtCell[key][xIndex]))
@@ -34,7 +35,4 @@ func NormalizedCollisionRate(model *model.Model) ([]string, []any, error) {
 		}
 	}
 	return []string{NormalizedCollisionRateKey, NormalizedCollisionRateCIKey, TotalCollisionsKey}, []any{collisions, collisionsCI, collCounters}, nil
-	// datahub.Insert(NormalizedCollisionRateKey, collisions)
-	// datahub.Insert(NormalizedCollisionRateCIKey, collisionsCI)
-	// datahub.Insert(TotalCollisionsKey, collCounters)
 }
