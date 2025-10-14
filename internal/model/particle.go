@@ -5,7 +5,6 @@ import (
 	"math"
 	"math/rand"
 
-	"github.com/wildstyl3r/stmc/internal/constants"
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
@@ -15,9 +14,9 @@ type Particle struct {
 	mu             float64
 	cosEta, sinEta float64
 
-	c2, c1     float64
-	prevBt     float64
-	prevMuSign float64
+	prevAxialEnergy float64
+	prevX           float64
+	prevMuSign      float64
 	// params
 	eStar             float64 //[eV]
 	totEnergy         float64 //aka Vcap
@@ -27,46 +26,64 @@ type Particle struct {
 }
 
 func (m *Model) newParticle(origin int) Particle {
-	y, z := utils.UniformOnDisk(m.Parameters.CathodeRadius)
-	eta := rand.Float64() * 2. * math.Pi
 	eKinetic := 4. + rand.Float64()
 	mu := rand.Float64()
 	p := Particle{
 		x:          0,
-		y:          y,
-		z:          z,
 		eKinetic:   eKinetic,
 		mu:         mu,
-		sinEta:     math.Sin(eta),
-		cosEta:     math.Cos(eta),
-		c1:         -m.Parameters.CathodeFallLength,
-		c2:         m.Parameters.CathodeFallLength * math.Sqrt(eKinetic*mu*mu/m.Parameters.CathodeFallPotential),
 		prevMuSign: mu,
 		origin:     origin,
+	}
+	if m.Parameters.Volumetric {
+		p.y, p.z = utils.UniformOnDisk(m.Parameters.CathodeRadius)
+
+		eta := rand.Float64() * 2. * math.Pi
+		p.sinEta, p.cosEta = math.Sin(eta), math.Cos(eta)
 	}
 	p.recalcParams(m)
 	return p
 }
 
+func (p *Particle) getAxialEnergy() float64 {
+	return p.eKinetic - p.eStar
+}
+
+func (p *Particle) getPotentialEnergy() float64 {
+	return p.totEnergy - p.eKinetic
+}
+
+func (p *Particle) getStopPotential() float64 {
+	return p.totEnergy - p.eStar
+}
+
+func (p *Particle) getAxialEnergyAtSheathBoundary(m *Model) float64 {
+	return p.totEnergy - m.Va - p.eStar
+}
+
 func (p *Particle) setEnergy(eKinetic float64, s *Model, zeroChangeAcceptable bool, setX bool) {
 	if eKinetic < p.eStar {
-		stopPotential := -(p.totEnergy - p.eStar)
+		stopPotential := -p.getStopPotential()
 		fmt.Printf("stopPoint = %f\np: %v; %p\n", s.LfromV(stopPotential), p, p)
 		panic("eKinetic < p.eStar")
 	}
 	if math.Abs(p.eKinetic-eKinetic) < 1e-16 && !zeroChangeAcceptable {
-		fmt.Printf("need to be at cell: %f coord by V is %f, coord real is %f\n", s.LfromV(-(p.totEnergy-p.eKinetic))/s.XStep, s.LfromV(-(p.totEnergy - p.eKinetic)), p.x)
+		fmt.Printf("need to be at cell: %f coord by V is %f, coord real is %f\n", s.LfromV(-p.getPotentialEnergy())/s.XStep, s.LfromV(-p.getPotentialEnergy()), p.x)
 		panic("no change in energy")
 	}
+
+	if eKinetic < 0 {
+		panic("eKinetic is < 0")
+	}
+
 	p.eKinetic = eKinetic
 
 	if math.IsNaN(eKinetic) {
 		panic("eKinetic is NaN")
 	}
-	p.mu = math.Copysign(math.Sqrt((eKinetic-p.eStar)/eKinetic), p.mu)
+	p.mu = math.Copysign(math.Sqrt(p.getAxialEnergy()/eKinetic), p.mu)
 	if setX {
-		potential := -(p.totEnergy - p.eKinetic)
-		p.x = s.LfromV(potential)
+		p.x = s.LfromV(-p.getPotentialEnergy())
 	}
 }
 
@@ -80,23 +97,16 @@ func (p *Particle) recalcParams(s *Model) {
 	p.eStar = p.eKinetic * (1 - p.mu*p.mu)
 	p.totEnergy = p.eKinetic + -s.VfromL(p.x)
 	if p.totEnergy < 0. {
-		panic("tot energy below 0")
+		panic("total energy below 0")
 	}
 	if p.totEnergy > s.Va+s.Vc+5 {
-		println("wtf, tot energy greater than might ever be")
+		println("total energy greater than might ever be")
 	}
 
 	if s.Parameters.Volumetric {
-		cosBt, sinBt := math.Cos(p.prevBt), math.Sin(p.prevBt)
-		b := math.Sqrt(2.*constants.ElectronCharge/constants.ElectornMass*s.Parameters.CathodeFallPotential) / s.Parameters.CathodeFallLength
-		vx := math.Copysign(utils.EV2electronVelocity(p.eKinetic-p.eStar), p.mu)
-		currentXminusD := p.x - s.Parameters.CathodeFallLength
-		lower := math.FMA(b*cosBt, cosBt, sinBt*vx)
-		p.c1 = math.FMA(currentXminusD*b, cosBt, -sinBt*vx) / lower
-		p.c2 = math.FMA(b*sinBt, currentXminusD, vx*cosBt) / lower
-		if math.IsNaN(p.c1) || math.IsNaN(p.c2) {
-			panic("c1 or c2 is NaN")
-		}
+		p.prevAxialEnergy = p.getAxialEnergy()
+		p.prevX = p.x
+		p.prevMuSign = p.mu
 	}
 }
 
@@ -125,69 +135,42 @@ func (p *Particle) redirect(cosChi, cosPhi float64, m *Model) {
 			p.cosEta /= e_norm
 			p.sinEta /= e_norm
 		}
-		p.prevMuSign = p.mu
 	}
 	p.recalcParams(m)
 }
 
-func (p *Particle) xAnalytic(bt, inverseCathodeFallLength float64) float64 {
-	return math.FMA(
-		p.c2, math.Sin(bt),
-		math.FMA(
-			p.c1, math.Cos(bt),
-			inverseCathodeFallLength,
-		),
-	)
+func (p *Particle) getTimeIntervalsBetweenPositionsNoReversal(x1, x2, axialEnergy1_eV, axialEnergy2_eV float64, m *Model) (timeIntervals []float64) {
+	if m.Parameters.CathodeFallLength < x1 && m.Parameters.CathodeFallLength < x2 { // outside of sheath
+		timeIntervals = append(timeIntervals, m.ConstEFieldTime(axialEnergy1_eV, axialEnergy2_eV))
+	} else if x1 < m.Parameters.CathodeFallLength && m.Parameters.CathodeFallLength < x2 { // crossing sheath boundary accelerating
+		sheathBoundaryAxialEnergy := p.getAxialEnergyAtSheathBoundary(m)
+		timeIntervals = append(timeIntervals, m.SheathTime(x1, m.Parameters.CathodeFallLength, axialEnergy1_eV, sheathBoundaryAxialEnergy))
+		timeIntervals = append(timeIntervals, m.ConstEFieldTime(sheathBoundaryAxialEnergy, axialEnergy2_eV))
+	} else if x2 < m.Parameters.CathodeFallLength && m.Parameters.CathodeFallLength < x1 { //crossing sheath boundary decelerating
+		sheathBoundaryAxialEnergy := p.getAxialEnergyAtSheathBoundary(m)
+		timeIntervals = append(timeIntervals, m.ConstEFieldTime(axialEnergy1_eV, sheathBoundaryAxialEnergy))
+		timeIntervals = append(timeIntervals, m.SheathTime(m.Parameters.CathodeFallLength, x2, sheathBoundaryAxialEnergy, axialEnergy2_eV))
+	} else { // in the sheath
+		timeIntervals = append(timeIntervals, m.SheathTime(x1, x2, axialEnergy1_eV, axialEnergy2_eV))
+	}
+	return
 }
 
 func (p *Particle) updateExtraDims(m *Model) {
 	/// updates particle's y and z, and sets new prev_bt value
-	b := math.Sqrt(2.*constants.ElectronCharge/constants.ElectornMass*m.Parameters.CathodeFallPotential) / m.Parameters.CathodeFallLength
-	var bt float64
-	btCathodeFallLength := math.Atan(-p.c1 / p.c2)
-	if math.IsNaN(btCathodeFallLength) {
-		panic("btCathodeFallLength is NaN")
-	}
-	btReverse := math.Atan(p.c2 / p.c1)
-	if math.IsNaN(btReverse) {
-		panic("btReverse is NaN")
-	}
-	for btReverse < p.prevBt {
-		btReverse += math.Pi
-	}
-	//check negative mu case
-	if p.prevMuSign > 0 && p.mu > 0 {
-		bt = utils.TernarySearchMax(func(bt float64) float64 {
-			bt_x := p.xAnalytic(bt, m.inverseCathodeFallLength)
-			return -(p.x - bt_x) * (p.x - bt_x)
-		}, p.prevBt, btCathodeFallLength, 1e-6)
-		if math.IsNaN(bt) {
-			panic("bt is NaN in case pMu > 0 && mu > 0")
-		}
-	} else if p.prevMuSign <= 0 && p.mu > 0 {
-		btBeforeReverse := btReverse - p.prevBt
-		btAfterReverse := utils.TernarySearchMax(func(bt float64) float64 {
-			bt_x := p.xAnalytic(bt, m.inverseCathodeFallLength)
-			return -(p.x - bt_x) * (p.x - bt_x)
-		}, btReverse, btCathodeFallLength, 1e-6)
-		bt = btBeforeReverse + btAfterReverse
-		if math.IsNaN(bt) {
-			panic("bt is NaN in case pMu < 0 && mu > 0")
-		}
-	} else if p.prevMuSign <= 0 && p.mu <= 0 {
-		bt = utils.TernarySearchMax(func(bt float64) float64 {
-			bt_x := p.xAnalytic(bt, m.inverseCathodeFallLength)
-			return -(p.x - bt_x) * (p.x - bt_x)
-		}, p.prevBt, btReverse, 1e-6)
-		if math.IsNaN(bt) {
-			panic("bt is NaN in case pMu < 0 && mu < 0")
-		}
+	var timeIntervalsToSum []float64
+	if math.Signbit(p.prevMuSign) != math.Signbit(p.mu) { //reversal occured
+		xRev := m.LfromV(-p.getStopPotential())
+
+		timeIntervalsToSum = p.getTimeIntervalsBetweenPositionsNoReversal(p.prevX, xRev, p.prevAxialEnergy, 0, m)
+		timeIntervalsToSum = append(timeIntervalsToSum, p.getTimeIntervalsBetweenPositionsNoReversal(xRev, p.x, 0, p.getAxialEnergy(), m)...)
+
 	} else {
-		fmt.Printf("particle: %v", *p)
-		panic("should-be-impossible condition: prev mu > 0, current mu < 0")
+		timeIntervalsToSum = p.getTimeIntervalsBetweenPositionsNoReversal(p.prevX, p.x, p.prevAxialEnergy, p.getAxialEnergy(), m)
 	}
-	t := bt / b
-	p.y = p.sinEta * utils.EV2electronVelocity(p.eStar) * t
-	p.z = p.cosEta * utils.EV2electronVelocity(p.eStar) * t
-	p.prevBt = bt
+
+	timeBetweenCollisions := utils.SumFloat64Slice(timeIntervalsToSum)
+
+	p.y = p.sinEta * utils.EV2electronVelocity(p.eStar) * timeBetweenCollisions
+	p.z = p.cosEta * utils.EV2electronVelocity(p.eStar) * timeBetweenCollisions
 }

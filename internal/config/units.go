@@ -19,7 +19,7 @@ var unitToSIeV = map[string]float64{
 	"s":    1,
 	"ms":   1e-3,
 	"mks":  1e-6,
-	"J":    1 / constants.ElectronCharge,
+	"J":    1 / constants.ElementaryCharge,
 	"eV":   1,
 }
 
@@ -64,6 +64,8 @@ type UnitElement = struct {
 	Power int
 }
 
+var defaultUnits = []string{"mkA", "cm", "Torr", "s", "eV"}
+
 func checkUnits(units []string) (extended, conflicts []string) {
 	classes := map[UnitClass]struct{}{}
 	for _, unit := range units {
@@ -82,29 +84,32 @@ func checkUnits(units []string) (extended, conflicts []string) {
 	return
 }
 
-func SIeV(v float64, classes []UnitElement, units []string, direct bool) float64 {
+func FieldToSIeV(v float64, classes []UnitElement, units []string, direct bool) float64 {
 	for i := range classes {
 		uc := classes[i]
-		unit := utils.Intersect(unitsInClass[uc.Class], units)
+		unit := utils.AnyIntersection(unitsInClass[uc.Class], units)
+		if unit == "" {
+			continue
+		}
 		absPower := utils.IntAbs(uc.Power)
 		if direct {
 			if uc.Power > 0 {
 				for range absPower {
-					v *= unitToSIeV[*unit]
+					v *= unitToSIeV[unit]
 				}
 			} else {
 				for range absPower {
-					v /= unitToSIeV[*unit]
+					v /= unitToSIeV[unit]
 				}
 			}
 		} else {
 			if uc.Power > 0 {
 				for range absPower {
-					v /= unitToSIeV[*unit]
+					v /= unitToSIeV[unit]
 				}
 			} else {
 				for range absPower {
-					v *= unitToSIeV[*unit]
+					v *= unitToSIeV[unit]
 				}
 			}
 		}

@@ -100,7 +100,7 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 		fmt.Printf("OUTPUT DIR: %s\n", config.OutputDir)
 		os.MkdirAll(config.OutputDir, 0750)
 	} else {
-		panic(fmt.Errorf("output folder not specified"))
+		panic(fmt.Errorf("output path not specified"))
 	}
 
 	undecoded := meta.Undecoded()
@@ -116,26 +116,27 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 }
 
 type ModelParameters struct {
-	CrossSections         string
-	ScatteringMode        string
-	Species               string
-	GapLength             float64
-	PressureGapLength     float64
-	CathodeFallLength     float64
-	CathodeFallPotential  float64
-	CathodeCurrentDensity float64
-	CathodeCurrent        float64
-	UniformField          bool
-	ConstEField           float64 // [V / m]
-	FieldSmoothingEpsilon float64
-	Temperature           float64
-	Pressure              float64
-	// DAmbipolar              float64
-	// AmbipolarCharacterScale float64
-	CathodeRadius float64
+	CrossSections                string
+	ScatteringMode               string
+	Species                      string
+	GapLength                    float64
+	PressureGapLength            float64
+	CathodeFallLength            float64
+	CathodeFallPotential         float64
+	CathodeCurrentDensity        float64
+	CathodeCurrent               float64
+	SecondaryEmissionCoefficient float64
+	UniformField                 bool
+	ConstEField                  float64 // [V / m]
+	FieldSmoothingEpsilon        float64
+	Temperature                  float64
+	Pressure                     float64
+	CathodeRadius                float64
+	TubeRadius                   float64
 
-	AmbipolarDiffusionCoefficient         float64
-	AmbipolarDiffusionCharacteristicScale float64
+	// AmbipolarDiffusionCoefficient float64
+	SlowElectronTemperature float64
+	IonMobility             float64
 
 	EnergyStep, AngleStep                          float64 // [eV]
 	EnergyDiscretizationStep, MuDiscretizationStep float64
@@ -143,9 +144,13 @@ type ModelParameters struct {
 	MakeDir                                        bool
 	ParallelPlaneHollowCathode                     bool
 	Volumetric                                     bool
+	BackscatteringCoefficient                      float64
+	BackscatteringEnergyLossFraction               float64
 	// CalculateStdError                              bool
 
 	CalculateCathodeFallLength bool
+	CalculateCurrentDensity    bool
+	CalculateVoltage           bool
 	CathodeFallLengthPrecision float64
 
 	CountNulls            bool
@@ -171,6 +176,10 @@ func (p *ModelParameters) OutputUnits() []string {
 	return p._outputUnits
 }
 
+func (p *ModelParameters) OutputUnit(uc UnitClass) string {
+	return utils.AnyIntersection(unitsInClass[uc], p._outputUnits)
+}
+
 func (p *ModelParameters) SetOutputUnits(u []string) {
 	p._outputUnits = u
 }
@@ -194,23 +203,24 @@ var defaultValues = map[string]any{ // in SI-eV
 	"ConstEField":                -100., //[V/m]
 	"FieldSmoothingEpsilon":      0.001, //[m]
 	"Temperature":                300.,  //[K]
-	"CathodeFallLengthPrecision": 1e-6,  //[m]
+	"CathodeFallLengthPrecision": 1e-4,  //[m]
 	"EnergyStep":                 0.005, //[eV]
 	"AngleStep":                  45.,
 	"NElectrons":                 1000,
 	"MakeDir":                    true,
 	"ParallelPlaneHollowCathode": false,
 	"CalculateCathodeFallLength": false,
+	"CalculateCurrentDensity":    false,
 	"Volumetric":                 false,
 	"CountNulls":                 false,
 	"EnergyDiscretizationStep":   0.1,
 	"MuDiscretizationStep":       1 / 90.,
 }
 
-var defaultUnits = []string{"mkA", "cm", "Torr", "s", "eV"}
-
 var fieldsXor = map[string][]string{
-	"CalculateCathodeFallLength": {"CathodeFallLength"},
+	"CalculateCathodeFallLength": {"CathodeFallLength", "CalculateCurrentDensity", "CalculateVoltage"},
+	"CalculateCurrentDensity":    {"CathodeFallLength", "CalculateCathodeFallLength", "CathodeCurrentDensity", "CathodeCurrent", "CalculateVoltage"},
+	"CalculateVoltage":           {"CathodeFallPotential", "CalculateCathodeFallLength", "CalculateCurrentDensity"},
 	"CathodeFallLength":          {"CalculateCathodeFallLength"},
 	"PressureGapLength":          {"Pressure"},
 	"Pressure":                   {"PressureGapLength"},
@@ -220,6 +230,8 @@ var fieldsAnd = map[string][]string{
 	"Volumetric":                 {"CathodeRadius"},
 	"CathodeCurrent":             {"CathodeRadius"},
 	"CalculateCathodeFallLength": {"Species"},
+	"CalculateCurrentDensity":    {"Species", "SecondaryEmissionCoefficient"},
+	"CalculateVoltage":           {"Species", "SecondaryEmissionCoefficient"},
 	"PressureGapLength":          {"GapLength"},
 }
 var fieldsDerivable map[string][]string = map[string][]string{
@@ -252,6 +264,9 @@ var valueUnits = map[string][]UnitElement{
 		{Class: Pressure, Power: 1},
 	},
 	"CathodeRadius": {
+		{Class: Length, Power: 1},
+	},
+	"TubeRadius": {
 		{Class: Length, Power: 1},
 	},
 }
@@ -290,13 +305,13 @@ var calculableFields = map[string]func(
 	},
 }
 
-func (modelConfig *ModelParameters) toSIeV(parameterNames, units []string) {
-	modelConfigReflect := reflect.ValueOf(modelConfig).Elem()
+func AnyToSIeV(target any, parameterNames, units []string, direct bool) {
+	targetReflect := reflect.ValueOf(target).Elem()
 	for name := range parameterNames {
-		if modelConfigReflect.FieldByName(parameterNames[name]).CanFloat() {
-			value := modelConfigReflect.FieldByName(parameterNames[name]).Float()
-			value = SIeV(value, valueUnits[parameterNames[name]], units, true)
-			modelConfigReflect.FieldByName(parameterNames[name]).SetFloat(value)
+		if targetReflect.FieldByName(parameterNames[name]).CanFloat() {
+			value := targetReflect.FieldByName(parameterNames[name]).Float()
+			value = FieldToSIeV(value, valueUnits[parameterNames[name]], units, direct)
+			targetReflect.FieldByName(parameterNames[name]).SetFloat(value)
 		}
 	}
 }
@@ -422,7 +437,7 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 		}
 	}
 
-	modelConfig.toSIeV(discoveredParameters, config.InputUnits)
+	AnyToSIeV(modelConfig, discoveredParameters, config.InputUnits, true)
 
 	for fieldName := range defaultValues {
 		if _, x := excludeFromLoadingDefaultOrOuter[fieldName]; !x && !slices.Contains(discoveredParameters, fieldName) {
@@ -487,6 +502,10 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 		modelConfig._outputUnits = config.InputUnits
 	} else {
 		modelConfig._outputUnits = units
+	}
+
+	if !slices.Contains(discoveredParameters, "TubeRadius") {
+		modelConfig.TubeRadius = modelConfig.CathodeRadius
 	}
 
 	scatteringMode := map[string]lxgata.ScatteringMode{

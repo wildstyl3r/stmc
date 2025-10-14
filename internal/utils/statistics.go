@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"golang.org/x/exp/constraints"
+	"gonum.org/v1/gonum/stat/distuv"
 )
 
 type Number interface {
@@ -38,7 +39,7 @@ func Variance[T Number](s []T, unbiased bool) float64 {
 	return v
 }
 
-func NormalConfidenceInterval(quantileCoefficient, variance float64, sampleSize int) float64 {
+func NormalMargin(quantileCoefficient, variance float64, sampleSize int) float64 {
 	return quantileCoefficient * math.Sqrt(variance/float64(sampleSize))
 }
 
@@ -79,4 +80,10 @@ func SecondOrderTaylorInverseVarianceEstimation(rawMoments []float64) float64 {
 		6 * B / math.Pow(A, 4),
 	}
 	return SumFloat64Slice(sumTerms)
+}
+
+func StudentedMargin(confidenceP float64, data []float64) float64 {
+	dist := distuv.StudentsT{Nu: float64(len(data) - 1), Sigma: 1}
+	quantileFactor := dist.Quantile(1 - (1-confidenceP)/2) // make it two-sided
+	return quantileFactor * math.Sqrt(Variance(data, true)/float64(len(data)))
 }

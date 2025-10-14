@@ -41,6 +41,19 @@ func Argsort(s []float64, abs bool) (indices []int) {
 	return indices
 }
 
+func ArgsortIndexable[T cmp.Ordered](s []Indexable[T], abs bool) (indices []int) {
+	indices = make([]int, len(s))
+	for i := range indices {
+		indices[i] = i
+	}
+
+	sort.Slice(indices, func(i, j int) bool {
+		return cmp.Compare(s[indices[i]].Index(), s[indices[j]].Index()) == -1
+	})
+
+	return indices
+}
+
 func SumIntSlice[T constraints.Integer](arr []T) (sum T) {
 	for i := range arr {
 		sum += arr[i]
@@ -68,13 +81,13 @@ func Apply[S, T any](f func(S) T, data []S) (result []T) {
 	return
 }
 
-func Intersect(a, b []string) *string {
+func AnyIntersection(a, b []string) string {
 	for i := range a {
 		if slices.Contains(b, a[i]) {
-			return &a[i]
+			return a[i]
 		}
 	}
-	return nil
+	return ""
 }
 
 type constErr string

@@ -10,7 +10,6 @@ type Flags struct {
 	Threads                                       *int
 	Verbose                                       *bool
 	Debug                                         *bool
-	RootFindingAlgorithm                          *string
 	// dataFlags
 }
 
@@ -22,6 +21,5 @@ func NewConfigFlags() Flags {
 		Threads:               flag.Int("j", runtime.NumCPU(), "threads to run"),
 		Verbose:               flag.Bool("v", true, "verbose"),
 		Debug:                 flag.Bool("d", false, "debug"),
-		RootFindingAlgorithm:  flag.String("alg", "s", "root finder algorithm for gamma calculation ([s]tochastic approximation, [b]inary search, [t]ernary search)"),
 	}
 }

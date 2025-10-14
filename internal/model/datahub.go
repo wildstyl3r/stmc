@@ -31,12 +31,21 @@ func (dh *DataHubType) Insert(name DataHubKeyType, value any) {
 	dh.data[name] = value
 }
 
-func (model *Model) Get(name DataHubKeyType) any {
+func (model *Model) GetMetrics(name DataHubKeyType) any {
 	if value, exists := model.DataHub.data[name]; exists {
 		return value
 	} else {
 		model.calculate(name)
 		return model.DataHub.data[name]
+	}
+}
+
+func (model *Model) ApplyToMetrics(name DataHubKeyType, f func(any) any) {
+	if value, exists := model.DataHub.data[name]; exists {
+		model.DataHub.data[name] = f(value)
+	} else {
+		model.calculate(name)
+		model.DataHub.data[name] = f(value)
 	}
 }
 

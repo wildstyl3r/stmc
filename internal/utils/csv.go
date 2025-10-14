@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"cmp"
 	"encoding/csv"
 	"fmt"
 	"os"
@@ -8,9 +9,14 @@ import (
 	"strconv"
 
 	"github.com/facette/natsort"
+	"github.com/gocarina/gocsv"
 )
 
 type CSV [][]string
+
+type Indexable[T cmp.Ordered] interface {
+	Index() T
+}
 
 func (data CSV) Less(i, j int) bool {
 	return natsort.Compare(data[i][0], data[j][0])
@@ -23,24 +29,18 @@ func (data CSV) Swap(i, j int) {
 	data[i], data[j] = data[j], data[i]
 }
 
-func WriteAsCSV(data CSV, path, subpath, filename string, columns []string) {
-	var scalarW *csv.Writer
+func WriteAsCSV[Index cmp.Ordered, T Indexable[Index]](rows []T, path, filename string) error {
 	println(filename, path)
 	clearName := GetFilename(filename)
-	scalarParams, err := OpenFile(true, path, subpath, clearName, TypeTXT)
+	file, err := OpenFile(path+"/"+clearName, TypeCSV)
 	if err != nil {
-		println("unable to save dc and secondary emission coefficient: ", err.Error())
+		println("unable to save csv file: ", err.Error())
 		os.Exit(1)
-	} else {
-		scalarW = csv.NewWriter(scalarParams)
-		scalarW.WriteAll([][]string{
-			columns,
-		})
-		scalarW.Flush()
 	}
-	sort.Sort(data)
-	scalarW.WriteAll(data)
-	scalarW.Flush()
+	sort.Slice(rows, func(i, j int) bool {
+		return cmp.Compare(rows[i].Index(), rows[j].Index()) == -1
+	})
+	return gocsv.MarshalFile(rows, file)
 }
 
 func ReadDataCSV(filename string) (metadata [][]string, columnNames []string, values [][]float64, err error) {

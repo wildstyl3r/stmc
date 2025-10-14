@@ -4,10 +4,10 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"math"
 	"os"
-	"sort"
 	"strconv"
 
 	"github.com/wildstyl3r/lxgata"
@@ -23,12 +23,22 @@ type DataItem struct {
 	fileSuffix string
 }
 
+type Row struct {
+	index, value, margin float64
+}
+
+type DataFile struct {
+	metricsName          string
+	indexName, valueName string
+	data                 []Row
+	confIntervals        bool
+}
+
 type sequentialDataItem struct {
 	DataItem
-	columnNames []string
-	values      func(*model.Model) (args []float64, values [][]float64, labels []string)
-	xUnit       []config.UnitElement
-	yUnit       []config.UnitElement
+	values func(*model.Model) []DataFile
+	xUnit  []config.UnitElement
+	yUnit  []config.UnitElement
 }
 
 type customDataItem struct {
@@ -43,18 +53,19 @@ type DataFlags struct {
 }
 
 const (
-	Potential                  = "Potential"
-	ElectricField              = "Electric field"
-	ElectricFieldFromPotential = "Electric field from potential"
-	LfromV                     = "Position from potential"
-	CollisionCounters          = "Collision counters"
-	NormalizedSourceTerm       = "Normalized source term"
-	PlasmaDensity              = "Plasma density"
-	MeanEnergy                 = "Mean energy"
-	MeanVelocityX              = "Mean velocity along x"
-	MeanVelocityR              = "Mean velocity orthogonal to x"
-	MeanVelocityAbs            = "Mean absolute velocity"
-	RawDistribution            = "Raw distribution"
+	Potential                   = "Potential"
+	ElectricField               = "ElectricField"
+	ElectricFieldFromPotential  = "ElectricFieldFromPotential"
+	LfromV                      = "PositionFromPotential"
+	NormalizedCollisionCounters = "NormalizedCollisionCounters"
+	NormalizedWallLoss          = "NormalizedWallLoss"
+	CollisionCounters           = "CollisionCounters"
+	PlasmaDensity               = "PlasmaDensity"
+	MeanEnergy                  = "MeanEnergy"
+	MeanVelocityX               = "MeanVelocityX"
+	MeanVelocityR               = "MeanVelocityR"
+	MeanVelocityAbs             = "MeanVelocity"
+	RawDistribution             = "RawDistribution"
 )
 
 func NewDataFlags() DataFlags {
@@ -66,13 +77,18 @@ func NewDataFlags() DataFlags {
 					SaveFlag:   flag.Bool("p", false, "save potential"),
 					fileSuffix: "V",
 				},
-				columnNames: []string{"x (cm)", "g (V)"},
-				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
-					for x := range model.NumCells {
-						args = append(args, model.XStep*float64(x))
-						values = append(values, []float64{model.VfromL(model.XStep * float64(x))})
+				values: func(model *model.Model) []DataFile {
+					dataFile := DataFile{
+						metricsName: Potential,
+						indexName:   fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
+						valueName:   "g (V)",
+						data:        make([]Row, model.NumCells),
 					}
-					return args, values, nil
+					for x := range model.NumCells {
+						dataFile.data[x].index = model.XStep * float64(x)
+						dataFile.data[x].value = model.VfromL(model.XStep * float64(x))
+					}
+					return []DataFile{dataFile}
 				},
 				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 				yUnit: []config.UnitElement{},
@@ -82,13 +98,18 @@ func NewDataFlags() DataFlags {
 					SaveFlag:   flag.Bool("ef", false, "save Electric field"),
 					fileSuffix: "Efield",
 				},
-				columnNames: []string{"x (cm)", "E (V/m)"},
-				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
-					for x := range model.NumCells {
-						args = append(args, model.XStep*float64(x))
-						values = append(values, []float64{model.EFieldFromL(model.XStep * float64(x))})
+				values: func(model *model.Model) []DataFile {
+					dataFile := DataFile{
+						metricsName: ElectricField,
+						indexName:   fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
+						valueName:   fmt.Sprintf("E (V/%s)", model.Parameters.OutputUnit(config.Length)),
+						data:        make([]Row, model.NumCells),
 					}
-					return args, values, nil
+					for x := range model.NumCells {
+						dataFile.data[x].index = model.XStep * float64(x)
+						dataFile.data[x].value = model.EFieldFromL(model.XStep * float64(x))
+					}
+					return []DataFile{dataFile}
 				},
 				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 				yUnit: []config.UnitElement{{Class: config.Length, Power: -1}},
@@ -98,19 +119,21 @@ func NewDataFlags() DataFlags {
 					SaveFlag:   flag.Bool("efp", false, "save Electric field at potential"),
 					fileSuffix: "efp",
 				},
-				columnNames: []string{"V", "E (V/m)"},
-				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
+				values: func(model *model.Model) []DataFile {
+					dataFile := DataFile{
+						metricsName: ElectricFieldFromPotential,
+						indexName:   "g(V)",
+						valueName:   fmt.Sprintf("E (V/%s)", model.Parameters.OutputUnit(config.Length)),
+					}
 					for i := range 100 {
 						v := -((model.Vc)*float64(100-i)/100. + model.Va)
-						args = append(args, v)
-						values = append(values, []float64{model.EFieldFromPotential(v)})
+						dataFile.data = append(dataFile.data, Row{index: v, value: model.EFieldFromPotential(v)})
 					}
 					for i := range 100 {
 						v := -model.Va * float64(100-i) / 100.
-						args = append(args, v)
-						values = append(values, []float64{model.EFieldFromPotential(v)})
+						dataFile.data = append(dataFile.data, Row{index: v, value: model.EFieldFromPotential(v)})
 					}
-					return args, values, nil
+					return []DataFile{dataFile}
 				},
 				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 				yUnit: []config.UnitElement{{Class: config.Length, Power: -1}},
@@ -120,135 +143,173 @@ func NewDataFlags() DataFlags {
 					SaveFlag:   flag.Bool("lv", false, "save x from v"),
 					fileSuffix: "lv",
 				},
-				columnNames: []string{"g (V)", "x (cm)"},
-				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
+				values: func(model *model.Model) []DataFile {
+					dataFile := DataFile{
+						metricsName: LfromV,
+						indexName:   "g(V)",
+						valueName:   fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
+					}
 					for i := range 100 {
 						v := -((model.Vc)*float64(100-i)/100. + model.Va)
-						args = append(args, v)
-						values = append(values, []float64{model.LfromV(v)})
+						dataFile.data = append(dataFile.data, Row{index: v, value: model.LfromV(v)})
 					}
 					for i := range 100 {
 						v := -model.Va * float64(100-i) / 100.
-						args = append(args, v)
-						values = append(values, []float64{model.LfromV(v)})
+						dataFile.data = append(dataFile.data, Row{index: v, value: model.LfromV(v)})
 					}
-					return args, values, nil
+					return []DataFile{dataFile}
 				},
 				xUnit: []config.UnitElement{},
 				yUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 			},
+			NormalizedCollisionCounters: {
+				DataItem: DataItem{
+					SaveFlag:   flag.Bool("ncc", true, "save normalized collision counters"),
+					fileSuffix: "ncc",
+				},
+				values: func(model *model.Model) (files []DataFile) {
+					collisions := model.GetMetrics(extensions.NormalizedCollisionRateKey).(map[lxgata.CollisionType][]float64)
+					collisionsMargin := model.GetMetrics(extensions.NormalizedCollisionRateMarginKey).(map[lxgata.CollisionType][]float64)
+					for label := range collisions {
+						dataFile := DataFile{
+							metricsName:   NormalizedCollisionCounters + "/" + string(label),
+							indexName:     fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
+							valueName:     fmt.Sprintf("N_i(%s^{-1} %s^{-1})", model.Parameters.OutputUnit(config.Length), model.Parameters.OutputUnit(config.Pressure)),
+							data:          make([]Row, model.NumCells),
+							confIntervals: true,
+						}
+						for x := range model.NumCells {
+							dataFile.data[x].index = model.XStep * (float64(x) + 0.5)
+							dataFile.data[x].value = collisions[lxgata.CollisionType(label)][x]
+							dataFile.data[x].margin = collisionsMargin[lxgata.CollisionType(label)][x]
+						}
+						files = append(files, dataFile)
+					}
+					return files
+				},
+				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
+				yUnit: []config.UnitElement{{Class: config.Length, Power: -1}, {Class: config.Pressure, Power: -1}},
+			},
 			CollisionCounters: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("cc", false, "save collision counters"),
+					SaveFlag:   flag.Bool("cc", true, "save collision counters"),
 					fileSuffix: "cc",
 				},
-				columnNames: []string{"x (cm)", "N_i(cm^{-1} Torr^{-1})", "Standard error"},
-				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
-					collisions := model.Get(extensions.NormalizedCollisionRateKey).(map[lxgata.CollisionType][]float64)
-					collisionsCI := model.Get(extensions.NormalizedCollisionRateCIKey).(map[lxgata.CollisionType][]float64)
-					processNames := make([]string, 0, len(collisions))
+				values: func(model *model.Model) (files []DataFile) {
+					collisions := model.GetMetrics(extensions.NormalizedCollisionRateKey).(map[lxgata.CollisionType][]float64)
+					collisionsMargin := model.GetMetrics(extensions.NormalizedCollisionRateMarginKey).(map[lxgata.CollisionType][]float64)
+					fluxAtCathdode := model.Parameters.CathodeCurrentDensity / constants.ElementaryCharge // [m^-2s^-1]
 					for label := range collisions {
-						processNames = append(processNames, string(label))
-					}
-					sort.Strings(processNames)
-					for _, label := range processNames {
-						labels = append(labels, label)
-						labels = append(labels, label+"_conf_interval")
-					}
-					for x := range model.NumCells {
-						args = append(args, model.XStep*(float64(x)+0.5))
-						var row []float64
-						for _, label := range processNames {
-							row = append(row, collisions[lxgata.CollisionType(label)][x])
-							// if model.Parameters.CalculateStdError {
-							row = append(row, collisionsCI[lxgata.CollisionType(label)][x])
-							// }
+						dataFile := DataFile{
+							metricsName:   CollisionCounters + "/" + string(label),
+							indexName:     fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
+							valueName:     fmt.Sprintf("S_i(%s^{-3} %s^{-1})", model.Parameters.OutputUnit(config.Length), model.Parameters.OutputUnit(config.Time)),
+							data:          make([]Row, model.NumCells),
+							confIntervals: true,
 						}
-						values = append(values, row)
+						for x := range model.NumCells {
+							dataFile.data[x].index = model.XStep * (float64(x) + 0.5)
+							dataFile.data[x].value = collisions[lxgata.CollisionType(label)][x] * fluxAtCathdode * model.Parameters.Pressure
+							dataFile.data[x].margin = collisionsMargin[lxgata.CollisionType(label)][x] * fluxAtCathdode * model.Parameters.Pressure
+						}
+						files = append(files, dataFile)
 					}
-					return args, values, labels
+					return files
+				},
+				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
+				yUnit: []config.UnitElement{{Class: config.Length, Power: -3}, {Class: config.Time, Power: -1}},
+			},
+			NormalizedWallLoss: {
+				DataItem: DataItem{
+					SaveFlag:   flag.Bool("nwl", true, "save normalized wall loss"),
+					fileSuffix: "nwl",
+				},
+				values: func(model *model.Model) []DataFile {
+					dataFile := DataFile{
+						metricsName:   NormalizedWallLoss,
+						indexName:     fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
+						valueName:     fmt.Sprintf("N_i(%s^{-1} %s^{-1})", model.Parameters.OutputUnit(config.Length), model.Parameters.OutputUnit(config.Pressure)),
+						data:          make([]Row, model.NumCells),
+						confIntervals: true,
+					}
+					wallLosses := model.GetMetrics(extensions.NormalizedWallLossRateKey).([]float64)
+					wallLossesMargin := model.GetMetrics(extensions.NormalizedWallLossRateMarginKey).([]float64)
+					for x := range model.NumCells {
+						dataFile.data[x].index = model.XStep * (float64(x) + 0.5)
+						dataFile.data[x].value = wallLosses[x]
+						dataFile.data[x].margin = wallLossesMargin[x]
+					}
+					return []DataFile{dataFile}
 				},
 				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 				yUnit: []config.UnitElement{{Class: config.Length, Power: -1}, {Class: config.Pressure, Power: -1}},
 			},
-			NormalizedSourceTerm: {
-				DataItem: DataItem{
-					SaveFlag:   flag.Bool("nst", true, "save normalized source term"),
-					fileSuffix: "nst",
-				},
-				columnNames: []string{"x (cm)", "N_i(cm^{-1} Torr^{-1})", "Standard error"},
-				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
-					collisions := model.Get(extensions.NormalizedCollisionRateKey).(map[lxgata.CollisionType][]float64)
-					collisionsCI := model.Get(extensions.NormalizedCollisionRateCIKey).(map[lxgata.CollisionType][]float64)
-					labels = append(labels, string(lxgata.IONIZATION))
-					labels = append(labels, string(lxgata.IONIZATION)+"_conf_interval")
-					sort.Strings(labels)
-					for x := range model.NumCells {
-						args = append(args, model.XStep*(float64(x)+0.5))
-						var row []float64
-						row = append(row, collisions[lxgata.IONIZATION][x])
-						row = append(row, collisionsCI[lxgata.IONIZATION][x])
-						values = append(values, row)
-					}
-					return args, values, labels
-				},
-				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
-				yUnit: []config.UnitElement{{Class: config.Length, Power: -1}, {Class: config.Pressure, Power: -1}},
-			},
-			"Energy loss due to ionizations": {
-				DataItem: DataItem{
-					SaveFlag:   flag.Bool("li", false, "save ionization energy losses"),
-					fileSuffix: "li",
-				},
-				columnNames: []string{"eV", "cm ^ -1"},
-				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
-					for x := range model.NumCells {
-						args = append(args, model.XStep*(float64(x)+0.5))
-						row := []float64{model.EnergyLossByProcess[lxgata.IONIZATION][x]}
-						values = append(values, row)
-					}
-					return args, values, []string{string(lxgata.IONIZATION)}
-				},
-				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
-				yUnit: []config.UnitElement{{Class: config.Length, Power: -1}},
-			},
-			"Out of energy for ionizations": {
-				DataItem: DataItem{
-					SaveFlag:   flag.Bool("oe", false, "save ooe exit events count"),
-					fileSuffix: "oe",
-				},
-				columnNames: []string{"x (cm)", "cm ^ -1"},
-				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
-					collisions := model.Get(extensions.NormalizedCollisionRateKey).(map[lxgata.CollisionType][]float64)
-					for label := range collisions {
-						labels = append(labels, string(label))
-						labels = append(labels, string(label)+"_conf_interval")
-					}
-					sort.Strings(labels)
-					for x := range model.NumCells {
-						args = append(args, model.XStep*(float64(x)+0.5))
-						var row []float64
-						row = append(row, float64((model.OutOfEnergyAtCell[x]))/float64(model.Parameters.NElectrons))
-						values = append(values, row)
-					}
-					return args, values, nil
-				},
-				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
-				yUnit: []config.UnitElement{{Class: config.Length, Power: -1}},
-			},
+			// "Energy loss due to ionizations": {
+			// 	DataItem: DataItem{
+			// 		SaveFlag:   flag.Bool("li", false, "save ionization energy losses"),
+			// 		fileSuffix: "li",
+			// 	},
+			// 	values: func(model *model.Model) []DataFile {
+			// 		for x := range model.NumCells {
+			// 			args = append(args, model.XStep*(float64(x)+0.5))
+			// 			row := []float64{model.EnergyLossByProcess[lxgata.IONIZATION][x]}
+			// 			values = append(values, row)
+			// 		}
+			// 		return args, values, []string{string(lxgata.IONIZATION)}, []string{
+			// 			fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
+			// 			fmt.Sprintf("(%s^{-1}%s^{-1})", model.Parameters.OutputUnit(config.Energy), model.Parameters.OutputUnit(config.Length))}
+			// 	},
+			// 	xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
+			// 	yUnit: []config.UnitElement{{Class: config.Length, Power: -1}},
+			// },
+			// "Out of energy for ionizations": {
+			// 	DataItem: DataItem{
+			// 		SaveFlag:   flag.Bool("oe", false, "save ooe exit events count"),
+			// 		fileSuffix: "oe",
+			// 	},
+			// 	values: func(model *model.Model) []DataFile {
+			// 		collisions := model.GetMetrics(extensions.NormalizedCollisionRateKey).(map[lxgata.CollisionType][]float64)
+			// 		for label := range collisions {
+			// 			labels = append(labels, string(label))
+			// 			labels = append(labels, string(label)+"_conf_interval")
+			// 		}
+			// 		sort.Strings(labels)
+			// 		for x := range model.NumCells {
+			// 			args = append(args, model.XStep*(float64(x)+0.5))
+			// 			var row []float64
+			// 			row = append(row, float64((model.OutOfEnergyAtCell[x]))/float64(model.Parameters.NElectrons))
+			// 			values = append(values, row)
+			// 		}
+			// 		return args, values, nil, []string{
+			// 			fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
+			// 			fmt.Sprintf("(%s^{-1}%s^{-1})", model.Parameters.OutputUnit(config.Energy), model.Parameters.OutputUnit(config.Length))}
+			// 	},
+			// 	xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
+			// 	yUnit: []config.UnitElement{{Class: config.Length, Power: -1}},
+			// },
 			PlasmaDensity: {
 				DataItem: DataItem{
 					SaveFlag:   flag.Bool("n", false, "save plasma density"),
 					fileSuffix: "n",
 				},
-				columnNames: []string{"x (cm)", "cm ^ -3"},
-				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
-					density := model.Get("GlowDischargeDensity").([]float64)
-					for x := range model.NumCells {
-						args = append(args, model.XStep*(float64(x)+0.5))
-						values = append(values, []float64{density[x]})
+				values: func(model *model.Model) []DataFile {
+					dataFile := DataFile{
+						metricsName: PlasmaDensity,
+						indexName:   fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
+						valueName:   fmt.Sprintf("(%s^{-3})", model.Parameters.OutputUnit(config.Length)),
+						data:        make([]Row, model.NumCells),
 					}
-					return args, values, []string{"Plasma density n(x)"}
+					var density []float64
+					if model.Parameters.ParallelPlaneHollowCathode {
+						density = model.GetMetrics("GlowDischargeDensityPPHC").([]float64)
+					} else {
+						density = model.GetMetrics("GlowDischargeDensity").([]float64)
+					}
+					for x := range model.NumCells {
+						dataFile.data[x].index = model.XStep * (float64(x) + 0.5)
+						dataFile.data[x].value = density[x]
+					}
+					return []DataFile{dataFile}
 				},
 				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 				yUnit: []config.UnitElement{{Class: config.Length, Power: -3}},
@@ -258,8 +319,13 @@ func NewDataFlags() DataFlags {
 					SaveFlag:   flag.Bool("e", false, "save mean energy"),
 					fileSuffix: "e",
 				},
-				columnNames: []string{"x (cm)", "eV"},
-				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
+				values: func(model *model.Model) []DataFile {
+					dataFile := DataFile{
+						metricsName: MeanEnergy,
+						indexName:   fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
+						valueName:   fmt.Sprintf("\\varepsilon(%s)", model.Parameters.OutputUnit(config.Energy)),
+						data:        make([]Row, model.NumCells),
+					}
 
 					electronDensity := make([]float64, model.NumCells)
 					meanEnergy := make([]float64, model.NumCells)
@@ -292,11 +358,10 @@ func NewDataFlags() DataFlags {
 							meanEnergy[xIndex] += fXE * currentEnergy
 						}
 						meanEnergy[xIndex] /= electronDensity[xIndex]
-						args = append(args, model.XStep*(float64(xIndex)+0.5))
-						values = append(values, []float64{meanEnergy[xIndex]})
+						dataFile.data[xIndex].index = model.XStep * (float64(xIndex) + 0.5)
+						dataFile.data[xIndex].value = meanEnergy[xIndex]
 					}
-
-					return args, values, []string{"varepsilon (x)"}
+					return []DataFile{dataFile}
 				},
 				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 				yUnit: []config.UnitElement{{Class: config.Energy, Power: 1}},
@@ -306,8 +371,13 @@ func NewDataFlags() DataFlags {
 					SaveFlag:   flag.Bool("vx", false, "save drift velocity"),
 					fileSuffix: "vx",
 				},
-				columnNames: []string{"x (cm)", "cm s^-1"},
-				values: func(model *model.Model) (args []float64, values [][]float64, labels []string) {
+				values: func(model *model.Model) []DataFile {
+					dataFile := DataFile{
+						metricsName: MeanVelocityX,
+						indexName:   fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
+						valueName:   fmt.Sprintf("v_x(%s%s^{-1})", model.Parameters.OutputUnit(config.Length), model.Parameters.OutputUnit(config.Time)),
+						data:        make([]Row, model.NumCells),
+					}
 
 					electronDensity := make([]float64, model.NumCells)
 					flux := make([]float64, model.NumCells)
@@ -338,10 +408,10 @@ func NewDataFlags() DataFlags {
 							electronDensity[xIndex] += fXE
 							flux[xIndex] += v_x_fXE
 						}
-						args = append(args, model.XStep*(float64(xIndex)+0.5))
-						values = append(values, []float64{flux[xIndex] / electronDensity[xIndex]})
+						dataFile.data[xIndex].index = model.XStep * (float64(xIndex) + 0.5)
+						dataFile.data[xIndex].value = flux[xIndex] / electronDensity[xIndex]
 					}
-					return args, values, []string{"Vx (x)"}
+					return []DataFile{dataFile}
 				},
 				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 				yUnit: []config.UnitElement{{Class: config.Length, Power: 1}, {Class: config.Time, Power: -1}},
@@ -363,27 +433,6 @@ func NewDataFlags() DataFlags {
 					}
 				},
 			},
-			// "Secondary electron yields": {
-			// 	DataItem: DataItem{
-			// 		SaveFlag:   flag.Bool("gamma", false, "save secondary electron yields"),
-			// 		fileSuffix: "gamma",
-			// 	},
-			// 	prepare: func(m *model.Model) ([]byte, utils.ExportFileType) {
-			// 		if m.Parameters.CalculateCathodeFallLength {
-			// 			return nil, utils.TypeCSV
-			// 		} else {
-			// 			density := model.Get("GlowDischargeDensity", m).([]float64)
-			// 			xMaxIndex := utils.Argmax(density)
-			// 			collisions := model.Get(extensions.NormalizedCollisionRateKey, m).(map[lxgata.CollisionType][]float64)
-			// 			M := utils.SumFloat64Slice(collisions[lxgata.IONIZATION][:xMaxIndex]) * m.XStep
-			// 			utils.WriteAsCSV(
-			// 				gammaData,
-			// 				config.OutputDir, "gamma", *configFlags.ConfigFileNamePointer,
-			// 				[]string{"E/N", "integrated secondary emission coefficient", "analytic secondary emission coefficient", "final gamma loss", "sheath length", "integrated secondary emission coefficient_conf_interval"},
-			// 			)
-			// 		}
-			// 	},
-			// },
 		},
 	}
 }
@@ -391,28 +440,42 @@ func NewDataFlags() DataFlags {
 func Save(modelName string, model *model.Model, df DataFlags, outputPath string) {
 	for name, output := range df.Sequentials {
 		if *output.SaveFlag || *df.all {
-			var file *os.File
-			file, err := utils.OpenFile(model.Parameters.MakeDir, outputPath, output.fileSuffix, modelName, utils.TypeTXT)
-			if err != nil {
-				println("unable to save "+name+": ", err)
-			} else {
-				rows := [][]string{output.columnNames}
-				xColumnValue, yColumnValues, yLabels := output.values(model)
-				rows = append(rows, append([]string{""}, yLabels...))
-				for x := range xColumnValue {
-					row := []string{strconv.FormatFloat(config.SIeV(xColumnValue[x], output.xUnit, model.Parameters.OutputUnits(), false), 'f', -1, 64)}
-					for i := range yColumnValues[x] {
-						row = append(row, strconv.FormatFloat(config.SIeV(yColumnValues[x][i], output.yUnit, model.Parameters.OutputUnits(), false), 'f', -1, 64))
+			drafts := output.values(model)
+			for f := range drafts {
+				path := outputPath + modelName
+				file, err := utils.OpenFile(path+"/"+drafts[f].metricsName, utils.TypeCSV)
+				if err != nil {
+					fmt.Printf("unable to save %s: %+v\n", path+"/"+drafts[f].metricsName, err)
+				} else {
+					rows := [][]string{
+						{drafts[f].indexName, drafts[f].valueName},
 					}
-					rows = append(rows, row)
-				}
-				w := csv.NewWriter(file)
-				w.WriteAll(rows)
-				if model.Parameters.Verbose() {
-					println(name + " saved")
-				}
-				if err := w.Error(); err != nil {
-					log.Fatalln("error writing csv:", err)
+					if drafts[f].confIntervals {
+						rows[0] = append(rows[0], "margin")
+						for i := range drafts[f].data {
+							rows = append(rows, []string{
+								strconv.FormatFloat(config.FieldToSIeV(drafts[f].data[i].index, output.xUnit, model.Parameters.OutputUnits(), false), 'f', -1, 64),
+								strconv.FormatFloat(config.FieldToSIeV(drafts[f].data[i].value, output.yUnit, model.Parameters.OutputUnits(), false), 'f', -1, 64),
+								strconv.FormatFloat(config.FieldToSIeV(drafts[f].data[i].margin, output.yUnit, model.Parameters.OutputUnits(), false), 'f', -1, 64),
+							})
+
+						}
+					} else {
+						for i := range drafts[f].data {
+							rows = append(rows, []string{
+								strconv.FormatFloat(config.FieldToSIeV(drafts[f].data[i].index, output.xUnit, model.Parameters.OutputUnits(), false), 'f', -1, 64),
+								strconv.FormatFloat(config.FieldToSIeV(drafts[f].data[i].value, output.yUnit, model.Parameters.OutputUnits(), false), 'f', -1, 64),
+							})
+						}
+					}
+					w := csv.NewWriter(file)
+					w.WriteAll(rows)
+					if model.Parameters.Verbose() {
+						println(name + " saved")
+					}
+					if err := w.Error(); err != nil {
+						log.Fatalln("error writing csv:", err)
+					}
 				}
 			}
 		}
@@ -422,7 +485,7 @@ func Save(modelName string, model *model.Model, df DataFlags, outputPath string)
 			data, fileExt := output.prepare(model)
 			if data != nil {
 				var file *os.File
-				file, err := utils.OpenFile(model.Parameters.MakeDir, outputPath, output.fileSuffix, modelName, fileExt)
+				file, err := utils.OpenFile(outputPath+"/"+modelName+"/"+output.fileSuffix, fileExt)
 				if err != nil {
 					println("unable to save "+name+": ", err)
 				} else {
