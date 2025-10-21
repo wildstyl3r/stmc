@@ -6,17 +6,25 @@ import (
 
 func LoadExtensions(dh *model.DataHubType) {
 	extensions := map[string]model.Extension{
-		NormalizedCollisionRateKey:       NormalizedCollisionRate,
-		NormalizedCollisionRateMarginKey: NormalizedCollisionRate,
-		TotalCollisionsKey:               NormalizedCollisionRate,
+		SingleElectronCollisionRateKey:       NormalizedCollisionRate,
+		SingleElectronCollisionRateMarginKey: NormalizedCollisionRate,
+		TotalCollisionsKey:                   NormalizedCollisionRate,
 
 		NormalizedWallLossRateKey:       NormalizedWallLossRate,
 		NormalizedWallLossRateMarginKey: NormalizedWallLossRate,
 
-		GlowDischargeDensityKey:           GlowDischargeDensity,
-		SimplifiedGlowDischargeDensityKey: SimplifiedGlowDischargeDensity,
+		AmbipolarDiffusionCoefficientKey: DiffusionConstants,
+		CharacteristicDiffusionScaleKey:  DiffusionConstants,
 
-		GlowDischargeDensityPPHCKey: GlowDischargeDensityPPHC,
+		DensityPerCathodeElectronFluxKey:                DensityPerCathodeElectronFlux,
+		GlowDischargeDensityKey:                         GlowDischargeDensity,
+		CathodeElectronFluxKey:                          GlowDischargeDensity,
+		CathodeElectronFluxMarginKey:                    GlowDischargeDensity,
+		CathodeIonFluxKey:                               GlowDischargeDensity,
+		CathodeIonFluxMarginKey:                         GlowDischargeDensity,
+		FirstDensityPeakIndexKey:                        GlowDischargeDensity,
+		SourceIntegralPerCathodeElectronFluxKey:         GlowDischargeDensity,
+		SourceIntegralPerCathodeElectronFluxVarianceKey: GlowDischargeDensity,
 	}
 	for name, ext := range extensions {
 		dh.Register(name, ext)

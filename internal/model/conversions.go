@@ -5,21 +5,36 @@ import "math"
 // g
 func (s *Model) VfromL(l float64) (V float64) {
 	if l < s.Parameters.CathodeFallLength {
-		cathodeFallPortion := l * s.inverseCathodeFallLength
-		V = s.Vc * (cathodeFallPortion*(2.-cathodeFallPortion) - 1.)
+		//V(x) =  (-((V_c/d + C_E)(x/d - 2) + C_E)x + C_v)
+		return math.FMA(
+			-math.FMA(
+				math.FMA(
+					s.Vc,
+					s.inverseCathodeFallLength,
+					s.Parameters.ConstEField),
+				math.FMA(
+					l,
+					s.inverseCathodeFallLength,
+					-2.),
+				s.Parameters.ConstEField),
+			l,
+			-(s.Vc + s.Va),
+		)
 	} else {
-		V = -s.Parameters.ConstEField * (l - s.Parameters.CathodeFallLength)
+		// V(x) = -s.Va / (L-d) * (L - x) = C_E*(L-x)
+		return s.Parameters.ConstEField * (s.Parameters.GapLength - l)
 	}
-	V -= s.Va
-	return V
 }
 
 // g^{-1}
 func (s *Model) LfromV(V float64) (l float64) {
 	if V < -s.Va {
-		l = math.FMA(-s.Parameters.CathodeFallLength, math.Sqrt((V+s.Va)*s.inverseNegativeVc), s.Parameters.CathodeFallLength)
+		V_n := s.Parameters.ConstEField * s.Parameters.CathodeFallLength
+		A := s.Vc + V_n
+		l = s.Parameters.CathodeFallLength * (1 - (V_n+math.Sqrt(V_n*V_n-4*A*(V+s.Va)))/(2*A))
 	} else {
-		l = math.FMA((V + s.Va), s.inverseAbsConstEField, s.Parameters.CathodeFallLength)
+		// V/C_E = L - x => x = L - V/C_E  ; [[---]=>[+-]=>[-]]
+		return math.FMA(-V, s.inverseConstEField, s.Parameters.GapLength)
 	}
 	if math.IsNaN(l) {
 		panic("x is NaN")
@@ -28,17 +43,25 @@ func (s *Model) LfromV(V float64) (l float64) {
 }
 
 func (s *Model) EFieldFromL(l float64) (E float64) { // V/m
-	E = s.Parameters.ConstEField
 	if l < s.Parameters.CathodeFallLength {
-		E = math.FMA(-2.*(1.-l*s.inverseCathodeFallLength)*s.Vc, s.inverseCathodeFallLength, E)
+		return math.FMA(2*math.FMA(s.Vc, s.inverseCathodeFallLength, s.Parameters.ConstEField), math.FMA(l, s.inverseCathodeFallLength, -1), s.Parameters.ConstEField)
+	} else {
+		return s.Parameters.ConstEField
 	}
-	return
 }
 
 func (s *Model) EFieldFromPotential(V float64) (E float64) {
-	E = s.Parameters.ConstEField
 	if V < -s.Va {
-		E = math.FMA(-2*s.inverseCathodeFallLength, math.Sqrt(-(V+s.Va)*s.Vc), E)
+		V_n := s.Parameters.ConstEField * s.Parameters.CathodeFallLength
+		A := s.Vc + V_n
+		return -math.Sqrt(V_n*V_n-4*A*(V+s.Va)) * s.inverseCathodeFallLength
+	} else {
+		return s.Parameters.ConstEField
 	}
-	return
+
+	// E = s.Parameters.ConstEField
+	// if V < -s.Va {
+	// 	E = math.FMA(-2*s.inverseCathodeFallLength, math.Sqrt(-(V+s.Va)*s.Vc), E)
+	// }
+	// return
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 	"runtime/pprof"
+	"slices"
 	"time"
 
 	"github.com/wildstyl3r/lxgata"
@@ -38,15 +39,23 @@ func main() {
 	var gammaData []*extensions.GammaDataRow
 	var currentData []*extensions.CurrentDensityDataRow
 	var voltageData []*extensions.VoltageDataRow
+	var sourceIntegralData []*extensions.SourceIntegralDataRow
 
-	for modelName, parameters := range c.Models {
+	modelNames := make([]string, 0, len(c.Models))
+	for name := range c.Models {
+		modelNames = append(modelNames, name)
+	}
+	slices.Sort(modelNames)
+
+	for i := range modelNames {
+		parameters := c.Models[modelNames[i]]
 		modelStartTime := time.Now()
 		fmt.Printf("Current time: %s\n", modelStartTime.UTC().Format(time.UnixDate))
 
 		runtime.GC()
-		fmt.Println("\n" + modelName)
-		if !parameters.CheckAndUnify(modelName, &c, &meta) {
-			fmt.Printf("found a problem in the config for [%v], skipping\n", modelName)
+		fmt.Println("\n" + modelNames[i])
+		if !parameters.CheckAndUnify(modelNames[i], &c, &meta) {
+			fmt.Printf("found a problem in the config for [%v], skipping\n", modelNames[i])
 			continue
 		}
 
@@ -65,31 +74,45 @@ func main() {
 
 		var m *model.Model
 
-		if parameters.CalculateCathodeFallLength {
-			var gammaDataRow *extensions.GammaDataRow
-			gammaDataRow, m = extensions.GammaCalculation(configFlags, parameters, c.OutputDir)
-			gammaDataRow.ModelName = modelName
-			config.AnyToSIeV(gammaDataRow, []string{"CathodeFallLength"}, parameters.OutputUnits(), false)
-			gammaData = append(gammaData, gammaDataRow)
+		if parameters.CalculateSecondaryEmissionCoefficient {
+			// var gammaDataRow *extensions.GammaDataRow
+			// gammaDataRow, m = extensions.GammaCalculation(configFlags, parameters, c.OutputDir)
+			// gammaDataRow.ModelName = modelName
+			// config.AnyToSIeV(gammaDataRow, []string{"CathodeFallLength"}, parameters.OutputUnits(), false)
+			// gammaData = append(gammaData, gammaDataRow)
+			var siDataRow *extensions.SourceIntegralDataRow
+			siDataRow, m = extensions.SourceIntegralCalculation(configFlags, parameters, c.OutputDir, modelNames[i])
+			siDataRow.ModelName = modelNames[i]
+			config.AnyToSIeV(siDataRow, []string{"CathodeFallLength"}, parameters.OutputUnits(), false)
+			sourceIntegralData = append(sourceIntegralData, siDataRow)
 		} else if parameters.CalculateCurrentDensity {
 			var currentDataRow *extensions.CurrentDensityDataRow
 			currentDataRow, m = extensions.CurrentDensityCalculation(configFlags, parameters, c.OutputDir)
-			currentDataRow.ModelName = modelName
+			currentDataRow.ModelName = modelNames[i]
 			config.AnyToSIeV(currentDataRow, []string{"CathodeFallLength", "CathodeCurrentDensity"}, parameters.OutputUnits(), false)
 			currentData = append(currentData, currentDataRow)
 		} else if parameters.CalculateVoltage {
 			var voltageDataRow *extensions.VoltageDataRow
 			voltageDataRow, m = extensions.VoltageCalculation(configFlags, parameters, c.OutputDir)
-			voltageDataRow.ModelName = modelName
+			voltageDataRow.ModelName = modelNames[i]
 			// config.AnyToSIeV(voltageDataRow, []string{"Voltage"}, parameters.OutputUnits(), false)
 			voltageData = append(voltageData, voltageDataRow)
 		} else {
 			m = model.NewModel(parameters)
 
 			extensions.LoadExtensions(m.DataHub)
-			m.Run()
+			m.Run(func(m *model.Model) int {
+				if m.TotalElectronsPassed == 0 {
+					return m.Parameters.NElectrons
+				} else {
+					return 0
+				}
+			})
 		}
-		output.Save(modelName, m, dataExtractorFlags, c.OutputDir)
+		if m != nil {
+			output.Save(modelNames[i], m, dataExtractorFlags, c.OutputDir)
+		}
+
 		fmt.Printf("Elapsed time: %v\n", time.Since(modelStartTime))
 	}
 	if len(gammaData) > 0 {
@@ -111,6 +134,13 @@ func main() {
 
 		if err != nil {
 			println("unable to write voltage data:", err)
+		}
+	}
+	if len(sourceIntegralData) > 0 {
+		err := utils.WriteAsCSV(sourceIntegralData, c.OutputDir, "sourceInt")
+
+		if err != nil {
+			println("unable to write source integral data:", err)
 		}
 	}
 	fmt.Printf("Total elapsed time: %v\n\n", time.Since(startTime))

@@ -82,8 +82,58 @@ func SecondOrderTaylorInverseVarianceEstimation(rawMoments []float64) float64 {
 	return SumFloat64Slice(sumTerms)
 }
 
-func StudentedMargin(confidenceP float64, data []float64) float64 {
+func StudentedMarginFromData(confidenceP float64, data []float64) float64 {
 	dist := distuv.StudentsT{Nu: float64(len(data) - 1), Sigma: 1}
 	quantileFactor := dist.Quantile(1 - (1-confidenceP)/2) // make it two-sided
 	return quantileFactor * math.Sqrt(Variance(data, true)/float64(len(data)))
+}
+func StudentedMargin(confidenceP, variance float64, sampleSize int) float64 {
+	dist := distuv.StudentsT{Nu: float64(sampleSize - 1), Sigma: 1}
+	quantileFactor := dist.Quantile(1 - (1-confidenceP)/2) // make it two-sided
+	return quantileFactor * math.Sqrt(variance/float64(sampleSize))
+}
+
+type SampleCharacteristics struct {
+	MeanEstimation, VarianceEstimation float64
+	Size                               int
+}
+
+func SamplePoolCharacteristics(sc []SampleCharacteristics) (pool SampleCharacteristics) {
+	for j := range sc {
+		sizeJ := float64(sc[j].Size)
+		pool.MeanEstimation += sc[j].MeanEstimation * sizeJ
+		pool.Size += sc[j].Size
+		pool.VarianceEstimation += sc[j].VarianceEstimation * sizeJ * sizeJ
+	}
+	sizeTotal := float64(pool.Size)
+	pool.MeanEstimation /= sizeTotal
+	pool.VarianceEstimation /= sizeTotal * sizeTotal
+	return
+}
+
+func SameSizePoolVariance(vars []float64) float64 {
+	return SumFloat64Slice(vars) / (float64(len(vars)) * float64(len(vars)))
+}
+
+func LinearlyWeightedSameSizePoolMean(means []float64) (wm float64) {
+	sumTerms := make([]float64, len(means))
+	scale := float64(len(means) * (len(means) + 1) / 2)
+	for i := range means {
+		sumTerms[i] = float64(i+1) * means[i]
+	}
+	wm = SumFloat64Slice(sumTerms)
+	wm /= scale
+	return wm
+}
+
+func LinearlyWeightedSameSizePoolVariances(variances []float64) (wv float64) {
+	sumTerms := make([]float64, len(variances))
+	scale := float64(len(variances) * (len(variances) + 1) / 2)
+	scale *= scale
+	for i := range variances {
+		sumTerms[i] = float64((i+1)*(i+1)) * variances[i]
+	}
+	wv = SumFloat64Slice(sumTerms)
+	wv /= scale
+	return wv
 }

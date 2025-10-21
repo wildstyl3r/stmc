@@ -107,7 +107,7 @@ func advancedCurrentDensityCalculation(minDc, maxDc float64, itp *int, parameter
 		return gammaLoss
 	})
 	gammaIntegral = utils.Mean(gammaI[max(len(gammaI)-minSteps, len(gammaI)/4):])
-	gammaMargin = max(gammaMargin, utils.StudentedMargin(0.95, gammaI[max(len(gammaI)-minSteps, len(gammaI)/4):]))
+	gammaMargin = max(gammaMargin, utils.StudentedMarginFromData(0.95, gammaI[max(len(gammaI)-minSteps, len(gammaI)/4):]))
 	gammaLoss = parameters.SecondaryEmissionCoefficient - gammaIntegral
 
 	currentDensity := CurrentDensityEquation(dc, parameters.SecondaryEmissionCoefficient, parameters.CathodeFallPotential, parameters.GasDensity, utils.IonDriftVelocity[parameters.Species])
@@ -136,8 +136,7 @@ func currentDensityCalculationStep(itp *int, dc float64, parameters config.Model
 	parameters.CathodeFallLength = dc
 	stepModel = (model.NewModel(parameters))
 	LoadExtensions(stepModel.DataHub)
-	stepModel.Run()
-	gammaIntegral, gammaConfInterval = gammaIntegralF(stepModel)
+	gammaIntegral, gammaConfInterval = gammaIntegralF(stepModel, 0)
 	loss = parameters.SecondaryEmissionCoefficient - gammaIntegral
 	if parameters.Verbose() {
 		fmt.Printf("d_c: %v\nsecondary emission coefficient\n\t integral: %6f\n\t target:%6f\n", dc, gammaIntegral, parameters.SecondaryEmissionCoefficient)

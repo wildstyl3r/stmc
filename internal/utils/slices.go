@@ -18,6 +18,15 @@ func Argmax[T cmp.Ordered](arr []T) (argmax int) {
 	return
 }
 
+func ArgFirstPeak[T cmp.Ordered](arr []T) (argFirstPeak int) {
+	for i := range arr {
+		if i+2 < len(arr) && cmp.Compare(arr[i], arr[i+2]) == 1 && cmp.Compare(arr[i], arr[i+1]) == 1 && cmp.Compare(arr[i+1], arr[i+2]) == 1 {
+			return i
+		}
+	}
+	return len(arr) - 1
+}
+
 func Max[T cmp.Ordered](arr []T) (max T) {
 	return arr[Argmax(arr)]
 }

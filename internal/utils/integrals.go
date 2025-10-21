@@ -67,7 +67,7 @@ func (gi *GriddedInterval) Interpolate(x float64) float64 {
 	return value
 }
 
-func TrapezoidIntegration(lowerLimit, upperLimit float64, f GriddedInterval) (integral float64, err error) {
+func (f *GriddedInterval) TrapezoidIntegration(lowerLimit, upperLimit float64) (integral float64, err error) {
 	if lowerLimit == upperLimit {
 		return 0, nil
 	}
@@ -103,9 +103,11 @@ func TrapezoidIntegration(lowerLimit, upperLimit float64, f GriddedInterval) (in
 		}
 		upperPiece := 0.5 * (valueAtUpperLimit + f.Values[upperNode]) * upperStep
 
-		sumTerms := []float64{lowerPiece, upperPiece}
-		for i := lowerNode; i < upperNode; i++ {
-			sumTerms = append(sumTerms, 0.5*(f.Values[i]+f.Values[i+1])*f.Step)
+		sumTerms := make([]float64, 2+upperNode-lowerNode)
+		sumTerms[0], sumTerms[1] = lowerPiece, upperPiece
+		for i, x := 2, lowerNode; x < upperNode; x++ {
+			sumTerms[i] = 0.5 * (f.Values[x] + f.Values[x+1]) * f.Step
+			i++
 		}
 		integral = SumFloat64Slice(sumTerms)
 	}
@@ -116,26 +118,43 @@ func TrapezoidIntegration(lowerLimit, upperLimit float64, f GriddedInterval) (in
 	return
 }
 
-func VariableLimitDoubleIntegration(outerLowerLimit, outerUpperLimit, step, innerLowerLimit float64, innerUpperLimit func(float64) float64, f GriddedInterval) (integral float64, err error) { // addressing the case of int_a^b [ int_f(x)^g(x) dy ] dx
-	negative := false
-	if outerLowerLimit > outerUpperLimit {
-		negative = true
-		outerLowerLimit, outerUpperLimit = outerUpperLimit, outerLowerLimit
+func (f *GriddedInterval) MulPointwise(g func(float64) float64) (result GriddedInterval) {
+	result = GriddedInterval{
+		Step:   f.Step,
+		Values: make([]float64, len(f.Values)),
+		Offset: f.Offset,
 	}
-	outerGrid := GriddedInterval{
-		Values: make([]float64, int(math.Ceil((outerUpperLimit-outerLowerLimit)/step))+1),
-		Step:   step,
-		Offset: outerLowerLimit}
-	for i := range outerGrid.Values {
-		x := step*float64(i) + outerGrid.Offset
-		outerGrid.Values[i], err = TrapezoidIntegration(innerLowerLimit, innerUpperLimit(x), f)
+	for i := range f.Values {
+		x := float64(i)*f.Step + f.Offset
+		result.Values[i] = f.Values[i] * g(x)
+	}
+	return result
+}
+
+func (f *GriddedInterval) Scale(m float64) (result GriddedInterval) {
+	result = GriddedInterval{
+		Step:   f.Step,
+		Values: make([]float64, len(f.Values)),
+		Offset: f.Offset,
+	}
+	for i := range f.Values {
+		result.Values[i] = m * f.Values[i]
+	}
+	return result
+}
+
+func (f *GriddedInterval) VariableLimitDoubleIntegration(outerLowerLimit, outerUpperLimit, step, innerLowerLimit float64, innerUpperLimit func(float64) float64) (integral float64, err error) { // addressing the case of int_a^b [ int_f(x)^g(x) dy ] dx
+	subGrid := GriddedInterval{
+		Step:   f.Step,
+		Offset: f.Offset,
+		Values: make([]float64, len(f.Values)),
+	}
+	for j := range subGrid.Values {
+		xj := float64(j) * f.Step
+		subGrid.Values[j], err = f.TrapezoidIntegration(innerLowerLimit, innerUpperLimit(xj))
 		if err != nil {
 			return 0, err
 		}
 	}
-	integral, err = TrapezoidIntegration(outerLowerLimit, outerUpperLimit, outerGrid)
-	if negative {
-		integral = -integral
-	}
-	return
+	return subGrid.TrapezoidIntegration(outerLowerLimit, outerUpperLimit)
 }

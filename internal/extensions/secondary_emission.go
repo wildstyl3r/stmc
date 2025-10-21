@@ -7,49 +7,31 @@ import (
 	"os"
 	"slices"
 
-	"github.com/wildstyl3r/lxgata"
 	"github.com/wildstyl3r/stmc/internal/config"
 	"github.com/wildstyl3r/stmc/internal/constants"
 	"github.com/wildstyl3r/stmc/internal/model"
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
-func gammaIntegralF(m *model.Model) (gamma, gammaMargin float64) {
-	var maxIndex int
-	var density []float64
-	if m.Parameters.ParallelPlaneHollowCathode {
-		density = m.GetMetrics("GlowDischargeDensityPPHC").([]float64)
-	} else {
-		density = m.GetMetrics("SimplifiedGlowDischargeDensity").([]float64)
-	}
-	maxIndex = utils.Argmax(density)
-	if maxIndex == 0 { //may occur if the sheath occupies almost entire gap length or if there is too little ionizations
-		//either way the most realistic estimation of maximum for the task would be near the gap's end
-		maxIndex = len(density)
-	}
-
-	sumPerElectron := make([]float64, m.Parameters.NElectrons)
-	// gammaPerElectron := []float64{}
-	for e := range sumPerElectron {
-		for x := range maxIndex {
-			sumPerElectron[e] += float64(m.CollisionAtCell[lxgata.IONIZATION][x][e])
+func gammaIntegralF(m *model.Model, precision float64) (gamma, gammaMargin float64) {
+	m.Run(func(m *model.Model) int {
+		if m.TotalElectronsPassed == 0 {
+			return m.Parameters.NElectrons
+		} else {
+			sumMean, sumVariance := m.GetMetrics(SourceIntegralPerCathodeElectronFluxKey).(float64), m.GetMetrics(SourceIntegralPerCathodeElectronFluxVarianceKey).(float64)
+			sumMargin := utils.StudentedMargin(0.95, sumVariance, m.Parameters.NElectrons)
+			gamma = 1 / sumMean
+			gammaMargin = sumMargin / (sumMean * sumMean)
+			fmt.Printf("one step gamma CI: %f\n", gammaMargin)
+			if precision < 2*gammaMargin && precision != 0 {
+				return m.Parameters.AddByNElectrons
+			} else {
+				return 0
+			}
 		}
-		// if sumPerElectron[e] != 0 {
-		// 	gammaPerElectron = append(gammaPerElectron, 1/sumPerElectron[e])
-		// }
-	}
-
-	// gammaRMean := utils.Mean(gammaPerElectron)
-	// gammaRCI := utils.StudentedConfidenceInterval(0.95, gammaPerElectron)
-
-	sumMean, sumVariance := utils.MeanAndVariance(sumPerElectron, true)
-	sumConfidenceInterval := utils.NormalMargin(constants.Quantile95, sumVariance, m.Parameters.NElectrons)
-	gamma = 1 / sumMean
-	gammaMargin = sumConfidenceInterval / (sumMean * sumMean)
-	fmt.Printf("one step gamma CI: %f\n", gammaMargin)
+	})
 
 	return gamma, gammaMargin
-
 }
 
 // not applicable for UniformField
@@ -57,14 +39,14 @@ func gammaAnalyticF(dc, j, Vc, N float64, ionDriftVelocity func(float64, float64
 	return j*dc*dc/(2.*Vc*ionDriftVelocity(Vc, dc, N)*constants.FreeSpacePermittivityE0) - 1. //-> 0
 }
 
-func gammaWithLoss(model *model.Model) (lossValue, gi, ga, giConfInterval float64) {
+func gammaWithLoss(model *model.Model) (lossValue, gi, ga, giMargin float64) {
 	ga = gammaAnalyticF(
 		model.Parameters.CathodeFallLength,
 		model.Parameters.CathodeCurrentDensity,
 		model.Parameters.CathodeFallPotential,
 		model.Parameters.GasDensity,
 		utils.IonDriftVelocity[model.Parameters.Species])
-	gi, giConfInterval = gammaIntegralF(model)
+	gi, giMargin = gammaIntegralF(model, 0)
 	lossValue = ga - gi
 	return
 }
@@ -72,26 +54,31 @@ func gammaWithLoss(model *model.Model) (lossValue, gi, ga, giConfInterval float6
 func EstimateCathodeFallLengthLimits(parameters *config.ModelParameters) (from float64, to float64) {
 	var upperBound float64
 	if parameters.ParallelPlaneHollowCathode {
-		upperBound = parameters.CathodeFallLengthPrecision / 2
+		upperBound = parameters.GapLength / 2
 	} else {
-		upperBound = parameters.CathodeFallLengthPrecision
+		upperBound = parameters.GapLength
 	}
+	upperBound -= parameters.CathodeFallLengthPrecision * 0.01
+
+	lowerBound := 1e-9
 
 	from, _ = utils.BinarySearch(func(dc float64) bool {
-		return 0. < gammaAnalyticF(dc,
+		g := gammaAnalyticF(dc,
 			parameters.CathodeCurrentDensity,
 			parameters.CathodeFallPotential,
 			parameters.GasDensity,
 			utils.IonDriftVelocity[parameters.Species])
-	}, 1e-8, parameters.GapLength, upperBound*0.01)
+		return 0. < g
+	}, lowerBound, upperBound, parameters.CathodeFallLengthPrecision*0.01)
 
 	_, to = utils.BinarySearch(func(dc float64) bool {
-		return 1 < gammaAnalyticF(dc,
+		g := gammaAnalyticF(dc,
 			parameters.CathodeCurrentDensity,
 			parameters.CathodeFallPotential,
 			parameters.GasDensity,
-			utils.IonDriftVelocity[parameters.Species]) // might be false everywhere in the gap, but as close as possible to true domain
-	}, 0, parameters.GapLength, upperBound*0.01)
+			utils.IonDriftVelocity[parameters.Species])
+		return 1 < g // might be false everywhere in the gap, but as close as possible to true domain
+	}, lowerBound, upperBound, parameters.CathodeFallLengthPrecision*0.01)
 	return from, to
 }
 
@@ -107,7 +94,7 @@ func getApproximateCathodeFallLengthForGamma(gamma, minDc, maxDc float64, parame
 	return 0.5 * (initialDcL + initialDcR)
 }
 
-func gammaCalculationStep(itp *int, dc float64, parameters config.ModelParameters) (loss, gammaIntegral, gammaAnalytic, gammaConfInterval float64, stepModel *model.Model) {
+func gammaCalculationStep(itp *int, dc float64, parameters config.ModelParameters) (loss, gammaIntegral, gammaAnalytic, gammaIntegralMargin float64, stepModel *model.Model) {
 	if itp != nil {
 		fmt.Printf("step %d\n", *itp)
 		*itp += 1
@@ -117,8 +104,7 @@ func gammaCalculationStep(itp *int, dc float64, parameters config.ModelParameter
 	parameters.CathodeFallLength = dc
 	stepModel = model.NewModel(parameters)
 	LoadExtensions(stepModel.DataHub)
-	stepModel.Run()
-	loss, gammaIntegral, gammaAnalytic, gammaConfInterval = gammaWithLoss(stepModel)
+	loss, gammaIntegral, gammaAnalytic, gammaIntegralMargin = gammaWithLoss(stepModel)
 	if parameters.Verbose() {
 		fmt.Printf("d_c: %v\nsecondary emission coefficient\n\t integral: %6f\n\t analytic:%6f\n", dc, gammaIntegral, gammaAnalytic)
 	}
@@ -187,7 +173,7 @@ func bruteForceStepGammaCalculation(minDc, maxDc float64, itp *int, parameters c
 	gammaMean, gammaVariance := utils.MeanAndVariance(gamma, true)
 	intSMean, intSVariance := utils.MeanAndVariance(intS, true)
 	fmt.Printf("gamma mean: %.9f, gamma variance: %.9f, integral S mean: %.9f, integral S variance: %.9f\n", gammaMean, gammaVariance, intSMean, intSVariance)
-	err := utils.WriteAsCSV(debugData, outputDir, "debugGamma")
+	err := utils.WriteAsCSV(debugData, outputDir, "gamma_bruteforce")
 
 	if err != nil {
 		println("unable to save dc and secondary emission coefficient: ", err.Error())
@@ -214,13 +200,13 @@ func advancedGammaCalculation(minDc, maxDc float64, itp *int, parameters config.
 
 	// var dcConfInterval float64
 	minSteps, maxSteps := 10, 700
-	dc, _ = utils.StochasticApproximation(minDc, maxDc, initialDc, approxLossDerivative, parameters.CathodeFallLengthPrecision, 0.95, false, minSteps, maxSteps, func(dc float64) float64 {
+	dc, _ = utils.StochasticApproximation(minDc, maxDc, initialDc, approxLossDerivative, 0.001, 0.95, true, minSteps, maxSteps, func(dc float64) float64 {
 		gammaLoss, gammaIntegral, gammaAnalytic, lastStepGammaConfidenceInterval, finalModel = gammaCalculationStep(itp, dc, parameters)
 		gammaI = append(gammaI, gammaIntegral)
 		return gammaLoss
 	})
 	gammaIntegral = utils.Mean(gammaI[max(len(gammaI)-minSteps, len(gammaI)/4):])
-	gammaMargin = utils.StudentedMargin(0.95, gammaI[max(len(gammaI)-minSteps, len(gammaI)/4):])
+	gammaMargin = utils.StudentedMarginFromData(0.95, gammaI[max(len(gammaI)-minSteps, len(gammaI)/4):])
 	gammaLoss = gammaAnalytic - gammaIntegral
 
 	println("saved d_c and γ")

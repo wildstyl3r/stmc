@@ -4,60 +4,95 @@ import (
 	"math"
 
 	"github.com/wildstyl3r/lxgata"
-	"github.com/wildstyl3r/stmc/internal/constants"
 	"github.com/wildstyl3r/stmc/internal/model"
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
-const GlowDischargeDensityPPHCKey = "GlowDischargeDensityPPHC"
+func DensityPerCathodeElectronFluxPPHC(m *model.Model) ([]string, []any, error) {
+	ionizations := m.GetMetrics(model.DataHubKeyType(SingleElectronCollisionRateKey)).(map[lxgata.CollisionType]utils.GriddedInterval)[lxgata.IONIZATION]
 
-func GlowDischargeDensityPPHC(m *model.Model) ([]string, []any, error) {
-	ionizations := utils.GriddedInterval{
-		Values: m.GetMetrics(model.DataHubKeyType(NormalizedCollisionRateKey)).(map[lxgata.CollisionType][]float64)[lxgata.IONIZATION],
-		Step:   m.XStep}
-	// L = 2*H
-	// n(x) = ( A / 2D ) * ([-x] / ([2d] + [2H]) ) * ( [2H]{d,x}p - [2d]{x,H}p - [2(d+H)]{d,H}m - [2(x+d)]{d,x}m + [2(x+H)]{x,H}m + [2x]{d,H}p )
+	density := utils.GriddedInterval{
+		Step:   m.XStep,
+		Offset: ionizations.Offset,
+		Values: make([]float64, m.NumCells),
+	}
+	ambipolarDiffusionCoefficient := m.GetMetrics(AmbipolarDiffusionCoefficientKey).(float64)
 
-	var fluxAtCathode float64
-	if m.Parameters.CalculateCurrentDensity {
-		fluxAtCathode = 1 //dummy flux just to find density shape
+	if m.Parameters.DoNotAccountDiffusionLoss {
+		scaledIonizations := ionizations.Scale(1. / ambipolarDiffusionCoefficient)
+		C1, err := scaledIonizations.TrapezoidIntegration(m.Parameters.CathodeFallLength, m.Parameters.GapLength)
+		if err != nil {
+			return nil, nil, err
+		}
+		C2 := -C1 * m.Parameters.CathodeFallLength
+		for i := range density.Values {
+			x := float64(i) * m.XStep
+			integral, err := scaledIonizations.VariableLimitDoubleIntegration(m.Parameters.CathodeFallLength, x, m.XStep, m.Parameters.CathodeFallLength, func(f float64) float64 { return f })
+			if err != nil {
+				return nil, nil, err
+			}
+			density.Values[i] = max(0, -integral+C1*x+C2)
+		}
 	} else {
-		fluxAtCathode = m.Parameters.CathodeCurrentDensity / constants.ElementaryCharge
+		// L = 2*H
+		// n(x) = ( A / 2D ) * ([-x] / ([2d] + [2H]) ) * ( [2H]{d,x}p - [2d]{x,H}p - [2(d+H)]{d,H}m - [2(x+d)]{d,x}m + [2(x+H)]{x,H}m + [2x]{d,H}p )
+
+		Lambda := m.GetMetrics(CharacteristicDiffusionScaleKey).(float64)
+		powerFactor := 1. / Lambda
+		scaleFactor := Lambda / (2 * ambipolarDiffusionCoefficient)
+
+		expBrace := func(v float64) float64 {
+			return math.Exp(v * powerFactor)
+		}
+
+		exp2H, exp2d := expBrace(2*m.Parameters.GapLength), expBrace(2*m.Parameters.CathodeFallLength) //GapLength in case of PPHC is already halved in NewModel()
+		normDivisor := exp2d + exp2H
+
+		negExpBrace := func(x float64) float64 { return expBrace(-x) }
+		minusTerms := ionizations.MulPointwise(negExpBrace)
+		plusTerms := ionizations.MulPointwise(expBrace)
+
+		fullMIntegral, err := minusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, m.Parameters.GapLength)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		fullPIntegral, err := plusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, m.Parameters.GapLength)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		thirdOuterSumTerm := exp2H * exp2d * fullMIntegral
+
+		for i := range density.Values {
+			x := m.XStep * float64(i)
+			exp2x := expBrace(2 * x)
+			firstTerm, err := plusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, x)
+			if err != nil {
+				return nil, nil, err
+			}
+			secondTerm, err := plusTerms.TrapezoidIntegration(x, m.Parameters.GapLength)
+			if err != nil {
+				return nil, nil, err
+			}
+			fourthTerm, err := minusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, x)
+			if err != nil {
+				return nil, nil, err
+			}
+			fifthTerm, err := minusTerms.TrapezoidIntegration(x, m.Parameters.GapLength)
+			if err != nil {
+				return nil, nil, err
+			}
+			density.Values[i] = max(0, scaleFactor*expBrace(-x)/normDivisor*utils.SumFloat64Slice([]float64{
+				exp2H * firstTerm,
+				-exp2d * secondTerm,
+				-thirdOuterSumTerm,
+				-exp2x * exp2d * fourthTerm,
+				exp2x * exp2H * fifthTerm,
+				exp2x * fullPIntegral,
+			}))
+		}
 	}
 
-	Lambda := m.Parameters.TubeRadius / 2.4
-	powerFactor := 1. / Lambda
-	ambipolarDiffusionCoefficient := m.Parameters.IonMobility * m.Parameters.SlowElectronTemperature
-	scaleFactor := Lambda / (2 * ambipolarDiffusionCoefficient)
-
-	expBrace := func(v float64) float64 { return math.Exp(v * powerFactor) }
-
-	exp2H, exp2d := expBrace(2*m.Parameters.GapLength), expBrace(2*m.Parameters.CathodeFallLength) //GapLength in case of PPHC is already halved in NewModel()
-	normDivisor := exp2d + exp2H
-
-	minusTerms, plusTerms, density := make([]float64, len(ionizations.Values)), make([]float64, len(ionizations.Values)), make([]float64, len(ionizations.Values))
-
-	dIndex := int(math.Floor(m.Parameters.CathodeFallLength / m.XStep))
-	for i := dIndex; i < len(ionizations.Values); i++ {
-		x := m.XStep * float64(i)
-		minusTerms[i] = expBrace(-x) * ionizations.Interpolate(x)
-		plusTerms[i] = expBrace(x) * ionizations.Interpolate(x)
-	}
-
-	thirdOuterSumTerm := exp2H * exp2d * utils.SumFloat64Slice(minusTerms[dIndex:])
-	plusFullIntegral := utils.SumFloat64Slice(plusTerms[dIndex:])
-
-	for i := dIndex; i < len(density); i++ {
-		x := m.XStep * float64(i)
-		exp2x := expBrace(2 * x)
-		density[i] = max(0, fluxAtCathode*scaleFactor*expBrace(-x)/normDivisor*utils.SumFloat64Slice([]float64{
-			exp2H * utils.SumFloat64Slice(plusTerms[dIndex:i]),
-			-exp2d * utils.SumFloat64Slice(plusTerms[i:]),
-			thirdOuterSumTerm,
-			exp2x * exp2d * utils.SumFloat64Slice(minusTerms[dIndex:i]),
-			exp2x * exp2H * utils.SumFloat64Slice(minusTerms[i:]),
-			exp2x * plusFullIntegral,
-		}))
-	}
-	return []string{GlowDischargeDensityPPHCKey}, []any{density}, nil
+	return []string{DensityPerCathodeElectronFluxKey}, []any{density}, nil
 }

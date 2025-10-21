@@ -141,6 +141,7 @@ type ModelParameters struct {
 	EnergyStep, AngleStep                          float64 // [eV]
 	EnergyDiscretizationStep, MuDiscretizationStep float64
 	NElectrons                                     int
+	AddByNElectrons                                int
 	MakeDir                                        bool
 	ParallelPlaneHollowCathode                     bool
 	Volumetric                                     bool
@@ -148,10 +149,12 @@ type ModelParameters struct {
 	BackscatteringEnergyLossFraction               float64
 	// CalculateStdError                              bool
 
-	CalculateCathodeFallLength bool
-	CalculateCurrentDensity    bool
-	CalculateVoltage           bool
-	CathodeFallLengthPrecision float64
+	CalculateSecondaryEmissionCoefficient bool
+	CalculateCurrentDensity               bool
+	CalculateVoltage                      bool
+	DoNotAccountDiffusionLoss             bool
+	SimplifiedDiffusionScale              bool
+	CathodeFallLengthPrecision            float64
 
 	CountNulls            bool
 	CalculateDistribution bool
@@ -197,42 +200,42 @@ func (p *ModelParameters) GetScatteringMode() lxgata.ScatteringMode {
 }
 
 var defaultValues = map[string]any{ // in SI-eV
-	"CathodeCurrentDensity":      0.0284,         //[A / m^2]
-	"Pressure":                   101325. / 760., //[Pa]
-	"UniformField":               false,
-	"ConstEField":                -100., //[V/m]
-	"FieldSmoothingEpsilon":      0.001, //[m]
-	"Temperature":                300.,  //[K]
-	"CathodeFallLengthPrecision": 1e-4,  //[m]
-	"EnergyStep":                 0.005, //[eV]
-	"AngleStep":                  45.,
-	"NElectrons":                 1000,
-	"MakeDir":                    true,
-	"ParallelPlaneHollowCathode": false,
-	"CalculateCathodeFallLength": false,
-	"CalculateCurrentDensity":    false,
-	"Volumetric":                 false,
-	"CountNulls":                 false,
-	"EnergyDiscretizationStep":   0.1,
-	"MuDiscretizationStep":       1 / 90.,
+	"CathodeCurrentDensity":                 0.0284,         //[A / m^2]
+	"Pressure":                              101325. / 760., //[Pa]
+	"UniformField":                          false,
+	"ConstEField":                           -100., //[V/m]
+	"FieldSmoothingEpsilon":                 0.001, //[m]
+	"Temperature":                           300.,  //[K]
+	"CathodeFallLengthPrecision":            1e-4,  //[m]
+	"EnergyStep":                            0.005, //[eV]
+	"AngleStep":                             45.,
+	"NElectrons":                            1000,
+	"MakeDir":                               true,
+	"ParallelPlaneHollowCathode":            false,
+	"CalculateSecondaryEmissionCoefficient": false,
+	"CalculateCurrentDensity":               false,
+	"Volumetric":                            false,
+	"CountNulls":                            false,
+	"EnergyDiscretizationStep":              0.1,
+	"MuDiscretizationStep":                  1 / 90.,
 }
 
 var fieldsXor = map[string][]string{
-	"CalculateCathodeFallLength": {"CathodeFallLength", "CalculateCurrentDensity", "CalculateVoltage"},
-	"CalculateCurrentDensity":    {"CathodeFallLength", "CalculateCathodeFallLength", "CathodeCurrentDensity", "CathodeCurrent", "CalculateVoltage"},
-	"CalculateVoltage":           {"CathodeFallPotential", "CalculateCathodeFallLength", "CalculateCurrentDensity"},
-	"CathodeFallLength":          {"CalculateCathodeFallLength"},
-	"PressureGapLength":          {"Pressure"},
-	"Pressure":                   {"PressureGapLength"},
+	"CalculateSecondaryEmissionCoefficient": {"CathodeFallLength", "CalculateCurrentDensity", "CalculateVoltage"},
+	"CalculateCurrentDensity":               {"CathodeFallLength", "CalculateSecondaryEmissionCoefficient", "CathodeCurrentDensity", "CathodeCurrent", "CalculateVoltage"},
+	"CalculateVoltage":                      {"CathodeFallPotential", "CalculateSecondaryEmissionCoefficient", "CalculateCurrentDensity"},
+	"CathodeFallLength":                     {"CalculateSecondaryEmissionCoefficient"},
+	"PressureGapLength":                     {"Pressure"},
+	"Pressure":                              {"PressureGapLength"},
 }
 
 var fieldsAnd = map[string][]string{
-	"Volumetric":                 {"CathodeRadius"},
-	"CathodeCurrent":             {"CathodeRadius"},
-	"CalculateCathodeFallLength": {"Species"},
-	"CalculateCurrentDensity":    {"Species", "SecondaryEmissionCoefficient"},
-	"CalculateVoltage":           {"Species", "SecondaryEmissionCoefficient"},
-	"PressureGapLength":          {"GapLength"},
+	"Volumetric":                            {"CathodeRadius"},
+	"CathodeCurrent":                        {"CathodeRadius"},
+	"CalculateSecondaryEmissionCoefficient": {"Species"},
+	"CalculateCurrentDensity":               {"Species", "SecondaryEmissionCoefficient"},
+	"CalculateVoltage":                      {"Species", "SecondaryEmissionCoefficient"},
+	"PressureGapLength":                     {"GapLength"},
 }
 var fieldsDerivable map[string][]string = map[string][]string{
 	"CathodeCurrent":    {"CathodeCurrentDensity"},

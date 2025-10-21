@@ -48,8 +48,7 @@ func voltageCalculationStep(itp *int, dc float64, parameters config.ModelParamet
 		parameters.Species)
 	stepModel = model.NewModel(parameters)
 	LoadExtensions(stepModel.DataHub)
-	stepModel.Run()
-	gammaIntegral, gammaConfInterval = gammaIntegralF(stepModel)
+	gammaIntegral, gammaConfInterval = gammaIntegralF(stepModel, 0)
 	loss = gammaIntegral - parameters.SecondaryEmissionCoefficient
 	if parameters.Verbose() {
 		fmt.Printf("d_c: %v\nsecondary emission coefficient\n\t integral: %6f\n", dc, gammaIntegral)
@@ -144,8 +143,8 @@ func advancedVoltageCalculation(minDc, maxDc float64, itp *int, parameters confi
 	approxLossDerivative := (fRightLoss - fLeftLoss) / (maxDc - minDc - 2*parameters.CathodeFallLengthPrecision)
 
 	// var dcConfInterval float64
-	minSteps, maxSteps := 10, 700
-	dc, _ = utils.StochasticApproximation(minDc, maxDc, initialDc, approxLossDerivative, 0.01, 0.95, true, minSteps, maxSteps, func(dc float64) float64 {
+	minSteps, maxSteps := 10, 300
+	dc, _ = utils.StochasticApproximation(minDc, maxDc, initialDc, approxLossDerivative, 0.001, 0.95, true, minSteps, maxSteps, func(dc float64) float64 {
 		gammaLoss, gammaIntegral, _, finalModel = voltageCalculationStep(itp, dc, parameters)
 		gammaI = append(gammaI, gammaIntegral)
 		return gammaLoss

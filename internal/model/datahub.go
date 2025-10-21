@@ -40,6 +40,10 @@ func (model *Model) GetMetrics(name DataHubKeyType) any {
 	}
 }
 
+func (model *Model) PurgeMetrics() {
+	model.DataHub.data = make(DataMapType)
+}
+
 func (model *Model) ApplyToMetrics(name DataHubKeyType, f func(any) any) {
 	if value, exists := model.DataHub.data[name]; exists {
 		model.DataHub.data[name] = f(value)

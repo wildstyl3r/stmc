@@ -164,12 +164,12 @@ func NewDataFlags() DataFlags {
 			},
 			NormalizedCollisionCounters: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("ncc", true, "save normalized collision counters"),
+					SaveFlag:   flag.Bool("ncc", true, "save single-electron collision counters divided by pressure"),
 					fileSuffix: "ncc",
 				},
 				values: func(model *model.Model) (files []DataFile) {
-					collisions := model.GetMetrics(extensions.NormalizedCollisionRateKey).(map[lxgata.CollisionType][]float64)
-					collisionsMargin := model.GetMetrics(extensions.NormalizedCollisionRateMarginKey).(map[lxgata.CollisionType][]float64)
+					collisions := model.GetMetrics(extensions.SingleElectronCollisionRateKey).(map[lxgata.CollisionType]utils.GriddedInterval)
+					collisionsMargin := model.GetMetrics(extensions.SingleElectronCollisionRateMarginKey).(map[lxgata.CollisionType]utils.GriddedInterval)
 					for label := range collisions {
 						dataFile := DataFile{
 							metricsName:   NormalizedCollisionCounters + "/" + string(label),
@@ -180,8 +180,8 @@ func NewDataFlags() DataFlags {
 						}
 						for x := range model.NumCells {
 							dataFile.data[x].index = model.XStep * (float64(x) + 0.5)
-							dataFile.data[x].value = collisions[lxgata.CollisionType(label)][x]
-							dataFile.data[x].margin = collisionsMargin[lxgata.CollisionType(label)][x]
+							dataFile.data[x].value = collisions[lxgata.CollisionType(label)].Values[x] / model.Parameters.Pressure
+							dataFile.data[x].margin = collisionsMargin[lxgata.CollisionType(label)].Values[x] / model.Parameters.Pressure
 						}
 						files = append(files, dataFile)
 					}
@@ -196,9 +196,9 @@ func NewDataFlags() DataFlags {
 					fileSuffix: "cc",
 				},
 				values: func(model *model.Model) (files []DataFile) {
-					collisions := model.GetMetrics(extensions.NormalizedCollisionRateKey).(map[lxgata.CollisionType][]float64)
-					collisionsMargin := model.GetMetrics(extensions.NormalizedCollisionRateMarginKey).(map[lxgata.CollisionType][]float64)
-					fluxAtCathdode := model.Parameters.CathodeCurrentDensity / constants.ElementaryCharge // [m^-2s^-1]
+					collisions := model.GetMetrics(extensions.SingleElectronCollisionRateKey).(map[lxgata.CollisionType]utils.GriddedInterval)
+					collisionsMargin := model.GetMetrics(extensions.SingleElectronCollisionRateMarginKey).(map[lxgata.CollisionType]utils.GriddedInterval)
+					fluxAtCathdode := model.GetMetrics(extensions.CathodeElectronFluxKey).(float64)
 					for label := range collisions {
 						dataFile := DataFile{
 							metricsName:   CollisionCounters + "/" + string(label),
@@ -209,8 +209,8 @@ func NewDataFlags() DataFlags {
 						}
 						for x := range model.NumCells {
 							dataFile.data[x].index = model.XStep * (float64(x) + 0.5)
-							dataFile.data[x].value = collisions[lxgata.CollisionType(label)][x] * fluxAtCathdode * model.Parameters.Pressure
-							dataFile.data[x].margin = collisionsMargin[lxgata.CollisionType(label)][x] * fluxAtCathdode * model.Parameters.Pressure
+							dataFile.data[x].value = collisions[lxgata.CollisionType(label)].Values[x] * fluxAtCathdode * model.Parameters.Pressure
+							dataFile.data[x].margin = collisionsMargin[lxgata.CollisionType(label)].Values[x] * fluxAtCathdode * model.Parameters.Pressure
 						}
 						files = append(files, dataFile)
 					}
@@ -289,7 +289,7 @@ func NewDataFlags() DataFlags {
 			// },
 			PlasmaDensity: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("n", false, "save plasma density"),
+					SaveFlag:   flag.Bool("n", true, "save plasma density"),
 					fileSuffix: "n",
 				},
 				values: func(model *model.Model) []DataFile {
@@ -299,15 +299,10 @@ func NewDataFlags() DataFlags {
 						valueName:   fmt.Sprintf("(%s^{-3})", model.Parameters.OutputUnit(config.Length)),
 						data:        make([]Row, model.NumCells),
 					}
-					var density []float64
-					if model.Parameters.ParallelPlaneHollowCathode {
-						density = model.GetMetrics("GlowDischargeDensityPPHC").([]float64)
-					} else {
-						density = model.GetMetrics("GlowDischargeDensity").([]float64)
-					}
+					density := model.GetMetrics("GlowDischargeDensity").(utils.GriddedInterval)
 					for x := range model.NumCells {
 						dataFile.data[x].index = model.XStep * (float64(x) + 0.5)
-						dataFile.data[x].value = density[x]
+						dataFile.data[x].value = density.Values[x]
 					}
 					return []DataFile{dataFile}
 				},

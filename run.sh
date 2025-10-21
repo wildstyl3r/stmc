@@ -1,5 +1,5 @@
 #!/bin/bash
 for filename in inputs/$1/*$2*.toml; do
     echo $filename
-    go run . -i=$filename
+    go run . -i=$filename $3
 done

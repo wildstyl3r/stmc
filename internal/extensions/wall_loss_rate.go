@@ -17,7 +17,7 @@ func NormalizedWallLossRate(model *model.Model) ([]string, []any, error) {
 	for xIndex := range model.NumCells {
 		xWallLossesMean, xWallLossesVariance := utils.MeanAndVariance(model.WallLossAtCell[xIndex], true)
 		wallLosses[xIndex] = xWallLossesMean / (model.XStep * model.Parameters.Pressure)
-		wallLossesMargin[xIndex] = utils.NormalMargin(constants.Quantile95, xWallLossesVariance, model.Parameters.NElectrons) / (model.XStep * model.Parameters.Pressure)
+		wallLossesMargin[xIndex] = utils.NormalMargin(constants.Quantile95, xWallLossesVariance, model.TotalElectronsPassed) / (model.XStep * model.Parameters.Pressure)
 	}
 	return []string{NormalizedWallLossRateKey, NormalizedWallLossRateMarginKey}, []any{wallLosses, wallLossesMargin}, nil
 }

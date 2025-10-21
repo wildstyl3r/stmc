@@ -18,9 +18,10 @@ type Particle struct {
 	prevX           float64
 	prevMuSign      float64
 	// params
-	eStar             float64 //[eV]
-	totEnergy         float64 //aka Vcap
-	_debug_IonEjected bool
+	eStar                  float64 //[eV]
+	totEnergy              float64 //aka Vcap
+	_debug_IonEjected      bool
+	ppHollowCathodeFarSide bool
 
 	origin int
 }
