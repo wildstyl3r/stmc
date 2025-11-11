@@ -4,17 +4,15 @@ import (
 	"math"
 
 	"github.com/wildstyl3r/lxgata"
-	"github.com/wildstyl3r/stmc/internal/constants"
 	"github.com/wildstyl3r/stmc/internal/model"
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
 const (
-	GlowDischargeDensityKey                         = "GlowDischargeDensity"
-	CathodeElectronFluxKey                          = "CathodeElectronFlux"
-	CathodeElectronFluxMarginKey                    = "CathodeElectronFluxMargin"
-	CathodeIonFluxKey                               = "CathodeIonFlux"
-	CathodeIonFluxMarginKey                         = "CathodeIonFluxMargin"
+	CathodeElectronCurrentFractionKey               = "CathodeElectronFlux"
+	CathodeElectronCurrentFractionMarginKey         = "CathodeElectronFluxMargin"
+	CathodeIonCurrentFractionKey                    = "CathodeIonFlux"
+	CathodeIonCurrentFractionMarginKey              = "CathodeIonFluxMargin"
 	FirstDensityPeakIndexKey                        = "FirstDensityPeakIndex"
 	SourceIntegralPerCathodeElectronFluxKey         = "SingleElectronSourceIntegral"
 	SourceIntegralPerCathodeElectronFluxVarianceKey = "SingleElectronSourceIntegralMargin"
@@ -35,7 +33,7 @@ func DensityPerCathodeElectronFlux(m *model.Model) ([]string, []any, error) {
 		Values: make([]float64, m.NumCells),
 	}
 
-	if m.Parameters.DoNotAccountDiffusionLoss {
+	if m.Parameters.NoDiffusionLoss {
 		// n(x) = -int{int{S(h),d,chi},d, x} + c1*x + c2
 		scaledIonizations := ionizations.Scale(1. / ambipolarDiffusionCoefficient)
 		C1, err := scaledIonizations.VariableLimitDoubleIntegration(m.Parameters.CathodeFallLength, m.Parameters.GapLength, m.XStep, 0, func(x float64) float64 { return x })
@@ -109,6 +107,9 @@ func DensityPerCathodeElectronFlux(m *model.Model) ([]string, []any, error) {
 			if math.IsInf(density.Values[i], 0) {
 				panic("n(x) is Inf")
 			}
+			if math.IsNaN(density.Values[i]) {
+				println("n(x) is NaN")
+			}
 		}
 	}
 	return []string{DensityPerCathodeElectronFluxKey}, []any{density}, nil
@@ -119,61 +120,57 @@ func GlowDischargeDensity(m *model.Model) ([]string, []any, error) {
 	densityPerCathodeElectronFlux := m.GetMetrics(model.DataHubKeyType(DensityPerCathodeElectronFluxKey)).(utils.GriddedInterval)
 	firstDensityPeak := utils.ArgFirstPeak(densityPerCathodeElectronFlux.Values)
 	densityPerCathodeElectronFlux.Values = append(densityPerCathodeElectronFlux.Values, densityPerCathodeElectronFlux.Values[len(densityPerCathodeElectronFlux.Values)-1])
-
-	sumPerElectron := make([]int, m.TotalElectronsPassed)
-	for e := range sumPerElectron {
-		for x := range firstDensityPeak {
-			sumPerElectron[e] += int(m.CollisionAtCell[lxgata.IONIZATION][x][e])
-		}
-		// j/q = phi_{e0} * (1 + \int_0^x_m { S_n(x) } dx)
-		sumPerElectron[e] += 1
-	}
-	sumPlus1Mean, sumVariance := utils.MeanAndVariance(sumPerElectron, true)
+	// 	// j/q = phi_{e0} * (1 + \int_0^x_m { S_n(x) } dx)
+	sumMean, sumVariance := m.IonizationsSumUpToCell[firstDensityPeak-1].MeanAndVariance()
+	aggPlus1 := m.IonizationsSumUpToCell[firstDensityPeak-1]
+	aggPlus1.Sum += m.TotalElectronsEmittedOnCathode
+	sumPlus1Mean := aggPlus1.Mean()
 
 	diffusionLoss := 0.
-	if !m.Parameters.DoNotAccountDiffusionLoss {
+	if !m.Parameters.NoDiffusionLoss {
 		xm := densityPerCathodeElectronFlux.Step * float64(firstDensityPeak)
 		d2MDensityIntegral, err := densityPerCathodeElectronFlux.TrapezoidIntegration(m.Parameters.CathodeFallLength, xm)
 		if err != nil {
 			return nil, nil, err
 		}
-		Lambda := m.Parameters.CathodeRadius / 2.4
-		ambipolarDiffusionCoefficient := m.Parameters.IonMobility * m.Parameters.SlowElectronTemperature
+		Lambda := m.GetMetrics(CharacteristicDiffusionScaleKey).(float64)
+		ambipolarDiffusionCoefficient := m.GetMetrics(AmbipolarDiffusionCoefficientKey).(float64)
 		diffusionLoss = ambipolarDiffusionCoefficient * d2MDensityIntegral / (Lambda * Lambda)
 
 	}
 	sumPlus1Mean -= diffusionLoss
+	sumMean -= diffusionLoss
 
 	//now sumPlus1Mean is 1 + 1/gamma with respect to abmipolar diffusion losses, that is 1 + integral(S(x) - D_a*n(x)/Lambda^2, 0, x0)
 
-	sumMargin := utils.StudentedMargin(0.95, sumVariance, m.TotalElectronsPassed)
-	cathodeElectronFlux := m.Parameters.CathodeCurrentDensity / (constants.ElementaryCharge * sumPlus1Mean)
-	cathodeElectronFluxMargin := m.Parameters.CathodeCurrentDensity * sumMargin / (constants.ElementaryCharge * sumPlus1Mean * sumPlus1Mean)
-	density := densityPerCathodeElectronFlux.Scale(cathodeElectronFlux)
+	sumMargin := utils.EstimateMargin(0.95, sumVariance, m.TotalElectronsEmittedOnCathode)
+	var electronCurrentFraction, electronCurrentFractionMargin float64
+	electronCurrentFraction = 1. / sumPlus1Mean
+	electronCurrentFractionMargin = sumMargin / (sumPlus1Mean * sumPlus1Mean)
 
-	for e := range sumPerElectron {
-		sumPerElectron[e] -= 1 // probably unnecessary measure against additive numeric error
-	} //variance does not change after that act
-	sumMean := utils.Mean(sumPerElectron) - diffusionLoss
+	// _sumMean, _sumVariance := m.IonizationsSumUpToCell[firstDensityPeak-1].MeanAndVariance()
+	// fmt.Printf("aggregated sum mean and variance: [%f; %f], native: [%f, %f]\n", _sumMean, _sumVariance, utils.Mean(sumPerElectron), sumVariance)
 
-	cathodeIonFlux := -cathodeElectronFlux * sumMean
-	cathodeIonFluxMargin := cathodeElectronFluxMargin * sumMean
+	if math.IsNaN(sumMean) {
+		println("ionization integral is nan")
+	}
+
+	cathodeIonCurrentFraction := sumMean / sumPlus1Mean
+	cathodeIonCurrentFractionMargin := electronCurrentFractionMargin * sumMean
 
 	return []string{
-			GlowDischargeDensityKey,
-			CathodeElectronFluxKey,
-			CathodeElectronFluxMarginKey,
-			CathodeIonFluxKey,
-			CathodeIonFluxMarginKey,
+			CathodeElectronCurrentFractionKey,
+			CathodeElectronCurrentFractionMarginKey,
+			CathodeIonCurrentFractionKey,
+			CathodeIonCurrentFractionMarginKey,
 			FirstDensityPeakIndexKey,
 			SourceIntegralPerCathodeElectronFluxKey,
 			SourceIntegralPerCathodeElectronFluxVarianceKey,
 		}, []any{
-			density,
-			cathodeElectronFlux,
-			cathodeElectronFluxMargin,
-			cathodeIonFlux,
-			cathodeIonFluxMargin,
+			electronCurrentFraction,
+			electronCurrentFractionMargin,
+			cathodeIonCurrentFraction,
+			cathodeIonCurrentFractionMargin,
 			firstDensityPeak,
 			sumMean,
 			sumVariance,

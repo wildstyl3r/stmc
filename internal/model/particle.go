@@ -18,10 +18,9 @@ type Particle struct {
 	prevX           float64
 	prevMuSign      float64
 	// params
-	eStar                  float64 //[eV]
-	totEnergy              float64 //aka Vcap
-	_debug_IonEjected      bool
-	ppHollowCathodeFarSide bool
+	eStar             float64 //[eV]
+	totEnergy         float64 //aka Vcap
+	_debug_IonEjected bool
 
 	origin int
 }
@@ -62,7 +61,13 @@ func (p *Particle) getAxialEnergyAtSheathBoundary(m *Model) float64 {
 	return p.totEnergy - m.Va - p.eStar
 }
 
+func (p *Particle) constEXAtTime(t float64, s *Model) (x float64) {
+	return p.x + utils.EV2electronVelocity(p.getAxialEnergy())*t + s.constFieldAcceleration*t*t/2
+}
+
 func (p *Particle) setEnergy(eKinetic float64, s *Model, zeroChangeAcceptable bool, setX bool) {
+	// p.MoveRadial(eKinetic, s, zeroChangeAcceptable)
+	// r2 := p.y*p.y + p.z*p.z
 	if eKinetic < p.eStar {
 		stopPotential := -p.getStopPotential()
 		fmt.Printf("stopPoint = %f\np: %v; %p\n", s.LfromV(stopPotential), p, p)
@@ -86,6 +91,9 @@ func (p *Particle) setEnergy(eKinetic float64, s *Model, zeroChangeAcceptable bo
 	if setX {
 		p.x = s.LfromV(-p.getPotentialEnergy())
 	}
+	if s.Parameters.Volumetric {
+		p.updateExtraDims(s)
+	}
 }
 
 func (p *Particle) recalcParams(s *Model) {
@@ -96,6 +104,7 @@ func (p *Particle) recalcParams(s *Model) {
 		return
 	}
 	p.eStar = p.eKinetic * (1 - p.mu*p.mu)
+	// r2 := p.y*p.y + p.z*p.z
 	p.totEnergy = p.eKinetic + -s.VfromL(p.x)
 	if p.totEnergy < 0. {
 		panic("total energy below 0")
@@ -145,14 +154,14 @@ func (p *Particle) getTimeIntervalsBetweenPositionsNoReversal(x1, x2, axialEnerg
 		timeIntervals = append(timeIntervals, m.ConstEFieldTime(axialEnergy1_eV, axialEnergy2_eV))
 	} else if x1 < m.Parameters.CathodeFallLength && m.Parameters.CathodeFallLength < x2 { // crossing sheath boundary accelerating
 		sheathBoundaryAxialEnergy := p.getAxialEnergyAtSheathBoundary(m)
-		timeIntervals = append(timeIntervals, m.SheathTime(x1, m.Parameters.CathodeFallLength, axialEnergy1_eV, sheathBoundaryAxialEnergy))
+		timeIntervals = append(timeIntervals, m.SheathTime(x1, axialEnergy1_eV, sheathBoundaryAxialEnergy))
 		timeIntervals = append(timeIntervals, m.ConstEFieldTime(sheathBoundaryAxialEnergy, axialEnergy2_eV))
 	} else if x2 < m.Parameters.CathodeFallLength && m.Parameters.CathodeFallLength < x1 { //crossing sheath boundary decelerating
 		sheathBoundaryAxialEnergy := p.getAxialEnergyAtSheathBoundary(m)
 		timeIntervals = append(timeIntervals, m.ConstEFieldTime(axialEnergy1_eV, sheathBoundaryAxialEnergy))
-		timeIntervals = append(timeIntervals, m.SheathTime(m.Parameters.CathodeFallLength, x2, sheathBoundaryAxialEnergy, axialEnergy2_eV))
+		timeIntervals = append(timeIntervals, m.SheathTime(m.Parameters.CathodeFallLength, sheathBoundaryAxialEnergy, axialEnergy2_eV))
 	} else { // in the sheath
-		timeIntervals = append(timeIntervals, m.SheathTime(x1, x2, axialEnergy1_eV, axialEnergy2_eV))
+		timeIntervals = append(timeIntervals, m.SheathTime(x1, axialEnergy1_eV, axialEnergy2_eV))
 	}
 	return
 }

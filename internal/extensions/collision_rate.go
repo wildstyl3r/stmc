@@ -7,32 +7,76 @@ import (
 )
 
 const (
-	SingleElectronCollisionRateKey       = "NormalizedCollisionRate"
-	SingleElectronCollisionRateMarginKey = "NormalizedCollisionRateMargin"
-	TotalCollisionsKey                   = "TotalCollisions"
+	SingleElectronCollisionRateKey         = "SingleElectronCollisionRate"
+	SingleElectronCollisionRateMarginKey   = "SingleElectronCollisionRateMargin"
+	SingleElectronCollisionsOutsideKey     = "SingleElectronCollisionsOutside"
+	SingleElectronDetailedCollisionRateKey = "SingleElectronDetailedCollisionRate"
+	// SingleElectronDetailedCollisionRateLowerMarginKey = "SingleElectronDetailedCollisionRateLowerMargin"
+	// SingleElectronDetailedCollisionRateUpperMarginKey = "SingleElectronDetailedCollisionRateUpperMargin"
 )
 
-func NormalizedCollisionRate(model *model.Model) ([]string, []any, error) {
+func SingleElectronCollisionRate(model *model.Model) ([]string, []any, error) {
 	collisions := map[lxgata.CollisionType]utils.GriddedInterval{}
 	collisionsMargin := map[lxgata.CollisionType]utils.GriddedInterval{}
-	collCounters := map[lxgata.CollisionType]float64{}
-	for key, val := range model.CollisionAtCell {
-		if model.CollisionAtCell[key] != nil {
-			currentCollisions := utils.GriddedInterval{Values: make([]float64, model.NumCells), Step: model.XStep}
-			currentMargins := utils.GriddedInterval{Values: make([]float64, model.NumCells), Step: model.XStep}
+	collisionsOutside := map[lxgata.CollisionType]utils.GriddedInterval{}
+	detailedCollisions := map[string]utils.GriddedInterval{}
+	// detailedCollisionsLowerMargin := map[string]utils.GriddedInterval{}
+	// detailedCollisionsUpperMargin := map[string]utils.GriddedInterval{}
+	for collType, distribution := range model.CollisionAtCell {
+		if model.CollisionAtCell[collType] != nil {
+			collisionsOfType := utils.GriddedInterval{Values: make([]float64, model.NumCells), Step: model.XStep}
+			marginsOfType := utils.GriddedInterval{Values: make([]float64, model.NumCells), Step: model.XStep}
+			outside := utils.GriddedInterval{Values: make([]float64, model.NumCells), Step: model.XStep}
 			for xIndex := range model.NumCells {
-				xCollisionsMean, xCollisionsVariance := utils.MeanAndVariance(val[xIndex], true)
-				currentCollisions.Values[xIndex] = xCollisionsMean / model.XStep
-				currentMargins.Values[xIndex] = utils.StudentedMargin(0.95, xCollisionsVariance, model.TotalElectronsPassed) / model.XStep
+				xCollisionsMean, xCollisionsVariance := distribution[xIndex].MeanAndVariance()
+				collisionsOfType.Values[xIndex] = xCollisionsMean / model.XStep
+				marginsOfType.Values[xIndex] = utils.EstimateMargin(0.95, xCollisionsVariance, model.TotalElectronsEmittedOnCathode) / model.XStep
 				// 1.96 is double-sided quantile for 95% confidence
-				collCounters[key] += float64(utils.SumIntSlice(model.CollisionAtCell[key][xIndex]))
+				outside.Values[xIndex] = model.CollisionOutside[collType][xIndex].Mean()
 			}
-			currentCollisions.Values = append(currentCollisions.Values, currentCollisions.Values[len(currentCollisions.Values)-1])
-			currentMargins.Values = append(currentMargins.Values, currentMargins.Values[len(currentMargins.Values)-1])
-			collisions[key] = currentCollisions
-			collisionsMargin[key] = currentMargins
-			collCounters[key] /= float64(model.TotalElectronsPassed)
+			collisionsOfType.Values = append(collisionsOfType.Values, collisionsOfType.Values[len(collisionsOfType.Values)-1])
+			collisionsOfType.Values = append(collisionsOfType.Values, collisionsOfType.Values[len(collisionsOfType.Values)-1])
+			marginsOfType.Values = append(marginsOfType.Values, marginsOfType.Values[len(marginsOfType.Values)-1])
+			marginsOfType.Values = append(marginsOfType.Values, marginsOfType.Values[len(marginsOfType.Values)-1])
+			collisions[collType] = collisionsOfType
+			collisionsOutside[collType] = outside
+			collisionsMargin[collType] = marginsOfType
 		}
 	}
-	return []string{SingleElectronCollisionRateKey, SingleElectronCollisionRateMarginKey, TotalCollisionsKey}, []any{collisions, collisionsMargin, collCounters}, nil
+	for key, val := range model.DetailedCollisionAtCell {
+		if model.DetailedCollisionAtCell[key] != nil {
+			currentCollisions := utils.GriddedInterval{Values: make([]float64, model.NumCells), Step: model.XStep}
+			// lowerMargins := utils.GriddedInterval{Values: make([]float64, model.NumCells), Step: model.XStep}
+			// upperMargins := utils.GriddedInterval{Values: make([]float64, model.NumCells), Step: model.XStep}
+			for xIndex := range model.NumCells {
+				xCollisionsMean := val[xIndex].Mean()
+				currentCollisions.Values[xIndex] = xCollisionsMean / model.XStep
+				// lm, um := utils.PoissonMargin(0.99, val[xIndex])
+				// lowerMargins.Values[xIndex] = lm
+				// upperMargins.Values[xIndex] = um
+				// 1.96 is double-sided quantile for 95% confidence
+			}
+			currentCollisions.Values = append(currentCollisions.Values, currentCollisions.Values[len(currentCollisions.Values)-1])
+			// lowerMargins.Values = append(lowerMargins.Values, lowerMargins.Values[len(lowerMargins.Values)-1])
+			detailedCollisions[key] = currentCollisions
+			// detailedCollisionsLowerMargin[key] = lowerMargins
+			// detailedCollisionsUpperMargin[key] = upperMargins
+		}
+	}
+
+	return []string{
+			SingleElectronCollisionRateKey,
+			SingleElectronCollisionRateMarginKey,
+			SingleElectronDetailedCollisionRateKey,
+			// SingleElectronDetailedCollisionRateLowerMarginKey,
+			// SingleElectronDetailedCollisionRateUpperMarginKey,
+			SingleElectronCollisionsOutsideKey,
+		}, []any{
+			collisions,
+			collisionsMargin,
+			detailedCollisions,
+			// detailedCollisionsLowerMargin,
+			// detailedCollisionsUpperMargin,
+			collisionsOutside,
+		}, nil
 }

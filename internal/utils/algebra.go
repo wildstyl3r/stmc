@@ -70,3 +70,26 @@ func (l Mat2D) MulVec(r Vec2D) Vec2D {
 		l.a*r.X + l.b*r.Y,
 		l.c*r.X + l.d*r.Y}
 }
+
+// type Mat3D struct {
+// 	a, b, c float64
+// 	d, e, f float64
+// 	g, h, i float64
+// }
+
+// func (m *Mat3D) Det() float64 {
+// 	return m.a*m.e*m.i + m.b*m.f*m.g + m.d*m.h*m.c - m.c*m.e*m.g - m.b*m.d*m.i - m.f*m.h*m.a
+// }
+
+// func (m *Mat3D) Inverse() Mat3D {
+// 	invDet := 1 / m.Det()
+// 	return Mat3D{
+// 		m.d * invDet, -m.b * invDet,
+// 		-m.c * invDet, m.a * invDet}
+// }
+
+// func (l Mat3D) MulVec(r Vec3D) Vec3D {
+// 	return Vec3D{
+// 		l.a*r.X + l.b*r.Y,
+// 		l.c*r.X + l.d*r.Y}
+// }

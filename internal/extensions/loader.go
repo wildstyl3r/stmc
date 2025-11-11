@@ -6,9 +6,12 @@ import (
 
 func LoadExtensions(dh *model.DataHubType) {
 	extensions := map[string]model.Extension{
-		SingleElectronCollisionRateKey:       NormalizedCollisionRate,
-		SingleElectronCollisionRateMarginKey: NormalizedCollisionRate,
-		TotalCollisionsKey:                   NormalizedCollisionRate,
+		SingleElectronCollisionRateKey:         SingleElectronCollisionRate,
+		SingleElectronCollisionRateMarginKey:   SingleElectronCollisionRate,
+		SingleElectronCollisionsOutsideKey:     SingleElectronCollisionRate,
+		SingleElectronDetailedCollisionRateKey: SingleElectronCollisionRate,
+		// SingleElectronDetailedCollisionRateLowerMarginKey: SingleElectronCollisionRate,
+		// SingleElectronDetailedCollisionRateUpperMarginKey: SingleElectronCollisionRate,
 
 		NormalizedWallLossRateKey:       NormalizedWallLossRate,
 		NormalizedWallLossRateMarginKey: NormalizedWallLossRate,
@@ -17,11 +20,10 @@ func LoadExtensions(dh *model.DataHubType) {
 		CharacteristicDiffusionScaleKey:  DiffusionConstants,
 
 		DensityPerCathodeElectronFluxKey:                DensityPerCathodeElectronFlux,
-		GlowDischargeDensityKey:                         GlowDischargeDensity,
-		CathodeElectronFluxKey:                          GlowDischargeDensity,
-		CathodeElectronFluxMarginKey:                    GlowDischargeDensity,
-		CathodeIonFluxKey:                               GlowDischargeDensity,
-		CathodeIonFluxMarginKey:                         GlowDischargeDensity,
+		CathodeElectronCurrentFractionKey:               GlowDischargeDensity,
+		CathodeElectronCurrentFractionMarginKey:         GlowDischargeDensity,
+		CathodeIonCurrentFractionKey:                    GlowDischargeDensity,
+		CathodeIonCurrentFractionMarginKey:              GlowDischargeDensity,
 		FirstDensityPeakIndexKey:                        GlowDischargeDensity,
 		SourceIntegralPerCathodeElectronFluxKey:         GlowDischargeDensity,
 		SourceIntegralPerCathodeElectronFluxVarianceKey: GlowDischargeDensity,

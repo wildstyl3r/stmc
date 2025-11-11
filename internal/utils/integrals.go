@@ -55,8 +55,11 @@ func (gi *GriddedInterval) interpolate(x float64) (value float64, closestNodeBel
 		return 0, below, IntervalError(above)
 	}
 	valueBelow, valueAbove := gi.Values[below], gi.Values[above]
-	return valueBelow + (valueAbove-valueBelow)*(distance/gi.Step), below, nil
-
+	if t := distance / gi.Step; t < 0.5 {
+		return math.FMA(valueAbove-valueBelow, t, valueBelow), below, nil
+	} else {
+		return math.FMA(valueAbove-valueBelow, 1.-t, valueAbove), below, nil
+	}
 }
 
 func (gi *GriddedInterval) Interpolate(x float64) float64 {

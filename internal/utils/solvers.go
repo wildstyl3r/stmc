@@ -29,6 +29,22 @@ func BinarySearch(condition func(float64) bool, falseDom, trueDom, eps float64) 
 	return falseDom, trueDom
 }
 
+func Bisect(f func(float64) float64, left, right, eps, epsF float64) (float64, float64) {
+	leftF, rightF := f(left), f(right)
+	for math.Abs(right-left) > eps || math.Abs(rightF-leftF) > epsF {
+		c := (left + right) * 0.5
+		centerF := f(c)
+		if math.Signbit(centerF) == math.Signbit(rightF) {
+			right = c
+			rightF = centerF
+		} else {
+			left = c
+			leftF = centerF
+		}
+	}
+	return left, right
+}
+
 func TernarySearchMaxF(f func(float64) float64, left, right, eps float64) float64 {
 	return f(TernarySearchMax(f, left, right, eps))
 }

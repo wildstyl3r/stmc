@@ -1,225 +1,252 @@
 package extensions
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 	"os"
 
+	"github.com/aclements/go-moremath/fit"
 	"github.com/wildstyl3r/stmc/internal/config"
-	"github.com/wildstyl3r/stmc/internal/constants"
 	"github.com/wildstyl3r/stmc/internal/model"
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
-func sourceIntegralMonteCarloF(m *model.Model, precision float64) (sumMean, sumVariance float64) {
+func sourceIntegralMonteCarloF(parameters config.ModelParameters, requirePrecision bool) (sumMean, sumVariance float64, m *model.Model) {
+	m = model.NewModel(parameters)
+	LoadExtensions(m.DataHub)
 	m.Run(func(m *model.Model) int {
-		if m.TotalElectronsPassed == 0 {
+		if m.TotalElectronsEmittedOnCathode == 0 {
 			return m.Parameters.NElectrons
 		} else {
 			sumMean, sumVariance = m.GetMetrics(SourceIntegralPerCathodeElectronFluxKey).(float64), m.GetMetrics(SourceIntegralPerCathodeElectronFluxVarianceKey).(float64)
-			sumMargin := utils.StudentedMargin(0.95, sumVariance, m.TotalElectronsPassed)
-			if precision < sumMargin*2 && precision != 0 {
+			sumMargin := utils.EstimateMargin(0.95, sumVariance, m.TotalElectronsEmittedOnCathode)
+			if parameters.SourceIntegralRelativeMargin < sumMargin/sumMean && parameters.SourceIntegralRelativeMargin != 0 && requirePrecision {
 				return m.Parameters.AddByNElectrons
 			} else {
-				fmt.Printf("one step ion source to max(n) integral margin: %f\n", sumMargin)
+				fmt.Printf("\nMonte Carlo ion source integral's relative standard error: %f%%\n", sumMargin/sumMean*100)
 				return 0
 			}
 		}
 	})
-	return sumMean, sumVariance
+	if math.IsNaN(sumMean) {
+		fmt.Println("integral is NaN")
+	}
+	return sumMean, sumVariance, m
 }
 
 // not applicable for UniformField
-func sourceIntegralAnalyticF(dc, j, Vc, N float64, ionDriftVelocity func(float64, float64, float64) float64) float64 {
-	return 1. / (j*dc*dc/(2.*Vc*ionDriftVelocity(Vc, dc, N)*constants.FreeSpacePermittivityE0) - 1.) //-> 0
+func sourceIntegralAnalyticPhelpsF(parameters config.ModelParameters) float64 {
+	return 1. / gammaAnalyticPhelpsF(parameters) //-> 0
 }
 
-func sourceWithLoss(model *model.Model, sourcePrecision float64) (lossValue, Si, Sa, SiVariance float64) {
-	Sa = sourceIntegralAnalyticF(
-		model.Parameters.CathodeFallLength,
-		model.Parameters.CathodeCurrentDensity,
-		model.Parameters.CathodeFallPotential,
-		model.Parameters.GasDensity,
-		utils.IonDriftVelocity[model.Parameters.Species])
-	Si, SiVariance = sourceIntegralMonteCarloF(model, sourcePrecision)
-	lossValue = Sa - Si
-	return
+func gammaDonkoF(parameters config.ModelParameters) float64 {
+	return 0.01 * math.Pow(parameters.ReducedFieldAtCathode()/1000, 0.6)
 }
 
-func getApproximateCathodeFallLengthForSourceIntegral(sourceIntegral, minDc, maxDc float64, parameters config.ModelParameters) float64 {
-	initialDcL, initialDcR := utils.BinarySearch(func(dc float64) bool {
-		si := sourceIntegralAnalyticF(
-			dc,
-			parameters.CathodeCurrentDensity,
-			parameters.CathodeFallPotential,
-			parameters.GasDensity,
-			utils.IonDriftVelocity[parameters.Species])
-		return sourceIntegral > si
-	}, minDc, maxDc, parameters.CathodeFallLengthPrecision*0.001)
-	return 0.5 * (initialDcL + initialDcR)
+func sourceIntegralAnalyticF(parameters config.ModelParameters) float64 {
+	return 1. / gammaAnalyticF(parameters)
 }
-
-func sourceIntegralCalculationStep(itp, itn *int, dc, sourcePrecision float64, parameters config.ModelParameters) (loss, sourceIntegralMonteCarlo, sourceIntegralAnalytic, sourceIntegralVariance float64, stepModel *model.Model) {
-	if itp != nil {
-		if itn != nil {
-			fmt.Printf("step %d of %d\n", *itp, *itn)
+func gammaAnalyticF(parameters config.ModelParameters) float64 {
+	if parameters.CalculateSecondaryEmissionCoefficient {
+		return gammaAnalyticPhelpsF(parameters)
+	} else if parameters.CalculateCurrentDensity || parameters.CalculateVoltage {
+		if parameters.UseDonkosSEC {
+			return gammaDonkoF(parameters)
+		} else if parameters.SecondaryEmissionCoefficient != 0 {
+			return parameters.SecondaryEmissionCoefficient
 		} else {
-			fmt.Printf("step %d\n", *itp)
+			panic("unable to determine analytic source integral")
 		}
-		*itp += 1
-	} else {
-		fmt.Println("preliminary step")
 	}
-	parameters.CathodeFallLength = dc
-	stepModel = model.NewModel(parameters)
-	LoadExtensions(stepModel.DataHub)
-	loss, sourceIntegralMonteCarlo, sourceIntegralAnalytic, sourceIntegralVariance = sourceWithLoss(stepModel, sourcePrecision)
-	if parameters.Verbose() {
-		fmt.Printf("d_c: %v\nion source integral \n\t Monte Carlo: %6f\n\t analytic:%6f\n", dc, sourceIntegralMonteCarlo, sourceIntegralAnalytic)
-	}
-	return
+	return 0
 }
 
-func SourceIntegralCalculation(configFlags config.Flags, parameters config.ModelParameters, outputDir, modelName string) (dataRow *SourceIntegralDataRow, finalModel *model.Model) {
-	if *configFlags.Verbose {
-		fmt.Print("calculating dc iteratively:\n")
+// func getApproximateCathodeFallLengthForSourceIntegral(sourceIntegral, minDc, maxDc float64, parameters config.ModelParameters) float64 {
+// 	initialDcL, initialDcR := utils.BinarySearch(func(dc float64) bool {
+// 		parameters.CathodeFallLength = dc
+// 		si := sourceIntegralAnalyticPhelpsF(parameters)
+// 		return sourceIntegral > si
+// 	}, minDc, maxDc, parameters.CathodeFallLengthPrecision*0.001)
+// 	return 0.5 * (initialDcL + initialDcR)
+// }
+
+func sourceIntegralCalculationStep(modelName string, requirePrecision bool, parameters *config.ModelParameters, analyticSourceIntegral func(config.ModelParameters) float64) (optResult OptimizationResult, sourceIntegralVariance float64, stepModel *model.Model) {
+	sourceIntegralMonteCarlo, sourceIntegralVariance, stepModel := sourceIntegralMonteCarloF(*parameters, requirePrecision)
+	sourceIntegralAnalytic := analyticSourceIntegral(*parameters) //sourceIntegralAnalyticF(stepModel.Parameters.CathodeFallLength, stepModel.Parameters.CathodeCurrentDensity, stepModel.Parameters.CathodeFallPotential, stepModel.Parameters.GasDensity, utils.IonDriftVelocity[stepModel.Parameters.Species])
+	difference := sourceIntegralAnalytic - sourceIntegralMonteCarlo
+	if parameters.Verbose() {
+		fmt.Printf("ion source integral [ Monte Carlo: %6f ; analytic: %6f ]\n\n", sourceIntegralMonteCarlo, sourceIntegralAnalytic)
 	}
-	iteration := 1
-	itp := &iteration
-	minDc, maxDc := EstimateCathodeFallLengthLimits(&parameters)
-	if *configFlags.Debug {
-		return bruteForceStepSourceIntegralCalculation(minDc, maxDc, itp, parameters, outputDir, modelName)
-	} else {
-		return advancedSourceIntegralCalculation(minDc, maxDc, itp, parameters)
-	}
+	return OptimizationResult{
+			ModelName:                               modelName,
+			ReducedFieldAtCathode:                   stepModel.ReducedFieldAtCathode(),
+			ReducedFieldAtSheathCenter:              stepModel.ReducedFieldMidSheath(),
+			CathodeFallLength:                       stepModel.Parameters.CathodeFallLength,
+			SourceIntegralDifference:                difference,
+			SourceIntegralAnalytic:                  sourceIntegralAnalytic,
+			SourceIntegralMonteCarlo:                sourceIntegralMonteCarlo,
+			SourceIntegralMargin:                    utils.EstimateMargin(0.95, sourceIntegralVariance, stepModel.TotalElectronsEmittedOnCathode),
+			GammaAnalytic:                           1. / sourceIntegralAnalytic,
+			GammaMonteCarlo:                         1. / sourceIntegralMonteCarlo,
+			MeanElectronEnergyAtAnode:               stepModel.MeanElectronEnergyAtAnode,
+			MeanFreePathAnode:                       1. / (stepModel.Parameters.CrossSectionsData().TotalCrossSectionAt(stepModel.MeanElectronEnergyAtAnode) * stepModel.Parameters.GasDensity),
+			Voltage:                                 stepModel.Parameters.CathodeFallPotential,
+			Pressure:                                stepModel.Parameters.Pressure,
+			CathodeCurrent:                          stepModel.Parameters.CathodeCurrentDensity * (math.Pi * parameters.CathodeRadius * parameters.CathodeRadius),
+			CathodeCurrentDensity:                   stepModel.Parameters.CathodeCurrentDensity,
+			CathodeCurrentDensityPerPressureSquared: stepModel.Parameters.CathodeCurrentDensity / (parameters.Pressure * parameters.Pressure),
+		},
+		sourceIntegralVariance,
+		stepModel
 }
 
 type SourceIntegralDataRow struct {
 	OptimizationResult
-	SourceIntegralAnalytic   float64 `csv:"Source integral analytic"`
-	SourceIntegralMonteCarlo float64 `csv:"Source integral Monte Carlo"`
-	SourceIntegralLoss       float64 `csv:"Source integral loss"`
-	SourceIntegralMargin     float64 `csv:"Source integral margin"`
-	GammaIntegral            float64 `csv:"Gamma integral"`
-	GammaIntegralMargin      float64 `csv:"Gamma integral margin"`
-	GammaAnalytic            float64 `csv:"Gamma analytic"`
+	GammaMonteCarloMargin float64 `csv:"Gamma Monte Carlo margin"`
 }
 
-func bruteForceStepSourceIntegralCalculation(minDc, maxDc float64, itp *int, parameters config.ModelParameters, outputDir, modelName string) (dataRow *SourceIntegralDataRow, finalModel *model.Model) {
-	dcStep := 0.00001
-	nSteps := int((maxDc - minDc) / dcStep)
-	fmt.Printf("GapLen: %f, nSteps: %d\n", parameters.GapLength, nSteps)
-	sourceIntegral := make([]float64, nSteps)
-	intS := make([]float64, nSteps)
-	//debugData := [][]string{{"dc", "E/N", "integrated secondary emission coefficient", "analytic secondary emission coefficient", "gamma difference", "integral gamma CI approximation"}}
-	bestLoss := math.Inf(+1)
-	var debugData []*SourceIntegralDataRow
-	for i := range sourceIntegral {
-		dc := float64(i)*dcStep + minDc
-		var sourceIntegralAnalytic, sourceIntegralLoss, sourceIntegralMonteCarloMargin float64
-		var m *model.Model
-		sourceIntegralLoss, sourceIntegral[i], sourceIntegralAnalytic, sourceIntegralMonteCarloMargin, m = sourceIntegralCalculationStep(itp, &nSteps, dc, 0, parameters)
-
-		intS[i] = 1. / sourceIntegral[i]
-		if sourceIntegralAnalytic > 0 {
-			debugData = append(debugData, &SourceIntegralDataRow{
-				OptimizationResult: OptimizationResult{ReducedFieldAtCathode: m.ReducedFieldAtCathode(),
-					ReducedFieldAtSheathCenter: m.ReducedFieldMidSheath(),
-					CathodeFallLength:          dc,
-					GammaLoss:                  -sourceIntegralLoss / (sourceIntegral[i] * sourceIntegralAnalytic),
-				},
-				SourceIntegralAnalytic:   sourceIntegralAnalytic,
-				SourceIntegralMonteCarlo: sourceIntegral[i],
-				SourceIntegralLoss:       sourceIntegralLoss,
-				SourceIntegralMargin:     sourceIntegralMonteCarloMargin,
-			})
-			if math.Abs(sourceIntegralLoss) < math.Abs(bestLoss) {
-				bestLoss = sourceIntegralLoss
-				finalModel = m
-				dataRow = debugData[len(debugData)-1]
-			}
-		}
-
-	}
-	// gammaMean, gammaVariance := utils.MeanAndVariance(sourceIntegral, true)
-	// intSMean, intSVariance := utils.MeanAndVariance(intS, true)
-	// fmt.Printf("gamma mean: %.9f, gamma variance: %.9f, integral S mean: %.9f, integral S variance: %.9f\n", gammaMean, gammaVariance, intSMean, intSVariance)
-	err := utils.WriteAsCSV(debugData, outputDir+"/"+modelName, "source_integral_bruteforce")
-
-	if err != nil {
-		println("unable to save dc and secondary emission coefficient: ", err.Error())
-		os.Exit(1)
-	}
-	return
-}
-
-func advancedSourceIntegralCalculation(minDc, maxDc float64, itp *int, parameters config.ModelParameters) (dataRow *SourceIntegralDataRow, finalModel *model.Model) {
-	var sourceIntegralLoss, sourceIntegralMonteCarlo, sourceIntegralAnalytic float64
-	sourceIntegralMC := []float64{}
-	sourceIntegralMCVariance := []float64{}
-	var dc float64
-	fmt.Println("calculating source integral up to x_{max(n)} with stochastic approximation")
-	var fLeftLoss, fRightLoss, initialDc float64
-	{
-		var sIMCLeft, sIMCRight float64
-		fLeftLoss, sIMCLeft, _, _, _ = sourceIntegralCalculationStep(nil, nil, minDc, 0.7, parameters)
-		fRightLoss, sIMCRight, _, _, _ = sourceIntegralCalculationStep(nil, nil, maxDc, 0.7, parameters)
-
-		k := (sIMCRight - sIMCLeft) / (maxDc - minDc)
-		b := sIMCRight - k*maxDc
-
-		dcLeft, dcRight := utils.BinarySearch(func(dc float64) bool {
-			delta := sourceIntegralAnalyticF(dc, parameters.CathodeCurrentDensity, parameters.CathodeFallPotential, parameters.GasDensity, utils.IonDriftVelocity[parameters.Species]) -
-				(k*dc + b)
-			return delta < 0
-		}, minDc, maxDc, parameters.CathodeFallLengthPrecision)
-
-		initialDc = 0.5 * (dcLeft + dcRight)
-	}
-	approxLossDerivative := (fRightLoss - fLeftLoss) / (maxDc - minDc)
-
-	// var dcConfInterval float64
-	minSteps, maxSteps := 40, 200
-	var suggestion float64
-	sourceIntegralPrecision := 0.1
-	dc, _ = utils.StochasticApproximationWithSameSizeSamples(minDc, maxDc, initialDc, approxLossDerivative, sourceIntegralPrecision, 0.95, true, minSteps, maxSteps, parameters.NElectrons, func(dc float64) (lossMean, lossVariance float64) {
-		sourceIntegralLoss, sourceIntegralMonteCarlo, sourceIntegralAnalytic, lossVariance, finalModel = sourceIntegralCalculationStep(itp, nil, dc, 0, parameters)
-		sourceIntegralMC = append(sourceIntegralMC, sourceIntegralMonteCarlo)
-		sourceIntegralMCVariance = append(sourceIntegralMCVariance, lossVariance)
-		return sourceIntegralLoss, lossVariance
-	}, func() *float64 {
-		if *itp%5 == 0 && *itp > 0 { //&& math.Abs(utils.LinearlyWeightedSameSizePoolMean(sourceIntegralMC[len(sourceIntegralMC)-4:])-sourceIntegralAnalytic) > sourceIntegralPrecision*0.25 {
-			backsight := 4
-			if *itp%10 == 0 {
-				backsight = 9
-			}
-			suggestion = getApproximateCathodeFallLengthForSourceIntegral(utils.Mean(sourceIntegralMC[len(sourceIntegralMC)-backsight:]), minDc, maxDc, parameters) //sourceIntegralMonteCarlo
-			return &suggestion
-		} else {
-			return nil
-		}
-	})
-	sourceIntegralAnalytic = sourceIntegralAnalyticF(dc, parameters.CathodeCurrentDensity, parameters.CathodeFallPotential, parameters.GasDensity, utils.IonDriftVelocity[parameters.Species])
-	subsampleLen := max(len(sourceIntegralMC)-minSteps, len(sourceIntegralMC)/3)
-	sourceIntegralMonteCarlo = utils.Mean(sourceIntegralMC[subsampleLen:])
-	finalMCVariance := utils.SameSizePoolVariance(sourceIntegralMCVariance[subsampleLen:])
-	sourceIntegralMargin := utils.StudentedMargin(0.95, finalMCVariance, subsampleLen*parameters.NElectrons)
-	sourceIntegralLoss = sourceIntegralAnalytic - sourceIntegralMonteCarlo
-
-	println("saved d_c and γ")
-	return &SourceIntegralDataRow{
-		OptimizationResult: OptimizationResult{
-			ReducedFieldAtCathode:      finalModel.ReducedFieldAtCathode(),
-			ReducedFieldAtSheathCenter: finalModel.ReducedFieldMidSheath(),
-			CathodeFallLength:          dc,
-			GammaLoss:                  sourceIntegralLoss,
+func SourceIntegralCalculation(parameters config.ModelParameters, outputDir, modelName string) (dataRow SourceIntegralDataRow, altDataRow *SourceIntegralDataRow, finalmodel, altModel *model.Model) {
+	_, maxDc := EstimateCathodeFallLengthLimits(parameters)
+	minDc := parameters.CathodeFallLengthPrecision
+	numberOfSteps := int((maxDc - minDc) / parameters.CathodeFallLengthPrecision)
+	return GeneralizedCalculation(parameters, numberOfSteps, minDc, parameters.CathodeFallLengthPrecision,
+		func(dc float64) config.ModelParameters {
+			newParameters := parameters
+			newParameters.CathodeFallLength = dc
+			return newParameters
 		},
-		SourceIntegralAnalytic:   sourceIntegralAnalytic,
-		SourceIntegralMonteCarlo: sourceIntegralMonteCarlo,
-		SourceIntegralLoss:       sourceIntegralLoss,
-		SourceIntegralMargin:     sourceIntegralMargin,
-		GammaIntegral:            1. / sourceIntegralMonteCarlo,
-		GammaIntegralMargin:      (sourceIntegralMargin + math.Abs(sourceIntegralLoss)) / (sourceIntegralMonteCarlo * sourceIntegralMonteCarlo),
-		GammaAnalytic:            1. / sourceIntegralAnalytic,
-	}, finalModel
+		func(optResult OptimizationResult, variance float64, m *model.Model) SourceIntegralDataRow {
+			return SourceIntegralDataRow{
+				OptimizationResult:    optResult,
+				GammaMonteCarloMargin: (math.Abs(optResult.SourceIntegralDifference) + optResult.SourceIntegralMargin) / (optResult.SourceIntegralMonteCarlo * optResult.SourceIntegralMonteCarlo),
+			}
+		}, func(p config.ModelParameters, simc, sia float64) bool {
+			return (sia > 0 && simc > 3*sia)
+		}, true, outputDir, modelName)
+}
+
+func GeneralizedCalculation[K cmp.Ordered, T utils.Indexable[K]](parameters config.ModelParameters,
+	numberOfSteps int, offset, stepSize float64,
+	setUp func(arg float64) config.ModelParameters,
+	extractor func(optResult OptimizationResult, variance float64, m *model.Model) T,
+	stopCondition func(p config.ModelParameters, simc, sia float64) bool,
+	preferGreaterRoot bool,
+	outputDir, modelName string,
+) (dataRow T, altDataRow *T, finalModel, altModel *model.Model) {
+	//imprecise monte-carlo data gathering
+	//regression fitting
+
+	//find root on source difference
+
+	//return precise monte-carlo calculation on root
+	stepArg, stepSourceIntegralMC, stepVariance := make([]float64, 0, numberOfSteps), make([]float64, 0, numberOfSteps), make([]float64, 0, numberOfSteps)
+	minArg, maxArg := offset, offset+float64(numberOfSteps)*stepSize
+	{
+		var debugData []T = make([]T, 0, numberOfSteps)
+		for i := range numberOfSteps {
+			fmt.Printf("step %d of %d\n", i+1, numberOfSteps)
+			arg := offset + float64(i)*stepSize
+			stepParameters := setUp(arg)
+			optResult, variance, m := sourceIntegralCalculationStep(modelName, false, &stepParameters, sourceIntegralAnalyticF)
+			stepArg, stepSourceIntegralMC, stepVariance = append(stepArg, arg), append(stepSourceIntegralMC, optResult.SourceIntegralMonteCarlo), append(stepVariance, variance)
+			if parameters.DebugOutput {
+				row := extractor(optResult, variance, m)
+				debugData = append(debugData, row)
+			}
+			if len(stepArg) > 20 && stopCondition(stepParameters, optResult.SourceIntegralMonteCarlo, optResult.SourceIntegralAnalytic) {
+				maxArg = offset + float64(i)*stepSize
+				break
+			}
+		}
+		if parameters.DebugOutput {
+			err := utils.WriteAsCSV(config.MakeHeader(debugData[0], parameters.OutputUnits()), debugData, outputDir+"/"+modelName, "source_integral_bruteforce", false)
+
+			if err != nil {
+				println("unable to save dc and secondary emission coefficient: ", err.Error())
+				os.Exit(1)
+			}
+		}
+	}
+	regression := fit.PolynomialRegression(stepArg, stepSourceIntegralMC, utils.Apply(func(x float64) float64 { return 1. / x }, stepVariance), 2)
+	fmt.Printf("Regression coefficients are %v\n", regression.Coefficients)
+	var sourceDifferenceRoot float64
+	altSourceDifferenceRoot := math.Inf(-1)
+	{
+
+		_, minArg = utils.BinarySearch(func(arg float64) bool {
+			return sourceIntegralAnalyticF(setUp(arg)) > 0
+		}, minArg, maxArg, stepSize*0.00001)
+
+		equation := func(arg float64) float64 {
+			analytic := sourceIntegralAnalyticF(setUp(arg))
+			approx := regression.F(arg)
+			return analytic - approx
+		}
+		if math.Signbit((equation(minArg+stepSize)-equation(minArg))/stepSize) == math.Signbit((equation(maxArg)-equation(maxArg-stepSize))/stepSize) {
+			baseline := equation(minArg) < 0
+			left, right := utils.BinarySearch(func(arg float64) bool {
+				return equation(arg) < 0 != baseline
+			}, minArg, maxArg, stepSize*0.000001)
+			sourceDifferenceRoot = 0.5 * (left + right)
+			fmt.Printf("The only root is at %f, eq at root: %f\n", sourceDifferenceRoot, equation(sourceDifferenceRoot))
+		} else {
+			var maxDiff float64
+			if (equation(minArg+stepSize)-equation(minArg))/stepSize > 0 {
+				maxDiff = utils.TernarySearchMax(func(arg float64) float64 {
+					return equation(arg)
+				}, minArg, maxArg, stepSize*0.000001)
+
+			} else {
+				maxDiff = utils.TernarySearchMax(func(arg float64) float64 {
+					return -equation(arg)
+				}, minArg, maxArg, stepSize*0.000001)
+			}
+			baseline := equation(minArg) < 0
+			firstRootL, firstRootR := utils.BinarySearch(func(arg float64) bool {
+				return equation(arg) < 0 != baseline
+			}, minArg, maxDiff, stepSize*0.000001)
+			firstRoot := 0.5 * (firstRootL + firstRootR)
+
+			baseline = equation(maxArg) < 0
+			secondRootL, secondRootR := utils.BinarySearch(func(arg float64) bool {
+				return equation(arg) < 0 == baseline
+			}, maxDiff, maxArg, stepSize*0.000001)
+			secondRoot := 0.5 * (secondRootL + secondRootR)
+
+			if math.Abs(firstRoot-secondRoot) < stepSize {
+				sourceDifferenceRoot = 0.5 * (firstRoot + secondRoot)
+				fmt.Printf("No exact root. The closest point is %f with difference %f\n", sourceDifferenceRoot, equation(sourceDifferenceRoot))
+			} else if math.Abs(equation(firstRoot)) > 1e-3 || math.Abs(equation(secondRoot)) > 1e-3 {
+				if math.Abs(equation(firstRoot)) < math.Abs(equation(secondRoot)) {
+					sourceDifferenceRoot = firstRoot
+				} else {
+					sourceDifferenceRoot = secondRoot
+				}
+				fmt.Printf("At least one of the roots is outside the boundaries, the best accepted: %f, eq at accepted: %f\n", sourceDifferenceRoot, equation(sourceDifferenceRoot))
+			} else {
+				fmt.Printf("First root %f, eq at first root is %f, second root %f, eq at second root is %f\n", firstRoot, equation(firstRoot), secondRoot, equation(secondRoot))
+				if preferGreaterRoot {
+					sourceDifferenceRoot = secondRoot
+					altSourceDifferenceRoot = firstRoot
+				} else {
+					sourceDifferenceRoot = firstRoot
+					altSourceDifferenceRoot = secondRoot
+				}
+			}
+		}
+	}
+	preciseParameters := setUp(sourceDifferenceRoot)
+	optResult, variance, m := sourceIntegralCalculationStep(modelName, true, &preciseParameters, sourceIntegralAnalyticF)
+	optResult.CathodeFallLengthMargin = math.Abs(optResult.SourceIntegralMargin / utils.PolynomialDerivative(optResult.CathodeFallLength, regression.Coefficients))
+	dataRow = extractor(optResult, variance, m)
+	if !math.IsInf(altSourceDifferenceRoot, -1) {
+		preciseParameters := setUp(altSourceDifferenceRoot)
+		altResult, altVariance, altM := sourceIntegralCalculationStep(modelName, true, &preciseParameters, sourceIntegralAnalyticF)
+		altResult.CathodeFallLengthMargin = math.Abs(altResult.SourceIntegralMargin / utils.PolynomialDerivative(altResult.CathodeFallLength, regression.Coefficients))
+		altDataRow := extractor(altResult, altVariance, altM)
+		return dataRow, &altDataRow, m, altM
+	} else {
+		return dataRow, nil, m, nil
+	}
 }

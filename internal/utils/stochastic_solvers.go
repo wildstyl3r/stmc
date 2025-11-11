@@ -90,7 +90,7 @@ func StochasticApproximationWithSameSizeSamples(lowerBound, upperBound,
 				subsampleLen := max(len(fSVar)-minSteps, len(fSVar)/3)
 				fPoolVar := SameSizePoolVariance(fSVar[subsampleLen:])
 				meanF = Mean(fSMean[subsampleLen:]) //SumFloat64Slice(fSMean[subsampleLen:]) / float64(subsampleLen)
-				fMargin = StudentedMargin(confidence, fPoolVar, subsampleLen*sampleSize)
+				fMargin = EstimateMargin(confidence, fPoolVar, subsampleLen*sampleSize)
 				fmt.Printf("SA's mean function value is %f+/-%f required to be around 0 with margin less than %f \n", meanF, fMargin, precision)
 			}
 		} else {

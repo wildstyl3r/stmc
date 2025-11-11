@@ -99,6 +99,15 @@ func AnyIntersection(a, b []string) string {
 	return ""
 }
 
+func FullIntersection(a, b []string) (intersection []string) {
+	for i := range a {
+		if slices.Contains(b, a[i]) {
+			intersection = append(intersection, a[i])
+		}
+	}
+	return intersection
+}
+
 type constErr string
 
 const tooManySubsets constErr = "the set is too large (> 16 elements) for subset enumeration"

@@ -18,9 +18,11 @@ func DensityPerCathodeElectronFluxPPHC(m *model.Model) ([]string, []any, error) 
 	}
 	ambipolarDiffusionCoefficient := m.GetMetrics(AmbipolarDiffusionCoefficientKey).(float64)
 
-	if m.Parameters.DoNotAccountDiffusionLoss {
+	// L = 2*H
+	H := m.Parameters.SimulationLength()
+	if m.Parameters.NoDiffusionLoss {
 		scaledIonizations := ionizations.Scale(1. / ambipolarDiffusionCoefficient)
-		C1, err := scaledIonizations.TrapezoidIntegration(m.Parameters.CathodeFallLength, m.Parameters.GapLength)
+		C1, err := scaledIonizations.TrapezoidIntegration(m.Parameters.CathodeFallLength, H)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -45,19 +47,19 @@ func DensityPerCathodeElectronFluxPPHC(m *model.Model) ([]string, []any, error) 
 			return math.Exp(v * powerFactor)
 		}
 
-		exp2H, exp2d := expBrace(2*m.Parameters.GapLength), expBrace(2*m.Parameters.CathodeFallLength) //GapLength in case of PPHC is already halved in NewModel()
+		exp2H, exp2d := expBrace(2*H), expBrace(2*m.Parameters.CathodeFallLength)
 		normDivisor := exp2d + exp2H
 
 		negExpBrace := func(x float64) float64 { return expBrace(-x) }
 		minusTerms := ionizations.MulPointwise(negExpBrace)
 		plusTerms := ionizations.MulPointwise(expBrace)
 
-		fullMIntegral, err := minusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, m.Parameters.GapLength)
+		fullMIntegral, err := minusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, H)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		fullPIntegral, err := plusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, m.Parameters.GapLength)
+		fullPIntegral, err := plusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, H)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -71,7 +73,7 @@ func DensityPerCathodeElectronFluxPPHC(m *model.Model) ([]string, []any, error) 
 			if err != nil {
 				return nil, nil, err
 			}
-			secondTerm, err := plusTerms.TrapezoidIntegration(x, m.Parameters.GapLength)
+			secondTerm, err := plusTerms.TrapezoidIntegration(x, H)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -79,7 +81,7 @@ func DensityPerCathodeElectronFluxPPHC(m *model.Model) ([]string, []any, error) 
 			if err != nil {
 				return nil, nil, err
 			}
-			fifthTerm, err := minusTerms.TrapezoidIntegration(x, m.Parameters.GapLength)
+			fifthTerm, err := minusTerms.TrapezoidIntegration(x, H)
 			if err != nil {
 				return nil, nil, err
 			}

@@ -29,7 +29,10 @@ func (data CSV) Swap(i, j int) {
 	data[i], data[j] = data[j], data[i]
 }
 
-func WriteAsCSV[Index cmp.Ordered, T Indexable[Index]](rows []T, path, filename string) error {
+func WriteAsCSV[Index cmp.Ordered, T Indexable[Index]](header []string, rows []T, path, filename string, sortRowsByIndex bool) error {
+	if len(rows) == 0 {
+		return nil
+	}
 	println(filename, path)
 	clearName := GetFilename(filename)
 	file, err := OpenFile(path+"/"+clearName, TypeCSV)
@@ -37,10 +40,21 @@ func WriteAsCSV[Index cmp.Ordered, T Indexable[Index]](rows []T, path, filename 
 		println("unable to save csv file: ", err.Error())
 		os.Exit(1)
 	}
-	sort.Slice(rows, func(i, j int) bool {
-		return cmp.Compare(rows[i].Index(), rows[j].Index()) == -1
-	})
-	return gocsv.MarshalFile(rows, file)
+	if sortRowsByIndex {
+		sort.Slice(rows, func(i, j int) bool {
+			return cmp.Compare(rows[i].Index(), rows[j].Index()) == -1
+		})
+	}
+
+	if header != nil {
+		csvWriter := csv.NewWriter(file)
+		if err := csvWriter.Write(header); err != nil {
+			return err
+		}
+		csvWriter.Flush()
+		return gocsv.MarshalWithoutHeaders(rows, file)
+	}
+	return gocsv.Marshal(rows, file)
 }
 
 func ReadDataCSV(filename string) (metadata [][]string, columnNames []string, values [][]float64, err error) {
@@ -91,4 +105,14 @@ func ReadDataCSV(filename string) (metadata [][]string, columnNames []string, va
 		}
 	}
 	return
+}
+
+func GetHeader(filename string) ([]string, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("error opening file: %w", err)
+	}
+	defer file.Close()
+	reader := csv.NewReader(file)
+	return reader.Read()
 }
