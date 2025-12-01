@@ -70,7 +70,7 @@ func (gi *GriddedInterval) Interpolate(x float64) float64 {
 	return value
 }
 
-func (f *GriddedInterval) TrapezoidIntegration(lowerLimit, upperLimit float64) (integral float64, err error) {
+func (f *GriddedInterval) TrapezoidIntegration(lowerLimit, upperLimit float64, presort bool) (integral float64, err error) {
 	if lowerLimit == upperLimit {
 		return 0, nil
 	}
@@ -112,7 +112,7 @@ func (f *GriddedInterval) TrapezoidIntegration(lowerLimit, upperLimit float64) (
 			sumTerms[i] = 0.5 * (f.Values[x] + f.Values[x+1]) * f.Step
 			i++
 		}
-		integral = SumFloat64Slice(sumTerms)
+		integral = SumFloat64Slice(sumTerms, presort)
 	}
 
 	if negative {
@@ -154,10 +154,43 @@ func (f *GriddedInterval) VariableLimitDoubleIntegration(outerLowerLimit, outerU
 	}
 	for j := range subGrid.Values {
 		xj := float64(j) * f.Step
-		subGrid.Values[j], err = f.TrapezoidIntegration(innerLowerLimit, innerUpperLimit(xj))
+		subGrid.Values[j], err = f.TrapezoidIntegration(innerLowerLimit, innerUpperLimit(xj), true)
 		if err != nil {
 			return 0, err
 		}
 	}
-	return subGrid.TrapezoidIntegration(outerLowerLimit, outerUpperLimit)
+	return subGrid.TrapezoidIntegration(outerLowerLimit, outerUpperLimit, true)
+}
+
+func (f *GriddedInterval) RightTriangleIntegration(outerLowerLimit, outerUpperLimit, step, innerLowerLimit float64) (integral float64, err error) { // addressing the case of int_a^b [ int_f(x)^g(x) dy ] dx
+	subGrid := GriddedInterval{
+		Step:   f.Step,
+		Offset: f.Offset,
+		Values: make([]float64, len(f.Values)),
+	}
+
+	compensation := 0.
+	// summationOrder := Argsort(arr, true)
+	subGrid.Values[0], err = f.TrapezoidIntegration(innerLowerLimit, 0., true)
+	if err != nil {
+		return 0, err
+	}
+	for i := 1; i < len(subGrid.Values); i++ {
+		y := f.Values[i]*step - compensation
+		temp := subGrid.Values[i-1] + y
+		compensation = (temp - subGrid.Values[i-1]) - y
+		subGrid.Values[i] = temp
+	}
+	// for i := range subGrid.Values {
+	// 	subGrid.Values[i] *= step
+	// }
+	// for j := range subGrid.Values {
+	// 	xj := float64(j) * f.Step
+
+	// 	subGrid.Values[j], err = f.TrapezoidIntegration(innerLowerLimit, xj)
+	// 	if err != nil {
+	// 		return 0, err
+	// 	}
+	// }
+	return subGrid.TrapezoidIntegration(outerLowerLimit, outerUpperLimit, true)
 }

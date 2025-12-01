@@ -18,6 +18,43 @@ type Aggregation struct {
 	DevSquareSum float64
 }
 
+type AggregationF struct {
+	Sum             float64
+	sumCompensation float64
+	Number          int
+
+	dssCompensation float64
+	DevSquareSum    float64
+}
+
+func (a *AggregationF) Update(values []float64) {
+	y := SumFloat64Slice(values, true) - a.sumCompensation
+	temp := a.Sum + y
+	a.sumCompensation = (temp - a.Sum) - y
+	a.Sum = temp
+	a.Number += len(values)
+	mean := a.Sum / float64(a.Number)
+	dsSumTerms := make([]float64, len(values))
+	for i := range values {
+		dev := mean - values[i]
+		dsSumTerms[i] = dev * dev
+	}
+
+	y = SumFloat64Slice(dsSumTerms, true) - a.dssCompensation
+	temp = a.DevSquareSum + y
+	a.dssCompensation = (temp - a.DevSquareSum) - y
+	a.DevSquareSum = temp
+}
+
+func (a *AggregationF) Mean() float64 {
+	return a.Sum / float64(a.Number)
+}
+
+func (a *AggregationF) MeanAndVariance() (float64, float64) {
+	//variance estimation may be slightly worse than in non-aggregated case, but we should be OK with that
+	return a.Mean(), a.DevSquareSum / float64(a.Number-1)
+}
+
 func (a *Aggregation) Update(values []int) {
 	a.Sum += SumIntSlice(values)
 	a.Number += len(values)
@@ -27,7 +64,7 @@ func (a *Aggregation) Update(values []int) {
 		dev := mean - float64(values[i])
 		dsSumTerms[i] = dev * dev
 	}
-	a.DevSquareSum += SumFloat64Slice(dsSumTerms)
+	a.DevSquareSum += SumFloat64Slice(dsSumTerms, false)
 }
 
 func (a *Aggregation) Mean() float64 {
@@ -44,7 +81,7 @@ func Mean[T Number](s []T) (mean float64) {
 	for i := range s {
 		floated[i] = float64(s[i])
 	}
-	mean = SumFloat64Slice(floated) / float64(len(s))
+	mean = SumFloat64Slice(floated, true) / float64(len(s))
 	return
 }
 
@@ -100,7 +137,7 @@ func UnbiasedThirdCentralMomentEstimation(sample []float64) float64 {
 	for i := range sample {
 		sumTerms[i] = math.Pow(sample[i]-mean, 3)
 	}
-	return n * SumFloat64Slice(sumTerms) / ((n - 1) * (n - 2))
+	return n * SumFloat64Slice(sumTerms, true) / ((n - 1) * (n - 2))
 }
 
 func RelativeExcessLeap(sample []float64) float64 {
@@ -121,7 +158,7 @@ func RawMomentsFrom1UpTo(order int, sample []float64) (raw []float64) {
 		for i := range sample {
 			sumTerms[i] = math.Pow(sample[i], float64(r))
 		}
-		raw[r-1] = SumFloat64Slice(sumTerms) / n
+		raw[r-1] = SumFloat64Slice(sumTerms, true) / n
 	}
 	return raw
 }
@@ -139,7 +176,7 @@ func SecondOrderTaylorInverseVarianceEstimation(rawMoments []float64) float64 {
 		-6 * C / math.Pow(A, 5),
 		6 * B / math.Pow(A, 4),
 	}
-	return SumFloat64Slice(sumTerms)
+	return SumFloat64Slice(sumTerms, true)
 }
 
 func StudentedMarginFromData(confidenceP float64, data []float64) float64 {
@@ -180,7 +217,7 @@ func SamplePoolCharacteristics(sc []SampleCharacteristics) (pool SampleCharacter
 }
 
 func SameSizePoolVariance(vars []float64) float64 {
-	return SumFloat64Slice(vars) / (float64(len(vars)) * float64(len(vars)))
+	return SumFloat64Slice(vars, true) / (float64(len(vars)) * float64(len(vars)))
 }
 
 func LinearlyWeightedSameSizePoolMean(means []float64) (wm float64) {
@@ -189,7 +226,7 @@ func LinearlyWeightedSameSizePoolMean(means []float64) (wm float64) {
 	for i := range means {
 		sumTerms[i] = float64(i+1) * means[i]
 	}
-	wm = SumFloat64Slice(sumTerms)
+	wm = SumFloat64Slice(sumTerms, true)
 	wm /= scale
 	return wm
 }
@@ -201,7 +238,7 @@ func LinearlyWeightedSameSizePoolVariances(variances []float64) (wv float64) {
 	for i := range variances {
 		sumTerms[i] = float64((i+1)*(i+1)) * variances[i]
 	}
-	wv = SumFloat64Slice(sumTerms)
+	wv = SumFloat64Slice(sumTerms, true)
 	wv /= scale
 	return wv
 }
@@ -214,7 +251,7 @@ func LinearRegressionMSE(x, y []float64) (b1, b0 float64) { // y ~ b_1*x + b_0 +
 		numeratorTerms[i] = (x[i] - meanX) * (y[i] - meanY)
 		denominatorTerms[i] = (x[i] - meanX) * (x[i] - meanX)
 	}
-	b1 = SumFloat64Slice(numeratorTerms) / SumFloat64Slice(denominatorTerms)
+	b1 = SumFloat64Slice(numeratorTerms, true) / SumFloat64Slice(denominatorTerms, true)
 	b0 = meanY - b1*meanX
 	return
 }
@@ -229,11 +266,11 @@ func LinearRegressionMSEWithVariance(x, y, yVariance []float64) (b1, b0, b1Varia
 		denominatorTerms[i] = deltaX * deltaX
 		b1VarianceTerms[i] = yVariance[i] * (deltaX * deltaX)
 	}
-	denominator := SumFloat64Slice(denominatorTerms)
-	b1 = SumFloat64Slice(numeratorTerms) / denominator
-	b1Variance = SumFloat64Slice(b1VarianceTerms) / (denominator * denominator)
+	denominator := SumFloat64Slice(denominatorTerms, true)
+	b1 = SumFloat64Slice(numeratorTerms, true) / denominator
+	b1Variance = SumFloat64Slice(b1VarianceTerms, true) / (denominator * denominator)
 	b0 = meanY - b1*meanX
-	b0Variance = b1Variance*(meanX*meanX) + SumFloat64Slice(yVariance)/float64(n*n)
+	b0Variance = b1Variance*(meanX*meanX) + SumFloat64Slice(yVariance, true)/float64(n*n)
 	return
 }
 

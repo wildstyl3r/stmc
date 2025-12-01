@@ -19,8 +19,8 @@ import (
 )
 
 type DataItem struct {
-	SaveFlag   *bool
-	fileSuffix string
+	SaveFlag *bool
+	shortID  string
 }
 
 type Row struct {
@@ -77,8 +77,8 @@ func NewDataFlags() DataFlags {
 		Sequentials: map[string]sequentialDataItem{
 			Potential: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("p", false, "save potential"),
-					fileSuffix: "V",
+					SaveFlag: flag.Bool("p", false, "save potential"),
+					shortID:  "V",
 				},
 				values: func(model *model.Model) []DataFile {
 					dataFile := DataFile{
@@ -98,8 +98,8 @@ func NewDataFlags() DataFlags {
 			},
 			ElectricField: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("ef", false, "save Electric field"),
-					fileSuffix: "Efield",
+					SaveFlag: flag.Bool("ef", false, "save Electric field"),
+					shortID:  "Efield",
 				},
 				values: func(model *model.Model) []DataFile {
 					dataFile := DataFile{
@@ -119,8 +119,8 @@ func NewDataFlags() DataFlags {
 			},
 			ElectricFieldFromPotential: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("efp", false, "save Electric field at potential"),
-					fileSuffix: "efp",
+					SaveFlag: flag.Bool("efp", false, "save Electric field at potential"),
+					shortID:  "efp",
 				},
 				values: func(model *model.Model) []DataFile {
 					dataFile := DataFile{
@@ -143,8 +143,8 @@ func NewDataFlags() DataFlags {
 			},
 			LfromV: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("lv", false, "save x from v"),
-					fileSuffix: "lv",
+					SaveFlag: flag.Bool("lv", false, "save x from v"),
+					shortID:  "lv",
 				},
 				values: func(model *model.Model) []DataFile {
 					dataFile := DataFile{
@@ -167,8 +167,8 @@ func NewDataFlags() DataFlags {
 			},
 			NormalizedCollisionCounters: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("ncc", true, "save single-electron collision counters divided by pressure"),
-					fileSuffix: "ncc",
+					SaveFlag: flag.Bool("ncc", true, "save single-electron collision counters divided by pressure"),
+					shortID:  "ncc",
 				},
 				values: func(model *model.Model) (files []DataFile) {
 					collisions := model.GetMetrics(extensions.SingleElectronCollisionRateKey).(map[lxgata.CollisionType]utils.GriddedInterval)
@@ -195,8 +195,8 @@ func NewDataFlags() DataFlags {
 			},
 			CollisionCounters: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("cc", true, "save collision counters"),
-					fileSuffix: "cc",
+					SaveFlag: flag.Bool("cc", true, "save collision counters"),
+					shortID:  "cc",
 				},
 				values: func(model *model.Model) (files []DataFile) {
 					collisions := model.GetMetrics(extensions.SingleElectronCollisionRateKey).(map[lxgata.CollisionType]utils.GriddedInterval)
@@ -224,8 +224,8 @@ func NewDataFlags() DataFlags {
 			},
 			DetailedCollisionCounters: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("dcc", true, "save detailed collision counters"),
-					fileSuffix: "dcc",
+					SaveFlag: flag.Bool("dcc", true, "save detailed collision counters"),
+					shortID:  "dcc",
 				},
 				values: func(model *model.Model) (files []DataFile) {
 					collisions := model.GetMetrics(extensions.SingleElectronDetailedCollisionRateKey).(map[string]utils.GriddedInterval)
@@ -255,8 +255,8 @@ func NewDataFlags() DataFlags {
 			},
 			NormalizedWallLoss: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("nwl", true, "save normalized wall loss"),
-					fileSuffix: "nwl",
+					SaveFlag: flag.Bool("nwl", true, "save normalized wall loss"),
+					shortID:  "nwl",
 				},
 				values: func(model *model.Model) []DataFile {
 					dataFile := DataFile{
@@ -280,8 +280,8 @@ func NewDataFlags() DataFlags {
 			},
 			NormalizedOutDischargeCollisionCounters: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("nocc", true, "save single-electron out of discharge volume collision counters divided by pressure"),
-					fileSuffix: "nocc",
+					SaveFlag: flag.Bool("nocc", true, "save single-electron out of discharge volume collision counters divided by pressure"),
+					shortID:  "nocc",
 				},
 				values: func(model *model.Model) (files []DataFile) {
 					collisions := model.GetMetrics(extensions.SingleElectronCollisionsOutsideKey).(map[lxgata.CollisionType]utils.GriddedInterval)
@@ -349,8 +349,8 @@ func NewDataFlags() DataFlags {
 			// },
 			PlasmaDensity: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("n", true, "save plasma density"),
-					fileSuffix: "n",
+					SaveFlag: flag.Bool("n", true, "save plasma density"),
+					shortID:  "n",
 				},
 				values: func(model *model.Model) []DataFile {
 					dataFile := DataFile{
@@ -373,8 +373,8 @@ func NewDataFlags() DataFlags {
 			},
 			MeanEnergy: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("e", false, "save mean energy"),
-					fileSuffix: "e",
+					SaveFlag: flag.Bool("e", false, "save mean energy"),
+					shortID:  "e",
 				},
 				values: func(model *model.Model) []DataFile {
 					dataFile := DataFile{
@@ -425,8 +425,8 @@ func NewDataFlags() DataFlags {
 			},
 			MeanVelocityX: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("vx", false, "save drift velocity"),
-					fileSuffix: "vx",
+					SaveFlag: flag.Bool("vx", false, "save drift velocity"),
+					shortID:  "vx",
 				},
 				values: func(model *model.Model) []DataFile {
 					dataFile := DataFile{
@@ -477,8 +477,8 @@ func NewDataFlags() DataFlags {
 		Custom: map[string]customDataItem{
 			RawDistribution: {
 				DataItem: DataItem{
-					SaveFlag:   flag.Bool("raw", false, "save raw distribution"),
-					fileSuffix: "raw",
+					SaveFlag: flag.Bool("raw", false, "save raw distribution"),
+					shortID:  "raw",
 				},
 				prepare: func(m *model.Model) ([]byte, utils.ExportFileType) {
 					jsonData, err := json.Marshal(m.Distribution)
@@ -495,7 +495,8 @@ func NewDataFlags() DataFlags {
 }
 
 func Save(modelName string, model *model.Model, df DataFlags, outputPath string) {
-	for name, output := range df.Sequentials {
+
+	for _, output := range df.Sequentials {
 		if *output.SaveFlag || *df.all {
 			drafts := output.values(model)
 			for f := range drafts {
@@ -542,7 +543,7 @@ func Save(modelName string, model *model.Model, df DataFlags, outputPath string)
 					w := csv.NewWriter(file)
 					w.WriteAll(rows)
 					if model.Parameters.Verbose() {
-						println(name + " (" + drafts[f].metricsName + ")" + " saved")
+						print(output.shortID, " ")
 					}
 					if err := w.Error(); err != nil {
 						log.Fatalln("error writing csv:", err)
@@ -551,12 +552,13 @@ func Save(modelName string, model *model.Model, df DataFlags, outputPath string)
 			}
 		}
 	}
+	println("")
 	for name, output := range df.Custom {
 		if *output.SaveFlag || *df.all {
 			data, fileExt := output.prepare(model)
 			if data != nil {
 				var file *os.File
-				file, err := utils.OpenFile(outputPath+"/"+modelName+"/"+output.fileSuffix, fileExt)
+				file, err := utils.OpenFile(outputPath+"/"+modelName+"/"+output.shortID, fileExt)
 				if err != nil {
 					println("unable to save "+name+": ", err)
 				} else {

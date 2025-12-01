@@ -34,6 +34,8 @@ parser.add_argument('-um', '--upper-margin', metavar='vertical_upper_margin', he
 parser.add_argument('-im', '--ignore-margin', help="ignore margin", action='store_true')
 parser.add_argument('-w', '--eval', metavar='eval', help="add symbolic expression to plot" )
 parser.add_argument('-r', '--restartcc', help="restart color cycle at",type=int)
+parser.add_argument('-ly' '--log-y', help="make y logscale", action='store_true')
+parser.add_argument('-lx' '--log-x', help="make x logscale", action='store_true')
 args = parser.parse_args()
 
 exclude = args.exclude if args.exclude is not None else []
@@ -202,14 +204,15 @@ for (i,(filename, scale)) in enumerate(files):
             if dataframe.columns[y]+"margin" in dataframe.columns:
                 margin = dataframe[dataframe.columns[y]+"Margin"]
 
-        axs.errorbar(dataframe[dataframe.columns[x]], scale*dataframe[dataframe.columns[y]], yerr=margin if args.ignore_margin is None else None, fmt=markers[marker], label=label, ms=3)
+        axs.errorbar(dataframe[dataframe.columns[x]], scale*dataframe[dataframe.columns[y]], yerr=margin if args.ignore_margin is False and m is not None else None, fmt=markers[marker], label=label, ms=3)
 
 if args.eval is not None:
-    x = [i for i in range(0,50000, 1)]
-    f = eval(args.eval)
+    low,high,lmd = args.eval.split('#')
+    x = [i for i in range(int(low),int(high), (int(high)-int(low))//100)]
+    f = eval(lmd)
     y = [f(i) for i in x]
     
-    axs.errorbar(x, y, label = args.eval, fmt='x-',ms=3)
+    axs.errorbar(x, y, label = lmd, fmt='--',ms=3)
 
 # if args.compare:
 #     datafiles_c, _, max_y_c, lineLabels_c = read_datafiles(args.compare)
@@ -281,4 +284,9 @@ if fcm is not None:
 if args.norm:
     title +="peak ratio: " + str(max_y_c / max_y)
 plt.title(title)
+print(args)
+if args.ly__log_y is not None and args.ly__log_y:
+    axs.set_yscale('log')
+if args.lx__log_x is not None and args.lx__log_x:
+    axs.set_xscale('log')
 plt.show()

@@ -31,11 +31,39 @@ const (
 	Boeuf IonizationScattering = iota
 	Isotropic
 	Coulomb
+	CoulombM
 	Born
 	BornFullLoss
 	Mixed
 	MixedFullLoss
 )
+
+type UnitConfig struct {
+	L string
+	T string
+	P string
+	I string
+	E string
+}
+
+func (uc *UnitConfig) GetForClass(class UnitClass) string {
+	switch class {
+	case Current:
+		return uc.I
+	case Energy:
+		return uc.E
+	case Length:
+		return uc.L
+	case Pressure:
+		return uc.P
+	case Time:
+		return uc.T
+	case Voltage:
+		return "V"
+	default:
+		return ""
+	}
+}
 
 type Config struct {
 	OutputDir string
@@ -46,8 +74,8 @@ type Config struct {
 	isDefinedMap map[string]struct{}
 	AddPotential float64
 
-	InputUnits  []string
-	OutputUnits []string
+	InputUnits  UnitConfig
+	OutputUnits UnitConfig
 }
 
 func (c *Config) isDefined(path []string, meta *toml.MetaData) bool {
@@ -77,18 +105,16 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 		os.Exit(1)
 	}
 
-	var unitsConflict []string
-	config.InputUnits, unitsConflict = checkUnits(config.InputUnits)
-	if len(unitsConflict) > 0 {
-		fmt.Printf("found input unit conflict: %v\n", unitsConflict)
+	var unknownUnits []string
+	config.InputUnits, unknownUnits = checkUnits(config.InputUnits)
+	if len(unknownUnits) > 0 {
+		fmt.Printf("found input unit conflict: %v\n", unknownUnits)
 		os.Exit(0)
 	}
-	if len(config.OutputUnits) == 0 {
-		config.OutputUnits = config.InputUnits
-	}
-	config.OutputUnits, unitsConflict = checkUnits(config.OutputUnits)
-	if len(unitsConflict) > 0 {
-		fmt.Printf("found output unit conflict: %v\n", unitsConflict)
+	config.OutputUnits = mergeEmpty(config.InputUnits, config.OutputUnits)
+	config.OutputUnits, unknownUnits = checkUnits(config.OutputUnits)
+	if len(unknownUnits) > 0 {
+		fmt.Printf("found output unit conflict: %v\n", unknownUnits)
 		os.Exit(0)
 	}
 
@@ -319,9 +345,11 @@ type ModelParameters struct {
 	CalculateDistribution bool
 	DebugOutput           bool
 
+	SupressSpinner bool
+
 	GasDensity            float64
 	_crossSections        *lxgata.Collisions
-	_outputUnits          []string
+	_outputUnits          UnitConfig
 	_verbose              bool
 	_threads              int
 	_prototypeName        string
@@ -341,16 +369,16 @@ func (p *ModelParameters) SetCrossSectionsData(cd *lxgata.Collisions) {
 	p._crossSections = cd
 }
 
-func (p *ModelParameters) OutputUnits() []string {
+func (p *ModelParameters) OutputUnits() UnitConfig {
 	return p._outputUnits
 }
 
 func (p *ModelParameters) OutputUnit(uc UnitClass) string {
-	return utils.AnyIntersection(unitsInClass[uc], p._outputUnits)
+	return p._outputUnits.GetForClass(uc)
 }
 
-func (p *ModelParameters) SetOutputUnits(u []string) {
-	p._outputUnits = u
+func (p *ModelParameters) SetOutputUnits(uconf UnitConfig) {
+	p._outputUnits = uconf
 }
 
 func (p *ModelParameters) Verbose() bool {
@@ -493,7 +521,7 @@ var calculableFields = map[string]func(
 	},
 }
 
-func AnyToSIeV(target any, units []string, direct bool) {
+func AnyToSIeV(target any, units UnitConfig, direct bool) {
 	targetReflect := reflect.ValueOf(target).Elem()
 	targetType := targetReflect.Type()
 	for i := 0; i < targetReflect.NumField(); i++ {
@@ -536,7 +564,7 @@ func AnyToSIeV(target any, units []string, direct bool) {
 	// }
 }
 
-func MakeHeader(target any, units []string) (header []string) {
+func MakeHeader(target any, units UnitConfig) (header []string) {
 	targetReflect := reflect.Indirect(reflect.ValueOf(target))
 	targetType := targetReflect.Type()
 	for i := 0; i < targetReflect.NumField(); i++ {
@@ -781,9 +809,9 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 	}
 
 	scatteringMode := map[string]lxgata.ScatteringMode{
-		"Born":      lxgata.Born,
-		"Coulomb":   lxgata.Coulomb,
-		"Isotropic": lxgata.Isotropic,
+		"Born":            lxgata.Born,
+		"ScreenedCoulomb": lxgata.Coulomb,
+		"Isotropic":       lxgata.Isotropic,
 	}
 	if elsm, ok := scatteringMode[modelConfig.ElasticScatteringMode]; !ok {
 		fmt.Printf("Wrong elastic scattering mode: %v\n", modelConfig.ElasticScatteringMode)
@@ -798,13 +826,14 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 		modelConfig._inelasticScatteringMode = insm
 	}
 	ionizationScatteringMode := map[string]IonizationScattering{
-		"Boeuf":     Boeuf,
-		"Isotropic": Isotropic,
-		"Coulomb":   Coulomb,
-		"Born":      Born,
-		"BornFL":    BornFullLoss,
-		"Mixed":     Mixed,
-		"MixedFL":   MixedFullLoss,
+		"Boeuf":           Boeuf,
+		"Isotropic":       Isotropic,
+		"ScreenedCoulomb": Coulomb,
+		"CoulombM":        CoulombM,
+		"Born":            Born,
+		"BornFL":          BornFullLoss,
+		"Mixed":           Mixed,
+		"MixedFL":         MixedFullLoss,
 	}
 	if izsm, ok := ionizationScatteringMode[modelConfig.IonizationScatteringMode]; !ok {
 		fmt.Printf("Wrong ionization scattering mode: %v\n", modelConfig.IonizationScatteringMode)

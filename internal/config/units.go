@@ -81,14 +81,13 @@ type UnitElement struct {
 	Power int
 }
 
-func (ue UnitElement) String(units []string) string {
-	for n := range units {
-		if class, exist := classesOfUnits[units[n]]; exist && class == ue.Class && ue.Power != 0 {
-			if ue.Power == 1 {
-				return units[n]
-			}
-			return fmt.Sprintf("%s^%d", units[n], ue.Power)
+func (ue UnitElement) String(units UnitConfig) string {
+	unit := units.GetForClass(ue.Class)
+	if unit != "" {
+		if ue.Power == 1 {
+			return unit
 		}
+		return fmt.Sprintf("%s^%d", unit, ue.Power)
 	}
 	return ""
 }
@@ -110,7 +109,7 @@ func GetUnitElements(tag string) (u Unit) {
 	return u
 }
 
-func (u Unit) String(units []string) (s string) {
+func (u Unit) String(units UnitConfig) (s string) {
 	temp := []string{}
 	for e := range u {
 		temp = append(temp, u[e].String(units))
@@ -118,30 +117,58 @@ func (u Unit) String(units []string) (s string) {
 	return "(" + strings.Join(temp, "*") + ")"
 }
 
-var defaultUnits = []string{"mkA", "cm", "Torr", "s", "eV", "V"}
+var defaultUnits = UnitConfig{
+	L: "cm",
+	I: "mkA",
+	P: "Torr",
+	T: "s",
+	E: "eV",
+} // []string{"mkA", "cm", "Torr", "s", "eV", "V"}
 
-func checkUnits(units []string) (extended, conflicts []string) {
-	classes := map[UnitClass]struct{}{}
-	for _, unit := range units {
-		if _, some := classes[classesOfUnits[unit]]; some {
-			conflicts = append(conflicts, unit)
-		} else {
-			classes[classesOfUnits[unit]] = struct{}{}
-		}
+func mergeEmpty(target, source UnitConfig) (result UnitConfig) {
+	if target.L == "" {
+		target.L = source.L
 	}
-	extended = units
-	for _, unit := range defaultUnits {
-		if _, some := classes[classesOfUnits[unit]]; !some {
-			extended = append(extended, unit)
-		}
+	if target.I == "" {
+		target.I = source.I
 	}
-	return
+	if target.P == "" {
+		target.P = source.P
+	}
+	if target.E == "" {
+		target.E = source.E
+	}
+	if target.T == "" {
+		target.T = source.E
+	}
+	return target
 }
 
-func FieldToSIeV(v float64, classes Unit, units []string, direct bool) float64 {
+func checkUnits(units UnitConfig) (extended UnitConfig, unknowns []string) {
+	units = mergeEmpty(units, defaultUnits)
+
+	if _, known := classesOfUnits[units.L]; !known {
+		unknowns = append(unknowns, units.L)
+	}
+	if _, known := classesOfUnits[units.I]; !known {
+		unknowns = append(unknowns, units.I)
+	}
+	if _, known := classesOfUnits[units.I]; !known {
+		unknowns = append(unknowns, units.I)
+	}
+	if _, known := classesOfUnits[units.T]; !known {
+		unknowns = append(unknowns, units.T)
+	}
+	if _, known := classesOfUnits[units.P]; !known {
+		unknowns = append(unknowns, units.P)
+	}
+	return units, unknowns
+}
+
+func FieldToSIeV(v float64, classes Unit, units UnitConfig, direct bool) float64 {
 	for i := range classes {
 		uc := classes[i]
-		unit := utils.AnyIntersection(unitsInClass[uc.Class], units)
+		unit := units.GetForClass(uc.Class)
 		if unit == "" {
 			continue
 		}

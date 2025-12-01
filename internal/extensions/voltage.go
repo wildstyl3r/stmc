@@ -57,11 +57,9 @@ func VoltageCalculation(parameters config.ModelParameters, outputDir, modelName 
 	stepSize := 10.
 	numberOfSteps := int((maxV - minV) / stepSize)
 	return GeneralizedCalculation(parameters, numberOfSteps, minV, stepSize,
-		func(V float64) config.ModelParameters {
-			newParameters := parameters
-			newParameters.CathodeFallPotential = V
-			newParameters.CathodeFallLength = DcFromVoltage(newParameters, V)
-			return newParameters
+		func(V float64, mp *config.ModelParameters) {
+			mp.CathodeFallPotential = V
+			mp.CathodeFallLength = DcFromVoltage(*mp, V)
 		},
 		func(optResult OptimizationResult, variance float64, m *model.Model) VoltageDataRow {
 			return VoltageDataRow{
@@ -78,11 +76,9 @@ func VoltageCalculation2(parameters config.ModelParameters, outputDir, modelName
 	minDc, maxDc := DcFromVoltage(parameters, 80), DcFromVoltage(parameters, 1500)
 	numberOfSteps := int((maxDc - minDc) / parameters.CathodeFallLengthPrecision)
 	return GeneralizedCalculation(parameters, numberOfSteps, minDc, parameters.CathodeFallLengthPrecision,
-		func(dc float64) config.ModelParameters {
-			newParameters := parameters
-			newParameters.CathodeFallLength = dc
-			newParameters.CathodeFallPotential = VoltageFromDc(newParameters, dc)
-			return newParameters
+		func(dc float64, mp *config.ModelParameters) {
+			mp.CathodeFallLength = dc
+			mp.CathodeFallPotential = VoltageFromDc(*mp, dc)
 		},
 		func(optResult OptimizationResult, variance float64, m *model.Model) VoltageDataRow {
 			return VoltageDataRow{

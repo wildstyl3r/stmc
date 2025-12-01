@@ -7,10 +7,10 @@ import (
 	"os"
 	"runtime"
 	"runtime/pprof"
-	"slices"
 	"strings"
 	"time"
 
+	"github.com/facette/natsort"
 	"github.com/wildstyl3r/lxgata"
 	"github.com/wildstyl3r/stmc/internal/config"
 	"github.com/wildstyl3r/stmc/internal/extensions"
@@ -51,10 +51,10 @@ func main() {
 	for gname := range groups {
 		groupNames = append(groupNames, gname)
 	}
-	slices.Sort(groupNames)
+	natsort.Sort(groupNames)
 	for _, gName := range groupNames {
 		modelNames := groups[gName]
-		slices.Sort(modelNames)
+		natsort.Sort(modelNames)
 
 		var currentData []*extensions.CurrentDensityDataRow
 		var voltageData []*extensions.VoltageDataRow
@@ -104,11 +104,11 @@ func main() {
 				var siDataRow extensions.SourceIntegralDataRow
 				var altRow *extensions.SourceIntegralDataRow
 				siDataRow, altRow, m, altM = extensions.SourceIntegralCalculation(parameters, c.OutputDir, modelNames[i])
-				siDataRow.ModelName = modelNames[i]
+				siDataRow.ModelName = m.Parameters.PrototypeName()
 				config.AnyToSIeV(&siDataRow, parameters.OutputUnits(), false)
 				sourceIntegralData = append(sourceIntegralData, &siDataRow)
 				if altRow != nil {
-					altRow.ModelName = modelNames[i]
+					altRow.ModelName = altM.Parameters.PrototypeName()
 					config.AnyToSIeV(altRow, parameters.OutputUnits(), false)
 					altSourceIntegralData = append(altSourceIntegralData, altRow)
 				}
@@ -116,11 +116,11 @@ func main() {
 				var currentDataRow extensions.CurrentDensityDataRow
 				var altRow *extensions.CurrentDensityDataRow
 				currentDataRow, altRow, m, altM = extensions.CurrentDensityCalculation(parameters, c.OutputDir, modelNames[i])
-				currentDataRow.ModelName = modelNames[i]
+				currentDataRow.ModelName = m.Parameters.PrototypeName()
 				config.AnyToSIeV(&currentDataRow, parameters.OutputUnits(), false)
 				currentData = append(currentData, &currentDataRow)
 				if altRow != nil {
-					altRow.ModelName = modelNames[i]
+					altRow.ModelName = altM.Parameters.PrototypeName()
 					config.AnyToSIeV(altRow, parameters.OutputUnits(), false)
 					altCurrentData = append(altCurrentData, altRow)
 				} else {
@@ -130,11 +130,11 @@ func main() {
 				var voltageDataRow extensions.VoltageDataRow
 				var altRow *extensions.VoltageDataRow
 				voltageDataRow, altRow, m, altM = extensions.VoltageCalculation2(parameters, c.OutputDir, modelNames[i])
-				voltageDataRow.ModelName = modelNames[i]
+				voltageDataRow.ModelName = m.Parameters.PrototypeName()
 				config.AnyToSIeV(&voltageDataRow, parameters.OutputUnits(), false)
 				voltageData = append(voltageData, &voltageDataRow)
 				if altRow != nil {
-					altRow.ModelName = modelNames[i]
+					altRow.ModelName = altM.Parameters.PrototypeName()
 					config.AnyToSIeV(altRow, parameters.OutputUnits(), false)
 					altVoltageData = append(altVoltageData, altRow)
 				}
@@ -184,42 +184,42 @@ func main() {
 			fmt.Printf("Elapsed time: %v\n", time.Since(modelStartTime))
 		}
 		if len(currentData) > 0 {
-			err := utils.WriteAsCSV(config.MakeHeader(currentData[0], c.OutputUnits), currentData, c.OutputDir+"/"+gName, "current", true)
+			err := utils.WriteAsCSV(config.MakeHeader(currentData[0], c.OutputUnits), currentData, c.OutputDir+"/"+gName, "result", true)
 
 			if err != nil {
 				println("unable to write current data:", err)
 			}
 		}
 		if len(voltageData) > 0 {
-			err := utils.WriteAsCSV(config.MakeHeader(voltageData[0], c.OutputUnits), voltageData, c.OutputDir+"/"+gName, "voltage", true)
+			err := utils.WriteAsCSV(config.MakeHeader(voltageData[0], c.OutputUnits), voltageData, c.OutputDir+"/"+gName, "result", true)
 
 			if err != nil {
 				println("unable to write voltage data:", err)
 			}
 		}
 		if len(sourceIntegralData) > 0 {
-			err := utils.WriteAsCSV(config.MakeHeader(sourceIntegralData[0], c.OutputUnits), sourceIntegralData, c.OutputDir+"/"+gName, "sourceInt", true)
+			err := utils.WriteAsCSV(config.MakeHeader(sourceIntegralData[0], c.OutputUnits), sourceIntegralData, c.OutputDir+"/"+gName, "result", true)
 
 			if err != nil {
 				println("unable to write source integral data:", err)
 			}
 		}
 		if len(altCurrentData) > 0 {
-			err := utils.WriteAsCSV(config.MakeHeader(altCurrentData[0], c.OutputUnits), altCurrentData, c.OutputDir+"/"+gName, "alt_current", true)
+			err := utils.WriteAsCSV(config.MakeHeader(altCurrentData[0], c.OutputUnits), altCurrentData, c.OutputDir+"/"+gName, "alt_result", true)
 
 			if err != nil {
 				println("unable to write current data:", err)
 			}
 		}
 		if len(altVoltageData) > 0 {
-			err := utils.WriteAsCSV(config.MakeHeader(altVoltageData[0], c.OutputUnits), altVoltageData, c.OutputDir+"/"+gName, "alt_voltage", true)
+			err := utils.WriteAsCSV(config.MakeHeader(altVoltageData[0], c.OutputUnits), altVoltageData, c.OutputDir+"/"+gName, "alt_result", true)
 
 			if err != nil {
 				println("unable to write voltage data:", err)
 			}
 		}
 		if len(altSourceIntegralData) > 0 {
-			err := utils.WriteAsCSV(config.MakeHeader(altSourceIntegralData[0], c.OutputUnits), altSourceIntegralData, c.OutputDir+"/"+gName, "alt_sourceInt", true)
+			err := utils.WriteAsCSV(config.MakeHeader(altSourceIntegralData[0], c.OutputUnits), altSourceIntegralData, c.OutputDir+"/"+gName, "alt_result", true)
 
 			if err != nil {
 				println("unable to write source integral data:", err)

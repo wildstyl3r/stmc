@@ -50,6 +50,7 @@ type Model struct {
 	CollisionAtCell         map[lxgata.CollisionType][]utils.Aggregation
 	CollisionOutside        map[lxgata.CollisionType][]utils.Aggregation
 	DetailedCollisionAtCell map[string][]utils.Aggregation
+	MeanEnergy              []utils.Aggregation
 	IonizationsSumUpToCell  []utils.Aggregation
 	WallLossAtCell          []utils.Aggregation
 	EnergyLossByProcess     map[lxgata.CollisionType][]float64
@@ -90,16 +91,16 @@ func NewModel(parameters config.ModelParameters) *Model {
 	m.CalculateStaticTimeMotionConstants()
 
 	meanFreePath := 1. / (m.Parameters.CrossSectionsData().SurplusCrossSection() * m.Parameters.GasDensity)
-	if m.Parameters.Verbose() {
-		fmt.Printf("Mean free path: %f\n", meanFreePath)
-	}
+	// if m.Parameters.Verbose() {
+	// 	fmt.Printf("Mean free path: %f\n", meanFreePath)
+	// }
 
 	m.NumCells = 5 * int(m.Parameters.SimulationLength()/meanFreePath)
 	m.NumCellsMu = int(2./parameters.MuDiscretizationStep) + 1
 	m.NumCellsE = int((m.Va + m.Vc + 5) / m.Parameters.EnergyDiscretizationStep)
-	if m.Parameters.Verbose() {
-		fmt.Printf("xCells: %d;\n", m.NumCells)
-	}
+	// if m.Parameters.Verbose() {
+	// 	fmt.Printf("xCells: %d;\n", m.NumCells)
+	// }
 
 	m.XStep = m.Parameters.SimulationLength() / float64(m.NumCells)
 	// m.MuStep = m.Parameters.MuStep    // eV
@@ -120,6 +121,7 @@ func NewModel(parameters config.ModelParameters) *Model {
 	m.DetailedCollisionAtCell = make(map[string][]utils.Aggregation)
 	m.EnergyLossByProcess = make(map[lxgata.CollisionType][]float64)
 	m.IonizationsSumUpToCell = make([]utils.Aggregation, m.NumCells+1)
+	m.MeanEnergy = make([]utils.Aggregation, m.NumCells+1)
 	for _, process := range parameters.CrossSectionsData().GetTypes() {
 		m.EnergyLossByProcess[process] = make([]float64, m.NumCells+1)
 		m.CollisionAtCell[process] = make([]utils.Aggregation, m.NumCells+1)
@@ -220,18 +222,19 @@ func (m *Model) ConstEFieldTime(axialEnergy1_eV, axialEnergy2_eV float64) float6
 // }
 
 func (m *Model) collisionSelector(eKinetic, x, M float64) *lxgata.Collision {
-	var crossSections = m.Parameters.CrossSectionsData().CrossSectionsAt(eKinetic)
+	// var crossSections = m.Parameters.CrossSectionsData().CrossSectionsAt(eKinetic)
 	var totalCrossSectionPrimed = M * math.Abs(m.EFieldFromL(x)) / math.Sqrt(eKinetic) / m.Parameters.GasDensity
-	var crossSectionAccum float64 = 0. //totalCrossSectionPrimed - totalCrossSection // the difference is null collision
-	var choice float64 = rand.Float64() * totalCrossSectionPrimed
+	return m.Parameters.CrossSectionsData().SampleWithNullCollision(eKinetic, totalCrossSectionPrimed)
+	// var crossSectionAccum float64 = 0. //totalCrossSectionPrimed - totalCrossSection // the difference is null collision
+	// var choice float64 = rand.Float64() * totalCrossSectionPrimed
 
-	for i := range m.Parameters.CrossSectionsData().Processes {
-		crossSectionAccum += crossSections[i]
-		if choice < crossSectionAccum {
-			return &(m.Parameters.CrossSectionsData().Processes[i])
-		}
-	}
-	return nil
+	// for i := range m.Parameters.CrossSectionsData().Processes {
+	// 	crossSectionAccum += crossSections[i]
+	// 	if choice < crossSectionAccum {
+	// 		return &(m.Parameters.CrossSectionsData().Processes[i])
+	// 	}
+	// }
+	// return nil
 }
 
 type FlowElem struct {
@@ -546,6 +549,7 @@ func (m *Model) nextCollision(p *Particle) (collisionDescription *lxgata.Collisi
 
 type CollisionEvent struct {
 	x          int
+	absVx      float64
 	energyLoss float64
 	collType   lxgata.CollisionType
 	outcome    string
@@ -554,6 +558,7 @@ type CollisionEvent struct {
 
 type WallLossEvent struct {
 	x      int
+	absVx  float64
 	origin int
 }
 
@@ -591,17 +596,17 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 		go func() {
 			for collision := range collFlow {
 				if collision.x < m.NumCells+1 {
-					CollisionAtCell[collision.collType][collision.x][collision.origin-m.TotalElectronsEmittedOnCathode]++
+					CollisionAtCell[collision.collType][collision.x][collision.origin-m.TotalElectronsEmittedOnCathode]++ // collision.absVx
 
 					if collision.collType == lxgata.IONIZATION {
-						IonizationsAtCellE[collision.x][collision.origin-m.TotalElectronsEmittedOnCathode]++
+						IonizationsAtCellE[collision.x][collision.origin-m.TotalElectronsEmittedOnCathode]++ // collision.absVx
 					}
 
 					if collision.collType != "NULL" {
 						m.EnergyLossByProcess[collision.collType][collision.x] += collision.energyLoss
 						detailedName := string(collision.collType) + collision.outcome
 						if _, exist := m.DetailedCollisionAtCell[detailedName]; exist {
-							DetailedCollisionAtCell[detailedName][collision.x][collision.origin-m.TotalElectronsEmittedOnCathode]++
+							DetailedCollisionAtCell[detailedName][collision.x][collision.origin-m.TotalElectronsEmittedOnCathode]++ // collision.absVx
 						}
 					}
 				}
@@ -614,7 +619,7 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 		go func() {
 			for collision := range outcollFlow {
 				if collision.x < m.NumCells+1 {
-					CollisionOutside[collision.collType][collision.x][collision.origin-m.TotalElectronsEmittedOnCathode]++
+					CollisionOutside[collision.collType][collision.x][collision.origin-m.TotalElectronsEmittedOnCathode]++ // collision.absVx
 				}
 			}
 			stateWg.Done()
@@ -654,7 +659,7 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 			go func() {
 				for wallLossUpdate := range wallLossFlow {
 					if wallLossUpdate.x < len(WallLossAtCell[wallLossUpdate.x]) {
-						WallLossAtCell[wallLossUpdate.x][wallLossUpdate.origin]++
+						WallLossAtCell[wallLossUpdate.x][wallLossUpdate.origin] += 1. // wallLossUpdate.absVx
 					}
 
 				}
@@ -706,8 +711,11 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 			go func() {
 				counter := 0
 				for particlePtr := range computeFlow {
-					counter++
-					print("\r" + status[counter&0b11])
+					if !m.Parameters.SupressSpinner {
+						counter++
+						print("\r" + status[counter&0b11])
+					}
+
 					lowerEnergyThreshold := m.Parameters.LowerEnergyThreshold()
 					flow := make([]FlowElem, 0)
 					for lowerEnergyThreshold < particlePtr.totEnergy || m.Parameters.CalculateDistribution { //xCell :=int((particlePtr.x+0.5*m.XStep)/m.XStep); (!m.Parameters.ParallelPlaneHollowCathode && xCell < m.NumCells) ||
@@ -721,7 +729,7 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 								energyDepositionFlow <- particlePtr.totEnergy
 							}
 							if m.Parameters.Volumetric {
-								wallLossFlow <- WallLossEvent{int(particlePtr.x / m.XStep), particlePtr.origin}
+								wallLossFlow <- WallLossEvent{int(particlePtr.x / m.XStep), utils.EV2electronVelocity(particlePtr.getAxialEnergy()), particlePtr.origin}
 							}
 
 							break
@@ -731,6 +739,12 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 							energyLoss := collision.Threshold
 							cosChiScattered := m.Parameters.CrossSectionsData().SampleScatteringAngleCos(particlePtr.eKinetic, energyLoss, collision.Type, lxgata.IgnoreAtomicNumber)
 							phi := 2. * math.Pi * rand.Float64()
+
+							axe := particlePtr.getAxialEnergy()
+							absoluteXVelocityBeforeCollision := utils.EV2electronVelocity(axe)
+							if math.IsNaN(absoluteXVelocityBeforeCollision) {
+								fmt.Println("avx is nan")
+							}
 							particlePtr.eKinetic -= energyLoss
 							switch collision.Type {
 							case lxgata.ELASTIC:
@@ -778,6 +792,9 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 									cosChiEjected = lxgata.BornScatteringAngleSample(availableEnergy+energyLoss, energyLoss+particlePtr.eKinetic)
 								case config.Coulomb:
 									cosChiScattered = lxgata.CoulombScatteringAngleSample(particlePtr.eKinetic+energyLoss, m.Parameters.CrossSectionsData().UParameter, energyLoss, lxgata.IgnoreAtomicNumber)
+									cosChiEjected = 1. - 2.*rand.Float64()
+								case config.CoulombM:
+									cosChiScattered = lxgata.CoulombScatteringAngleSample(particlePtr.eKinetic+energyLoss, m.Parameters.CrossSectionsData().UParameter, energyLoss, lxgata.IgnoreAtomicNumber)
 									cosChiEjected = lxgata.CoulombScatteringAngleSample(ejected.eKinetic+energyLoss, m.Parameters.CrossSectionsData().UParameter, energyLoss, lxgata.IgnoreAtomicNumber)
 								case config.Isotropic:
 									cosChiScattered = 1. - 2.*rand.Float64()
@@ -812,6 +829,7 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 							if !m.Parameters.Volumetric || (particlePtr.y*particlePtr.y+particlePtr.z*particlePtr.z < m.cathodeRadius2) || particlePtr.x < m.Parameters.CathodeFallLength {
 								collFlow <- CollisionEvent{
 									x:          int(particlePtr.x / m.XStep),
+									absVx:      absoluteXVelocityBeforeCollision,
 									energyLoss: energyLoss,
 									collType:   collision.Type,
 									origin:     particlePtr.origin,
@@ -820,6 +838,7 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 							} else {
 								outcollFlow <- CollisionEvent{
 									x:          int(particlePtr.x / m.XStep),
+									absVx:      absoluteXVelocityBeforeCollision,
 									energyLoss: energyLoss,
 									collType:   collision.Type,
 									origin:     particlePtr.origin,
@@ -835,7 +854,7 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 							currentCell := int(particlePtr.x / m.XStep)
 							if currentCell < m.NumCells && m.Parameters.CountNulls {
 								select {
-								case collFlow <- CollisionEvent{currentCell, 0, "NULL", "", particlePtr.origin}:
+								case collFlow <- CollisionEvent{currentCell, utils.EV2electronVelocity(particlePtr.getAxialEnergy()), 0, "NULL", "", particlePtr.origin}:
 								default:
 								}
 

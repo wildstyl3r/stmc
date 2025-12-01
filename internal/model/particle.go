@@ -179,7 +179,7 @@ func (p *Particle) updateExtraDims(m *Model) {
 		timeIntervalsToSum = p.getTimeIntervalsBetweenPositionsNoReversal(p.prevX, p.x, p.prevAxialEnergy, p.getAxialEnergy(), m)
 	}
 
-	timeBetweenCollisions := utils.SumFloat64Slice(timeIntervalsToSum)
+	timeBetweenCollisions := utils.SumFloat64Slice(timeIntervalsToSum, true)
 
 	p.y = p.sinEta * utils.EV2electronVelocity(p.eStar) * timeBetweenCollisions
 	p.z = p.cosEta * utils.EV2electronVelocity(p.eStar) * timeBetweenCollisions

@@ -22,7 +22,7 @@ func DensityPerCathodeElectronFluxPPHC(m *model.Model) ([]string, []any, error) 
 	H := m.Parameters.SimulationLength()
 	if m.Parameters.NoDiffusionLoss {
 		scaledIonizations := ionizations.Scale(1. / ambipolarDiffusionCoefficient)
-		C1, err := scaledIonizations.TrapezoidIntegration(m.Parameters.CathodeFallLength, H)
+		C1, err := scaledIonizations.TrapezoidIntegration(m.Parameters.CathodeFallLength, H, true)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -54,12 +54,12 @@ func DensityPerCathodeElectronFluxPPHC(m *model.Model) ([]string, []any, error) 
 		minusTerms := ionizations.MulPointwise(negExpBrace)
 		plusTerms := ionizations.MulPointwise(expBrace)
 
-		fullMIntegral, err := minusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, H)
+		fullMIntegral, err := minusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, H, true)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		fullPIntegral, err := plusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, H)
+		fullPIntegral, err := plusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, H, true)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -69,19 +69,19 @@ func DensityPerCathodeElectronFluxPPHC(m *model.Model) ([]string, []any, error) 
 		for i := range density.Values {
 			x := m.XStep * float64(i)
 			exp2x := expBrace(2 * x)
-			firstTerm, err := plusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, x)
+			firstTerm, err := plusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, x, false)
 			if err != nil {
 				return nil, nil, err
 			}
-			secondTerm, err := plusTerms.TrapezoidIntegration(x, H)
+			secondTerm, err := plusTerms.TrapezoidIntegration(x, H, false)
 			if err != nil {
 				return nil, nil, err
 			}
-			fourthTerm, err := minusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, x)
+			fourthTerm, err := minusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, x, false)
 			if err != nil {
 				return nil, nil, err
 			}
-			fifthTerm, err := minusTerms.TrapezoidIntegration(x, H)
+			fifthTerm, err := minusTerms.TrapezoidIntegration(x, H, false)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -92,7 +92,7 @@ func DensityPerCathodeElectronFluxPPHC(m *model.Model) ([]string, []any, error) 
 				-exp2x * exp2d * fourthTerm,
 				exp2x * exp2H * fifthTerm,
 				exp2x * fullPIntegral,
-			}))
+			}, true))
 		}
 	}
 

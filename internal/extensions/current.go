@@ -24,10 +24,8 @@ func CurrentDensityCalculation(parameters config.ModelParameters, outputDir, mod
 	maxDc := parameters.SimulationLength()
 	numberOfSteps := int((maxDc - minDc) / parameters.CathodeFallLengthPrecision)
 	return GeneralizedCalculation(parameters, numberOfSteps, minDc, parameters.CathodeFallLengthPrecision,
-		func(dc float64) config.ModelParameters {
-			newParameters := parameters
-			newParameters.CathodeFallLength = dc
-			return newParameters
+		func(dc float64, mp *config.ModelParameters) {
+			mp.CathodeFallLength = dc
 		},
 		func(optResult OptimizationResult, variance float64, m *model.Model) CurrentDensityDataRow {
 			optResult.CathodeCurrentDensity = CurrentDensityEquation(m.Parameters)
@@ -48,10 +46,8 @@ func CurrentDensityCalculation2(parameters config.ModelParameters, outputDir, mo
 	maxDc := parameters.SimulationLength()
 	numberOfSteps := int((maxDc - minDc) / parameters.CathodeFallLengthPrecision)
 	return GeneralizedCalculation(parameters, numberOfSteps, minDc, parameters.CathodeFallLengthPrecision,
-		func(dc float64) config.ModelParameters {
-			newParameters := parameters
-			newParameters.CathodeFallLength = dc
-			return newParameters
+		func(dc float64, mp *config.ModelParameters) {
+			mp.CathodeFallLength = dc
 		},
 		func(optResult OptimizationResult, variance float64, m *model.Model) CurrentDensityDataRow {
 			optResult.CathodeCurrentDensity = CurrentDensityEquation(m.Parameters)

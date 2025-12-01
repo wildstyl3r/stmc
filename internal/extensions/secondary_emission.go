@@ -39,12 +39,14 @@ type OptimizationResult struct {
 	ReducedFieldAtSheathCenter              float64 `csv:"E/n at mid-sheath"`
 	CathodeFallLength                       float64 `csv:"Sheath length" units:"Length:1"`
 	CathodeFallLengthMargin                 float64 `csv:"Sheath length margin" units:"Length:1"`
+	PressureCathodeFallLength               float64 `csv:"pd" units:"Length:1"`
+	PressureCathodeFallLengthMargin         float64 `csv:"pd margin" units:"Length:1"`
 	SourceIntegralDifference                float64 `csv:"Source integral loss"`
 	SourceIntegralAnalytic                  float64 `csv:"Source integral analytic"`
 	SourceIntegralMonteCarlo                float64 `csv:"Source integral Monte Carlo"`
 	SourceIntegralMargin                    float64 `csv:"Source integral margin"`
-	GammaAnalytic                           float64 `csv:"Gamma analytic"`
-	GammaMonteCarlo                         float64 `csv:"Gamma Monte Carlo"`
+	GammaAnalytic                           float64 `csv:"$\\gamma$ analytic"`
+	GammaMonteCarlo                         float64 `csv:"$\\gamma$ Monte Carlo"`
 	MeanElectronEnergyAtAnode               float64 `csv:"Mean electron energy at anode" units:"Energy:1"`
 	MeanFreePathAnode                       float64 `csv:"Mean free path at anode" units:"Length:1"`
 	Voltage                                 float64 `csv:"Voltage" units:"Voltage:1"`

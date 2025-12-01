@@ -36,7 +36,7 @@ func DensityPerCathodeElectronFlux(m *model.Model) ([]string, []any, error) {
 	if m.Parameters.NoDiffusionLoss {
 		// n(x) = -int{int{S(h),d,chi},d, x} + c1*x + c2
 		scaledIonizations := ionizations.Scale(1. / ambipolarDiffusionCoefficient)
-		C1, err := scaledIonizations.VariableLimitDoubleIntegration(m.Parameters.CathodeFallLength, m.Parameters.GapLength, m.XStep, 0, func(x float64) float64 { return x })
+		C1, err := scaledIonizations.RightTriangleIntegration(m.Parameters.CathodeFallLength, m.Parameters.GapLength, m.XStep, 0)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -44,7 +44,7 @@ func DensityPerCathodeElectronFlux(m *model.Model) ([]string, []any, error) {
 		C2 := -C1 * m.Parameters.CathodeFallLength
 		for i := range density.Values {
 			x := float64(i) * m.XStep
-			integral, err := scaledIonizations.VariableLimitDoubleIntegration(m.Parameters.CathodeFallLength, x, m.XStep, m.Parameters.CathodeFallLength, func(f float64) float64 { return f })
+			integral, err := scaledIonizations.RightTriangleIntegration(m.Parameters.CathodeFallLength, x, m.XStep, m.Parameters.CathodeFallLength)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -54,63 +54,132 @@ func DensityPerCathodeElectronFlux(m *model.Model) ([]string, []any, error) {
 		// n(x) = ( A / 2D ) * ([-x] / ([2d] - [2L]) ) * ( [2(L+d)]{d,L}m + [2x]{d,L}p - [2L]{d,x}p - [2d]{x,L}p - [2(x+d)]{d,x}m - [2(x+L)]{x,L}m )
 		// n(x) = scale * [-x] / norm  * ( [2(L+d)]fullMinus + [2x]fullPlus - [2L]{d,x}p - [2d]{x,L}p - [2(x+d)]{d,x}m - [2(x+L)]{x,L}m )
 		Lambda := m.GetMetrics(CharacteristicDiffusionScaleKey).(float64)
+		// if m.Parameters.HyperbolicDensity {
+		scaleFactor := Lambda / ambipolarDiffusionCoefficient
 
-		powerFactor := 1. / Lambda
-		scaleFactor := Lambda / (2 * ambipolarDiffusionCoefficient)
-
-		expBrace := func(v float64) float64 { return math.Exp(v * powerFactor) }
-		exp2L, exp2d := expBrace(2*m.Parameters.GapLength), expBrace(2*m.Parameters.CathodeFallLength)
-		normDivisor := exp2d - exp2L
-
-		negExpBrace := func(x float64) float64 { return expBrace(-x) }
-		minusTerms := ionizations.MulPointwise(negExpBrace)
-		plusTerms := ionizations.MulPointwise(expBrace)
-
-		fullMIntegral, err := minusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, m.Parameters.GapLength)
+		constFactorBTerms := ionizations.MulPointwise(func(x float64) float64 { return math.Sinh((m.Parameters.GapLength - x) / Lambda) })
+		// constFactorBTerms := utils.GriddedInterval{
+		// 	Step:   m.XStep,
+		// 	Offset: ionizations.Offset,
+		// 	Values: make([]float64, m.NumCells)}
+		// for i := range constFactorBTerms.Values {
+		// 	x := m.XStep * float64(i)
+		// 	constFactorBTerms.Values[i] = ionizations.Values[i] * math.Sinh((m.Parameters.GapLength-x)/Lambda)
+		// }
+		// constFactorBTerms.Values = append(constFactorBTerms.Values, constFactorBTerms.Values[len(constFactorBTerms.Values)-1])
+		constFactorB, err := constFactorBTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, m.Parameters.GapLength, true)
 		if err != nil {
 			return nil, nil, err
 		}
-		exp2Lexp2dFullMIntegral := exp2L * exp2d * fullMIntegral
+		constFactorB /= math.Sinh((m.Parameters.GapLength - m.Parameters.CathodeFallLength) / Lambda)
 
-		fullPIntegral, err := plusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, m.Parameters.GapLength)
-		if err != nil {
-			return nil, nil, err
-		}
+		convolution := utils.GriddedInterval{
+			Step:   m.XStep,
+			Offset: ionizations.Offset,
+			Values: make([]float64, m.NumCells)}
 
-		for i := range density.Values { //for i := dIndex; i < len(density); i++ {
+		// P, Q, Pcompensation, Qcompensation := 0., 0., 0., 0.
+
+		dIndex := int(m.Parameters.CathodeFallLength / m.XStep)
+
+		for i := range density.Values {
 			x := m.XStep * float64(i)
-			exp2x := expBrace(2 * x)
-			dToxPIntegral, err := plusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, x)
-			if err != nil {
-				return nil, nil, err
+			if x > m.Parameters.CathodeFallLength {
+				for j := dIndex; j <= i; j++ {
+					xi := m.XStep * float64(j)
+					convolution.Values[j] = ionizations.Values[j] * math.Sinh((x-xi)/Lambda)
+				}
+				conv, err := convolution.TrapezoidIntegration(m.Parameters.CathodeFallLength, x, false)
+				if err != nil {
+					return nil, nil, err
+				}
+				density.Values[i] = max(0, scaleFactor*utils.SumFloat64Slice([]float64{
+					-conv,
+					math.Sinh((x-m.Parameters.CathodeFallLength)/Lambda) * constFactorB,
+				}, true))
 			}
-			xToLPIntegral, err := plusTerms.TrapezoidIntegration(x, m.Parameters.GapLength)
-			if err != nil {
-				return nil, nil, err
-			}
-			dToxMIntegral, err := minusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, x)
-			if err != nil {
-				return nil, nil, err
-			}
-			xToLMIntegral, err := minusTerms.TrapezoidIntegration(x, m.Parameters.GapLength)
-			if err != nil {
-				return nil, nil, err
-			}
-			density.Values[i] = max(0, scaleFactor*expBrace(-x)/normDivisor*utils.SumFloat64Slice([]float64{
-				exp2Lexp2dFullMIntegral,
-				exp2x * fullPIntegral,
-				-exp2L * dToxPIntegral, //(utils.SumFloat64Slice(plusTerms[:i]) - utils.SumFloat64Slice(plusTerms[:dIndex])),
-				-exp2d * xToLPIntegral,
-				-exp2x * exp2d * dToxMIntegral,
-				-exp2x * exp2L * xToLMIntegral,
-			}))
-			if math.IsInf(density.Values[i], 0) {
-				panic("n(x) is Inf")
-			}
-			if math.IsNaN(density.Values[i]) {
-				println("n(x) is NaN")
-			}
+			// if x > m.Parameters.CathodeFallLength {
+			// 	X := x / Lambda
+			// 	{
+			// 		y := ionizations.Values[i]*math.Sinh(X) - Pcompensation
+			// 		temp := P + y
+			// 		Pcompensation = (temp - P) - y
+			// 		P = temp
+			// 	}
+			// 	{
+			// 		y := ionizations.Values[i]*math.Cosh(X) - Qcompensation
+			// 		temp := Q + y
+			// 		Qcompensation = (temp - Q) - y
+			// 		Q = temp
+			// 	}
+			// 	chX, shX := math.Cosh(X), math.Sinh(X)
+			// 	density.Values[i] = max(0, scaleFactor*utils.SumFloat64Slice([]float64{
+			// 		chX * P,
+			// 		-shX * Q,
+			// 		math.Sinh((x-m.Parameters.CathodeFallLength)/Lambda) * constFactorB,
+			// 	}))
+			// }
+
 		}
+		// } else {
+		// 	powerFactor := 1. / Lambda
+		// 	scaleFactor := Lambda / (2 * ambipolarDiffusionCoefficient)
+
+		// 	expBrace := func(v float64) float64 { return math.Exp(v * powerFactor) }
+		// 	exp2L, exp2d := expBrace(2*m.Parameters.GapLength), expBrace(2*m.Parameters.CathodeFallLength)
+		// 	normDivisor := exp2d - exp2L
+
+		// 	negExpBrace := func(x float64) float64 { return expBrace(-x) }
+		// 	minusTerms := ionizations.MulPointwise(negExpBrace)
+		// 	plusTerms := ionizations.MulPointwise(expBrace)
+
+		// 	fullMIntegral, err := minusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, m.Parameters.GapLength, true)
+		// 	if err != nil {
+		// 		return nil, nil, err
+		// 	}
+		// 	exp2Lexp2dFullMIntegral := exp2L * exp2d * fullMIntegral
+
+		// 	fullPIntegral, err := plusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, m.Parameters.GapLength, true)
+		// 	if err != nil {
+		// 		return nil, nil, err
+		// 	}
+
+		// 	for i := range density.Values { //for i := dIndex; i < len(density); i++ {
+		// 		x := m.XStep * float64(i)
+		// 		exp2x := expBrace(2 * x)
+		// 		dToxPIntegral, err := plusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, x, true)
+		// 		if err != nil {
+		// 			return nil, nil, err
+		// 		}
+		// 		xToLPIntegral, err := plusTerms.TrapezoidIntegration(x, m.Parameters.GapLength, true)
+		// 		if err != nil {
+		// 			return nil, nil, err
+		// 		}
+		// 		dToxMIntegral, err := minusTerms.TrapezoidIntegration(m.Parameters.CathodeFallLength, x, true)
+		// 		if err != nil {
+		// 			return nil, nil, err
+		// 		}
+		// 		xToLMIntegral, err := minusTerms.TrapezoidIntegration(x, m.Parameters.GapLength, true)
+		// 		if err != nil {
+		// 			return nil, nil, err
+		// 		}
+		// 		density.Values[i] = max(0, scaleFactor*expBrace(-x)/normDivisor*utils.SumFloat64Slice([]float64{
+		// 			exp2Lexp2dFullMIntegral,
+		// 			exp2x * fullPIntegral,
+		// 			-exp2L * dToxPIntegral, //(utils.SumFloat64Slice(plusTerms[:i]) - utils.SumFloat64Slice(plusTerms[:dIndex])),
+		// 			-exp2d * xToLPIntegral,
+		// 			-exp2x * exp2d * dToxMIntegral,
+		// 			-exp2x * exp2L * xToLMIntegral,
+		// 		}, true))
+		// 		if math.IsInf(density.Values[i], 0) {
+		// 			panic("n(x) is Inf")
+		// 		}
+		// 		if math.IsNaN(density.Values[i]) {
+		// 			println("n(x) is NaN")
+		// 		}
+		// 	}
+		// }
+
 	}
 	return []string{DensityPerCathodeElectronFluxKey}, []any{density}, nil
 }
@@ -129,7 +198,7 @@ func GlowDischargeDensity(m *model.Model) ([]string, []any, error) {
 	diffusionLoss := 0.
 	if !m.Parameters.NoDiffusionLoss {
 		xm := densityPerCathodeElectronFlux.Step * float64(firstDensityPeak)
-		d2MDensityIntegral, err := densityPerCathodeElectronFlux.TrapezoidIntegration(m.Parameters.CathodeFallLength, xm)
+		d2MDensityIntegral, err := densityPerCathodeElectronFlux.TrapezoidIntegration(m.Parameters.CathodeFallLength, xm, true)
 		if err != nil {
 			return nil, nil, err
 		}

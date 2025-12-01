@@ -70,15 +70,25 @@ func SumIntSlice[T constraints.Integer](arr []T) (sum T) {
 	return
 }
 
-func SumFloat64Slice(arr []float64) (sum float64) { // Kahan's algorithm
+func SumFloat64Slice(arr []float64, presort bool) (sum float64) { // Kahan's algorithm
 	compensation := 0.
-	summationOrder := Argsort(arr, true)
-	for i := range summationOrder {
-		y := arr[summationOrder[i]] - compensation
-		temp := sum + y
-		compensation = (temp - sum) - y
-		sum = temp
+	if presort {
+		summationOrder := Argsort(arr, true)
+		for i := range summationOrder {
+			y := arr[summationOrder[i]] - compensation
+			temp := sum + y
+			compensation = (temp - sum) - y
+			sum = temp
+		}
+	} else {
+		for i := range arr {
+			y := arr[i] - compensation
+			temp := sum + y
+			compensation = (temp - sum) - y
+			sum = temp
+		}
 	}
+
 	return sum
 }
 
