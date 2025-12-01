@@ -37,10 +37,7 @@ type Model struct {
 	XStep float64
 
 	// lookUpPotential         []float64
-	lookupEFieldFromPotentialInverse     []float64
-	lookupEFieldFromPotentialStep        float64
-	lookupEFieldFromPotentialStepInverse float64
-	LookupEnergy                         []float64
+	LookupEnergy []float64
 	// LookupInverseVelocity     []float64
 	// GridInverseMu           []float64
 	lookupMNumerator []float64
@@ -153,13 +150,6 @@ func NewModel(parameters config.ModelParameters) *Model {
 		m.LookupEnergy[gridNode] = float64(gridNode) * m.Parameters.EnergyStep
 		m.lookupMNumerator[gridNode] = m.Parameters.GasDensity * m.Parameters.CrossSectionsData().TotalCrossSectionAt(m.LookupEnergy[gridNode]) * math.Sqrt(m.LookupEnergy[gridNode])
 
-	}
-
-	m.lookupEFieldFromPotentialStep = 0.5 * parameters.EnergyStep
-	m.lookupEFieldFromPotentialStepInverse = 1. / m.lookupEFieldFromPotentialStep
-	m.lookupEFieldFromPotentialInverse = make([]float64, int((m.Vc+m.Va+5+0.1)*m.lookupEFieldFromPotentialStepInverse))
-	for i := range m.lookupEFieldFromPotentialInverse {
-		m.lookupEFieldFromPotentialInverse[i] = 1. / m.EFieldFromPotential(-(float64(i)+0.5)*m.lookupEFieldFromPotentialStep)
 	}
 	// m.GridInverseMu = make([]float64, int(1./m.MuStep)+1)
 	// for muNode := range m.GridInverseMu {
@@ -396,9 +386,9 @@ func (m *Model) nextCollision(p *Particle) (collisionDescription *lxgata.Collisi
 
 		var M, G float64
 		if highEnergyAligned {
-			M = m.lookupMNumerator[highEnergyCellIndex] * -m.lookupEFieldFromPotentialInverse[int((p.totEnergy-highEnergy)*m.lookupEFieldFromPotentialStepInverse)] //m.EFieldFromPotential(-(p.totEnergy - highEnergy))
+			M = m.lookupMNumerator[highEnergyCellIndex] / -m.EFieldFromPotential(-(p.totEnergy - highEnergy))
 		} else {
-			M = m.Parameters.GasDensity * m.Parameters.CrossSectionsData().TotalCrossSectionAt(highEnergy) * math.Sqrt(highEnergy) * -m.lookupEFieldFromPotentialInverse[int((p.totEnergy-highEnergy)*m.lookupEFieldFromPotentialStepInverse)] //m.EFieldFromPotential(-(p.totEnergy - highEnergy))
+			M = m.Parameters.GasDensity * m.Parameters.CrossSectionsData().TotalCrossSectionAt(highEnergy) * math.Sqrt(highEnergy) / -m.EFieldFromPotential(-(p.totEnergy - highEnergy))
 		}
 
 		var higherVelocity, lowerVelocity float64
