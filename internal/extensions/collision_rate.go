@@ -23,16 +23,13 @@ func SingleElectronCollisionRate(model *model.Model) ([]string, []any, error) {
 	// detailedCollisionsLowerMargin := map[string]utils.GriddedInterval{}
 	// detailedCollisionsUpperMargin := map[string]utils.GriddedInterval{}
 	for collType, distribution := range model.CollisionAtCell {
-		if model.CollisionAtCell[collType] != nil {
+		if distribution != nil {
 			collisionsOfType := utils.GriddedInterval{Values: make([]float64, model.NumCells), Step: model.XStep}
 			marginsOfType := utils.GriddedInterval{Values: make([]float64, model.NumCells), Step: model.XStep}
 			outside := utils.GriddedInterval{Values: make([]float64, model.NumCells), Step: model.XStep}
 			for xIndex := range model.NumCells {
-				xCollisionsMean, xCollisionsVariance := distribution[xIndex].MeanAndVariance()
-				collisionsOfType.Values[xIndex] = xCollisionsMean / model.XStep
-				marginsOfType.Values[xIndex] = utils.EstimateMargin(0.95, xCollisionsVariance, model.TotalElectronsEmittedOnCathode) / model.XStep
-				// 1.96 is double-sided quantile for 95% confidence
-				outside.Values[xIndex] = model.CollisionOutside[collType][xIndex].Mean()
+				collisions, margin := distribution[xIndex].MeanWithErrorMargin(0.95)
+				collisionsOfType.Values[xIndex], marginsOfType.Values[xIndex] = collisions/model.XStep, margin/model.XStep
 			}
 			collisionsOfType.Values = append(collisionsOfType.Values, collisionsOfType.Values[len(collisionsOfType.Values)-1])
 			collisionsOfType.Values = append(collisionsOfType.Values, collisionsOfType.Values[len(collisionsOfType.Values)-1])
@@ -44,7 +41,7 @@ func SingleElectronCollisionRate(model *model.Model) ([]string, []any, error) {
 		}
 	}
 	for key, val := range model.DetailedCollisionAtCell {
-		if model.DetailedCollisionAtCell[key] != nil {
+		if val != nil {
 			currentCollisions := utils.GriddedInterval{Values: make([]float64, model.NumCells), Step: model.XStep}
 			// lowerMargins := utils.GriddedInterval{Values: make([]float64, model.NumCells), Step: model.XStep}
 			// upperMargins := utils.GriddedInterval{Values: make([]float64, model.NumCells), Step: model.XStep}

@@ -57,5 +57,13 @@ func J2eV(val float64) float64 {
 
 func EV2electronVelocity(energy float64) (v float64) {
 	v = math.Sqrt(2. * energy * constants.ElectronChargeToMassRatio)
+	if math.IsNaN(v) {
+		println("v is nan")
+	}
+	return
+}
+
+func ElectronVelocity2eV(v float64) (energy float64) {
+	energy = 0.5 * v * v * constants.ElectronMassToChargeRatio
 	return
 }

@@ -344,6 +344,7 @@ type ModelParameters struct {
 	CountNulls            bool
 	CalculateDistribution bool
 	DebugOutput           bool
+	CellTimeWeighting     bool
 
 	SupressSpinner bool
 
@@ -453,8 +454,8 @@ var defaultValues = map[string]any{ // in SI-eV
 	"CalculateCurrentDensity":               false,
 	"Volumetric":                            false,
 	"CountNulls":                            false,
-	"EnergyDiscretizationStep":              0.1,
-	"MuDiscretizationStep":                  1 / 90.,
+	"EnergyDiscretizationStep":              0.05,
+	"MuDiscretizationStep":                  1 / 50.,
 	"SourceIntegralRelativeMargin":          0.05,
 }
 
@@ -809,7 +810,7 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 	}
 
 	scatteringMode := map[string]lxgata.ScatteringMode{
-		"Born":            lxgata.Born,
+		"BornBethe":       lxgata.Born,
 		"ScreenedCoulomb": lxgata.Coulomb,
 		"Isotropic":       lxgata.Isotropic,
 	}

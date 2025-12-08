@@ -9,14 +9,14 @@ import (
 )
 
 const (
-	CathodeElectronCurrentFractionKey               = "CathodeElectronFlux"
-	CathodeElectronCurrentFractionMarginKey         = "CathodeElectronFluxMargin"
-	CathodeIonCurrentFractionKey                    = "CathodeIonFlux"
-	CathodeIonCurrentFractionMarginKey              = "CathodeIonFluxMargin"
-	FirstDensityPeakIndexKey                        = "FirstDensityPeakIndex"
-	SourceIntegralPerCathodeElectronFluxKey         = "SingleElectronSourceIntegral"
-	SourceIntegralPerCathodeElectronFluxVarianceKey = "SingleElectronSourceIntegralMargin"
-	DensityPerCathodeElectronFluxKey                = "DensityPerCathodeElectronFluxKey"
+	CathodeElectronCurrentFractionKey             = "CathodeElectronFlux"
+	CathodeElectronCurrentFractionMarginKey       = "CathodeElectronFluxMargin"
+	CathodeIonCurrentFractionKey                  = "CathodeIonFlux"
+	CathodeIonCurrentFractionMarginKey            = "CathodeIonFluxMargin"
+	FirstDensityPeakIndexKey                      = "FirstDensityPeakIndex"
+	SourceIntegralPerCathodeElectronFluxKey       = "SingleElectronSourceIntegral"
+	SourceIntegralPerCathodeElectronFluxMarginKey = "SingleElectronSourceIntegralMargin"
+	DensityPerCathodeElectronFluxKey              = "DensityPerCathodeElectronFluxKey"
 )
 
 func DensityPerCathodeElectronFlux(m *model.Model) ([]string, []any, error) {
@@ -190,9 +190,9 @@ func GlowDischargeDensity(m *model.Model) ([]string, []any, error) {
 	firstDensityPeak := utils.ArgFirstPeak(densityPerCathodeElectronFlux.Values)
 	densityPerCathodeElectronFlux.Values = append(densityPerCathodeElectronFlux.Values, densityPerCathodeElectronFlux.Values[len(densityPerCathodeElectronFlux.Values)-1])
 	// 	// j/q = phi_{e0} * (1 + \int_0^x_m { S_n(x) } dx)
-	sumMean, sumVariance := m.IonizationsSumUpToCell[firstDensityPeak-1].MeanAndVariance()
+	sumMean, sumMargin := m.IonizationsSumUpToCell[firstDensityPeak-1].MeanWithErrorMargin(0.95)
 	aggPlus1 := m.IonizationsSumUpToCell[firstDensityPeak-1]
-	aggPlus1.Sum += m.TotalElectronsEmittedOnCathode
+	aggPlus1.IncrementBy1()
 	sumPlus1Mean := aggPlus1.Mean()
 
 	diffusionLoss := 0.
@@ -211,8 +211,6 @@ func GlowDischargeDensity(m *model.Model) ([]string, []any, error) {
 	sumMean -= diffusionLoss
 
 	//now sumPlus1Mean is 1 + 1/gamma with respect to abmipolar diffusion losses, that is 1 + integral(S(x) - D_a*n(x)/Lambda^2, 0, x0)
-
-	sumMargin := utils.EstimateMargin(0.95, sumVariance, m.TotalElectronsEmittedOnCathode)
 	var electronCurrentFraction, electronCurrentFractionMargin float64
 	electronCurrentFraction = 1. / sumPlus1Mean
 	electronCurrentFractionMargin = sumMargin / (sumPlus1Mean * sumPlus1Mean)
@@ -234,7 +232,7 @@ func GlowDischargeDensity(m *model.Model) ([]string, []any, error) {
 			CathodeIonCurrentFractionMarginKey,
 			FirstDensityPeakIndexKey,
 			SourceIntegralPerCathodeElectronFluxKey,
-			SourceIntegralPerCathodeElectronFluxVarianceKey,
+			SourceIntegralPerCathodeElectronFluxMarginKey,
 		}, []any{
 			electronCurrentFraction,
 			electronCurrentFractionMargin,
@@ -242,6 +240,6 @@ func GlowDischargeDensity(m *model.Model) ([]string, []any, error) {
 			cathodeIonCurrentFractionMargin,
 			firstDensityPeak,
 			sumMean,
-			sumVariance,
+			sumMargin,
 		}, nil
 }

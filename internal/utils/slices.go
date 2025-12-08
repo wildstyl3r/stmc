@@ -9,6 +9,33 @@ import (
 	"golang.org/x/exp/constraints"
 )
 
+type MutableMap[K comparable, V any] struct {
+	keys   map[K]int
+	values []V
+}
+
+func NewMutableMap[K comparable, V any]() MutableMap[K, V] {
+	return MutableMap[K, V]{
+		keys:   make(map[K]int),
+		values: make([]V, 0),
+	}
+}
+
+func (m *MutableMap[K, V]) Keys() (keys []K) {
+	for k := range m.keys {
+		keys = append(keys, k)
+	}
+	return
+}
+
+func (m *MutableMap[K, V]) GetPointer(key K) *V {
+	if index, exist := m.keys[key]; exist {
+		return &m.values[index]
+	} else {
+		return nil
+	}
+}
+
 func Argmax[T cmp.Ordered](arr []T) (argmax int) {
 	for i := range arr {
 		if cmp.Compare(arr[i], arr[argmax]) == 1 {

@@ -13,15 +13,14 @@ import (
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
-func sourceIntegralMonteCarloF(parameters config.ModelParameters, requirePrecision bool) (sumMean, sumVariance float64, m *model.Model) {
+func sourceIntegralMonteCarloF(parameters config.ModelParameters, requirePrecision bool) (sumMean, sumMargin float64, m *model.Model) {
 	m = model.NewModel(parameters)
 	LoadExtensions(m.DataHub)
 	m.Run(func(m *model.Model) int {
 		if m.TotalElectronsEmittedOnCathode == 0 {
 			return m.Parameters.NElectrons
 		} else {
-			sumMean, sumVariance = m.GetMetrics(SourceIntegralPerCathodeElectronFluxKey).(float64), m.GetMetrics(SourceIntegralPerCathodeElectronFluxVarianceKey).(float64)
-			sumMargin := utils.EstimateMargin(0.95, sumVariance, m.TotalElectronsEmittedOnCathode)
+			sumMean, sumMargin = m.GetMetrics(SourceIntegralPerCathodeElectronFluxKey).(float64), m.GetMetrics(SourceIntegralPerCathodeElectronFluxMarginKey).(float64)
 			if parameters.SourceIntegralRelativeMargin < sumMargin/sumMean && parameters.SourceIntegralRelativeMargin != 0 && requirePrecision {
 				return m.Parameters.AddByNElectrons
 			} else {
@@ -32,7 +31,7 @@ func sourceIntegralMonteCarloF(parameters config.ModelParameters, requirePrecisi
 	if math.IsNaN(sumMean) {
 		fmt.Println("integral is NaN")
 	}
-	return sumMean, sumVariance, m
+	return sumMean, sumMargin, m
 }
 
 // not applicable for UniformField
@@ -84,7 +83,7 @@ func sourceIntegralCalculationStep(requirePrecision bool, parameters *config.Mod
 			SourceIntegralDifference:                difference,
 			SourceIntegralAnalytic:                  sourceIntegralAnalytic,
 			SourceIntegralMonteCarlo:                sourceIntegralMonteCarlo,
-			SourceIntegralMargin:                    utils.EstimateMargin(0.95, sourceIntegralVariance, stepModel.TotalElectronsEmittedOnCathode),
+			SourceIntegralMargin:                    utils.EstimateMargin(0.95, sourceIntegralVariance, float64(stepModel.TotalElectronsEmittedOnCathode)),
 			GammaAnalytic:                           1. / sourceIntegralAnalytic,
 			GammaMonteCarlo:                         1. / sourceIntegralMonteCarlo,
 			MeanElectronEnergyAtAnode:               stepModel.MeanElectronEnergyAtAnode,

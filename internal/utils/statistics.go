@@ -12,68 +12,250 @@ type Number interface {
 	constraints.Float | constraints.Integer
 }
 
-type Aggregation struct {
-	Sum, Number int
+type WeightedAggregation struct {
+	sum              KahanSummable
+	squaresSum       KahanSummable
+	weightSum        KahanSummable
+	weightSquaresSum KahanSummable
+}
 
-	DevSquareSum float64
+func (a *WeightedAggregation) Update(values, weights []float64) {
+	if weights == nil {
+		for i := range values {
+			a.sum.Add(values[i])
+			a.weightSum.Add(1)
+			a.squaresSum.Add(values[i] * values[i])
+			a.weightSquaresSum.Add(1)
+		}
+	} else {
+		for i := range values {
+			a.sum.Add(values[i] * weights[i])
+			a.weightSum.Add(weights[i])
+			a.squaresSum.Add(values[i] * values[i] * weights[i])
+			a.weightSquaresSum.Add(weights[i] * weights[i])
+		}
+	}
+	// a.sum.Add(SumFloat64Slice(values, true))
+	// a.WeightSum.Add(SumFloat64Slice(weights, true))
+}
+
+func (a *WeightedAggregation) UpdateK(values, weights []KahanSummable) {
+	if weights == nil {
+		for i := range values {
+			v := values[i].Val()
+			a.sum.Add(v)
+			a.weightSum.Add(1)
+			a.squaresSum.Add(v * v)
+			a.weightSquaresSum.Add(1)
+		}
+	} else {
+		for i := range values {
+			v, w := values[i].Val(), weights[i].Val()
+			a.sum.Add(v * w)
+			a.weightSum.Add(w)
+			a.squaresSum.Add(v * v * w)
+			a.weightSquaresSum.Add(w * w)
+		}
+	}
+	// a.sum.Add(SumFloat64Slice(values, true))
+	// a.WeightSum.Add(SumFloat64Slice(weights, true))
+}
+func (a *WeightedAggregation) UpdateIK(values []int, weights []KahanSummable) {
+	if weights == nil {
+		for i := range values {
+			v := float64(values[i])
+			a.sum.Add(v)
+			if math.IsNaN(a.sum.val) {
+				println("a.sum  is nan")
+			}
+			a.weightSum.Add(1)
+			a.squaresSum.Add(v * v)
+			a.weightSquaresSum.Add(1)
+		}
+	} else {
+		for i := range values {
+			v, w := float64(values[i]), weights[i].Val()
+			a.sum.Add(v * w)
+			if math.IsNaN(a.sum.val) {
+				println("a.sum  is nan")
+			}
+			a.weightSum.Add(w)
+			a.squaresSum.Add(v * v * w)
+			a.weightSquaresSum.Add(w * w)
+		}
+	}
+
+	// a.sum.Add(SumFloat64Slice(values, true))
+	// a.WeightSum.Add(SumFloat64Slice(weights, true))
+}
+
+func (a *WeightedAggregation) IncrementBy1() {
+	a.squaresSum.Add(2*a.sum.Val() + a.weightSum.Val())
+	a.sum.Add(a.weightSum.Val())
+}
+
+func (a *WeightedAggregation) Mean() float64 {
+	return a.sum.Val() / a.weightSum.Val()
+}
+
+func (a *WeightedAggregation) meanAndVariance() (float64, float64) {
+	if a.sum.val == 0 {
+		return 0, 0
+	}
+	return a.Mean(), (a.weightSum.Val()*a.squaresSum.Val() - a.sum.Val()*a.sum.Val()) / (a.weightSum.Val()*a.weightSum.Val() - a.weightSquaresSum.Val())
+}
+
+func (a *WeightedAggregation) MeanWithErrorMargin(confidenceP float64) (float64, float64) {
+	m, v := a.meanAndVariance()
+	if v == 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+		return m, 0
+	}
+	return m, distuv.UnitNormal.Quantile(1.-(1.-confidenceP)*0.5) * math.Sqrt(v/a.EffectiveSampleSize()) //EstimateMargin(confidenceP, v, a.EffectiveSampleSize())
+}
+
+func (a *WeightedAggregation) EffectiveSampleSize() float64 {
+	ws := a.weightSum.Val()
+	return ws * ws / a.weightSquaresSum.Val()
+}
+
+type WeightedDistribution struct {
+	Cells []KahanSummable
+	Mass  KahanSummable
+}
+
+func NewWeightedDistribution(cellNumber int) WeightedDistribution {
+	return WeightedDistribution{
+		Cells: make([]KahanSummable, cellNumber),
+	}
+}
+
+type WeightedDistributionUpdate struct {
+	cell  int
+	value float64
+}
+
+func (a *WeightedDistribution) Update(update []WeightedDistributionUpdate, weights []float64) {
+	for element := range update {
+		a.Cells[update[element].cell].Add(update[element].value * weights[element])
+	}
+	a.Mass.Add(SumFloat64Slice(weights, true))
+}
+
+func (a *WeightedDistribution) Mean(cell int) float64 {
+	if a.Mass.Val() == 0 {
+		return 0
+	}
+	return a.Cells[cell].Val() / a.Mass.Val()
+}
+
+type AggregatedDistribution struct {
+	Cells []AggregationF
+}
+
+func NewAggregatedDistribution(cellNumber int) AggregatedDistribution {
+	return AggregatedDistribution{
+		Cells: make([]AggregationF, cellNumber),
+	}
+}
+
+func (d *AggregatedDistribution) Update(values []WeightedDistribution) {
+	for cell := range d.Cells {
+		cellValues := make([]float64, len(values))
+		for sample := range values {
+			cellValues[sample] = values[sample].Mean(cell)
+		}
+		d.Cells[cell].Update(cellValues)
+	}
 }
 
 type AggregationF struct {
-	Sum             float64
-	sumCompensation float64
-	Number          int
+	sum    KahanSummable
+	Number int
 
-	dssCompensation float64
-	DevSquareSum    float64
+	devSquareSum KahanSummable
+}
+
+func (a AggregationF) MeanWithErrorMargin(confidenceP float64) (float64, float64) {
+	m, v := a.meanAndVariance()
+	return m, EstimateMargin(confidenceP, v, float64(a.Number))
 }
 
 func (a *AggregationF) Update(values []float64) {
-	y := SumFloat64Slice(values, true) - a.sumCompensation
-	temp := a.Sum + y
-	a.sumCompensation = (temp - a.Sum) - y
-	a.Sum = temp
+	a.sum.Add(SumFloat64Slice(values, true))
 	a.Number += len(values)
-	mean := a.Sum / float64(a.Number)
+	mean := a.sum.Val() / float64(a.Number)
 	dsSumTerms := make([]float64, len(values))
 	for i := range values {
 		dev := mean - values[i]
 		dsSumTerms[i] = dev * dev
 	}
 
-	y = SumFloat64Slice(dsSumTerms, true) - a.dssCompensation
-	temp = a.DevSquareSum + y
-	a.dssCompensation = (temp - a.DevSquareSum) - y
-	a.DevSquareSum = temp
+	a.devSquareSum.Add(SumFloat64Slice(dsSumTerms, true))
+}
+
+func (a *AggregationF) UpdateK(values []KahanSummable) {
+	terms := make([]float64, len(values))
+	for i := range terms {
+		terms[i] = values[i].Val()
+	}
+	a.sum.Add(SumFloat64Slice(terms, true))
+	a.Number += len(values)
+	mean := a.sum.Val() / float64(a.Number)
+	dsSumTerms := make([]float64, len(values))
+	for i := range values {
+		dev := mean - terms[i]
+		dsSumTerms[i] = dev * dev
+	}
+
+	a.devSquareSum.Add(SumFloat64Slice(dsSumTerms, true))
 }
 
 func (a *AggregationF) Mean() float64 {
-	return a.Sum / float64(a.Number)
+	return a.sum.Val() / float64(a.Number)
 }
 
-func (a *AggregationF) MeanAndVariance() (float64, float64) {
+func (a *AggregationF) meanAndVariance() (float64, float64) {
 	//variance estimation may be slightly worse than in non-aggregated case, but we should be OK with that
-	return a.Mean(), a.DevSquareSum / float64(a.Number-1)
+	return a.Mean(), a.devSquareSum.Val() / float64(a.Number-1)
+}
+
+type Aggregation struct {
+	sum, Number int
+
+	DevSquareSum KahanSummable
+}
+
+func (a *Aggregation) MeanWithErrorMargin(confidenceP float64) (float64, float64) {
+	m, v := a.meanAndVariance()
+	if v == 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+		return m, 0
+	}
+	return m, distuv.UnitNormal.Quantile(1.-(1.-confidenceP)*0.5) * math.Sqrt(v/float64(a.Number)) //EstimateMargin(confidenceP, v, a.EffectiveSampleSize())
+}
+
+func (a *Aggregation) IncrementBy1() {
+	a.sum += a.Number
 }
 
 func (a *Aggregation) Update(values []int) {
-	a.Sum += SumIntSlice(values)
+	a.sum += SumIntSlice(values)
 	a.Number += len(values)
-	mean := float64(a.Sum) / float64(a.Number)
+	mean := float64(a.sum) / float64(a.Number)
 	dsSumTerms := make([]float64, len(values))
 	for i := range values {
 		dev := mean - float64(values[i])
 		dsSumTerms[i] = dev * dev
 	}
-	a.DevSquareSum += SumFloat64Slice(dsSumTerms, false)
+	a.DevSquareSum.Add(SumFloat64Slice(dsSumTerms, true))
 }
 
 func (a *Aggregation) Mean() float64 {
-	return float64(a.Sum) / float64(a.Number)
+	return float64(a.sum) / float64(a.Number)
 }
 
-func (a *Aggregation) MeanAndVariance() (float64, float64) {
+func (a *Aggregation) meanAndVariance() (float64, float64) {
 	//variance estimation may be slightly worse than in non-aggregated case, but we should be OK with that
-	return a.Mean(), a.DevSquareSum / float64(a.Number-1)
+	return a.Mean(), a.DevSquareSum.Val() / float64(a.Number-1)
 }
 
 func Mean[T Number](s []T) (mean float64) {
@@ -102,10 +284,6 @@ func MeanAndVariance[T Number](s []T, unbiased bool) (mean, variance float64) {
 func Variance[T Number](s []T, unbiased bool) float64 {
 	_, v := MeanAndVariance(s, unbiased)
 	return v
-}
-
-func NormalMargin(confidenceP, variance float64, sampleSize int) float64 {
-	return distuv.UnitNormal.Quantile(1.-(1.-confidenceP)*0.5) * math.Sqrt(variance/float64(sampleSize))
 }
 
 func WilsonHilfertyCoefficient[T constraints.Integer](confidenceP float64, k T, lower bool) float64 {
@@ -184,18 +362,17 @@ func StudentedMarginFromData(confidenceP float64, data []float64) float64 {
 	quantileFactor := dist.Quantile(1 - (1-confidenceP)/2) // make it two-sided
 	return quantileFactor * math.Sqrt(Variance(data, true)/float64(len(data)))
 }
-func EstimateMargin(confidenceP, variance float64, sampleSize int) float64 {
-	if sampleSize > 33 {
-		return NormalMargin(confidenceP, variance, sampleSize)
-	} else {
-		return StudentedMargin(confidenceP, variance, sampleSize)
-	}
-}
 
-func StudentedMargin(confidenceP, variance float64, sampleSize int) float64 {
-	dist := distuv.StudentsT{Nu: float64(sampleSize - 1), Sigma: 1}
-	quantileFactor := dist.Quantile(1 - (1-confidenceP)/2) // make it two-sided
-	return quantileFactor * math.Sqrt(variance/float64(sampleSize))
+func EstimateMargin(confidenceP, variance, sampleSize float64) float64 {
+	var quantile float64
+	twoSidedP := 1. - (1.-confidenceP)*0.5
+	if sampleSize > 33 {
+		quantile = distuv.UnitNormal.Quantile(twoSidedP)
+	} else {
+		quantile = distuv.StudentsT{Nu: sampleSize - 1, Sigma: 1}.Quantile(twoSidedP)
+	}
+	se := math.Sqrt(variance / sampleSize)
+	return quantile * se
 }
 
 type SampleCharacteristics struct {

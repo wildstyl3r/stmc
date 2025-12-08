@@ -6,7 +6,7 @@ import "math"
 func (s *Model) VfromL(x float64) (V float64) {
 	if x < s.Parameters.CathodeFallLength { //&& r2 < s.cathodeRadius2 {
 		//V(x) =  (-((V_c/d + C_E)(x/d - 2) + C_E)x + C_v)
-		return math.FMA(
+		V = math.FMA(
 			-math.FMA(
 				math.FMA(
 					s.Vc,
@@ -22,10 +22,14 @@ func (s *Model) VfromL(x float64) (V float64) {
 		)
 	} else { //if r2 > s.boundaryRadius2 {
 		// V(x) = -s.Va / (L-d) * (L - x) = C_E*(L-x)
-		return s.Parameters.ConstEField * (s.Parameters.SimulationLength() - x)
+		V = s.Parameters.ConstEField * (s.Parameters.SimulationLength() - x)
 		// } else {
 		// 	return s.VfromL(x, 0) * (s.boundaryThickness + s.Parameters.CathodeRadius - math.Sqrt(r2)) / s.boundaryThickness
 	}
+	if math.IsNaN(V) {
+		println("V is nan")
+	}
+	return
 }
 
 // g^{-1}

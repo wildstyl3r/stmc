@@ -18,9 +18,10 @@ type Particle struct {
 	prevX           float64
 	prevMuSign      float64
 	// params
-	eStar             float64 //[eV]
-	totEnergy         float64 //aka Vcap
-	_debug_IonEjected bool
+	// eStar                 float64 //[eV]
+	// totEnergy             float64 //aka Vcap
+	ejectedFromIonization bool
+	trajectory            TrajectoryConstants
 
 	origin int
 }
@@ -42,36 +43,211 @@ func (m *Model) newParticle(origin int) Particle {
 		p.sinEta, p.cosEta = math.Sin(eta), math.Cos(eta)
 	}
 	p.recalcParams(m)
+	p.updateDynamicTimeMotionConstants(m)
 	return p
 }
 
 func (p *Particle) getAxialEnergy() float64 {
-	return p.eKinetic - p.eStar
+	return p.eKinetic - p.trajectory.radialEnergy
 }
 
 func (p *Particle) getPotentialEnergy() float64 {
-	return p.totEnergy - p.eKinetic
+	return p.trajectory.totEnergy - p.eKinetic
 }
 
-func (p *Particle) getStopPotential() float64 {
-	return p.totEnergy - p.eStar
+func (trajectory *TrajectoryConstants) getStopPotential() float64 {
+	return trajectory.radialEnergy - trajectory.totEnergy
 }
 
-func (p *Particle) getAxialEnergyAtSheathBoundary(m *Model) float64 {
-	return p.totEnergy - m.Va - p.eStar
+func (trajectory *TrajectoryConstants) getTurnaroundX(m *Model) float64 {
+	return m.LfromV(trajectory.getStopPotential())
 }
 
-func (p *Particle) constEXAtTime(t float64, s *Model) (x float64) {
-	return p.x + utils.EV2electronVelocity(p.getAxialEnergy())*t + s.constFieldAcceleration*t*t/2
+type TrajectoryConstants struct {
+	c1, c2, amplitude, phase, totEnergy, radialEnergy float64
+}
+
+func (p *Particle) updateDynamicTimeMotionConstants(m *Model) {
+	var xSheathStart, eSheathStart float64
+	if m.Parameters.CathodeFallLength < p.x {
+		xSheathStart = m.Parameters.CathodeFallLength
+		eSheathStart = p.getAxialEnergy() - m.VfromL(p.x) - m.VfromL(m.Parameters.CathodeFallLength)
+	} else {
+		xSheathStart = p.x
+		eSheathStart = p.getAxialEnergy()
+	}
+	p.trajectory.c1 = xSheathStart - m.timeMotionP
+	p.trajectory.c2 = math.Copysign(m.Parameters.CathodeFallLength*math.Sqrt(eSheathStart/m.timeMotionK), p.mu)
+	p.trajectory.amplitude = math.Sqrt(p.trajectory.c1*p.trajectory.c1 + p.trajectory.c2*p.trajectory.c2)
+	p.trajectory.phase = math.Atan(p.trajectory.c1 / p.trajectory.c2)
+}
+
+func (trajectory *TrajectoryConstants) SheathPositionAtTime(t float64, m *Model) (x float64) {
+	return trajectory.amplitude*math.Sin(m.timeMotionW*t+trajectory.phase) + m.timeMotionP
+}
+
+func (trajectory *TrajectoryConstants) SheathTimeBetweenPositionsNoReversal(from, to float64, m *Model) (t float64) {
+	fromTrig := (from - m.timeMotionP) / trajectory.amplitude
+	toTrig := (to - m.timeMotionP) / trajectory.amplitude
+	if math.Abs(fromTrig) > 1 {
+		if math.Abs(fromTrig)-1 > 1e-5 {
+			println("strange from")
+		}
+		fromTrig = math.Copysign(1., fromTrig)
+	}
+	if math.Abs(toTrig) > 1 {
+		if math.Abs(toTrig)-1 > 1e-5 {
+			println("strange to")
+		}
+		toTrig = math.Copysign(1., toTrig)
+	}
+	if to-from > 0 {
+		t = (math.Asin(toTrig) - math.Asin(fromTrig)) / m.timeMotionW
+	} else {
+		t = -(math.Asin(toTrig) - math.Asin(fromTrig)) / m.timeMotionW
+	}
+
+	if t < 0 {
+		println("t < 0")
+	}
+	return t
+}
+
+func (trajectory *TrajectoryConstants) ConstFieldTimeBetweenPositionsNoReversal(from, to float64, m *Model) (t float64) {
+	vTo, vFrom := trajectory.axialVelocityAt(to, m), trajectory.axialVelocityAt(from, m)
+	if to-from > 0 {
+		t = (vTo - vFrom) / m.constFieldAcceleration
+	} else {
+		t = -(vTo - vFrom) / m.constFieldAcceleration
+	}
+
+	if t < 0 {
+		println("t < 0")
+	}
+	return
+}
+
+func (trajectory *TrajectoryConstants) TimeBetweenPositionsNoReversal(from, to float64, m *Model) (t float64) {
+	if from > m.Parameters.CathodeFallLength {
+		if to > m.Parameters.CathodeFallLength {
+			t = trajectory.ConstFieldTimeBetweenPositionsNoReversal(from, to, m)
+
+			if math.IsNaN(t) {
+				println("t is nan")
+			}
+
+			if t < 0 {
+				println("t < 0")
+			}
+		} else {
+			t = trajectory.ConstFieldTimeBetweenPositionsNoReversal(from, m.Parameters.CathodeFallLength, m) +
+				trajectory.SheathTimeBetweenPositionsNoReversal(m.Parameters.CathodeFallLength, to, m)
+
+			if math.IsNaN(t) {
+				println("t is nan")
+			}
+
+			if t < 0 {
+				println("t < 0")
+			}
+		}
+	} else {
+		if to > m.Parameters.CathodeFallLength {
+			t = trajectory.SheathTimeBetweenPositionsNoReversal(from, m.Parameters.CathodeFallLength, m) +
+				trajectory.ConstFieldTimeBetweenPositionsNoReversal(m.Parameters.CathodeFallLength, to, m)
+
+			if math.IsNaN(t) {
+				println("t is nan")
+			}
+
+			if t < 0 {
+				println("t < 0")
+			}
+		} else {
+			t = trajectory.SheathTimeBetweenPositionsNoReversal(from, to, m)
+
+			if math.IsNaN(t) {
+				println("t is nan")
+			}
+
+			if t < 0 {
+				println("t < 0")
+			}
+		}
+	}
+	return t
+}
+
+func (trajectory *TrajectoryConstants) TFromX(p *Particle, x float64, future bool, m *Model) (t float64) {
+	if future {
+		if p.mu > 0 { //no reversal
+			if p.x > x { // ---------x----------p.x-->>-----
+				return math.NaN() //impossible
+			} else { // ---------p.x-->>------x---------
+				return trajectory.TimeBetweenPositionsNoReversal(p.x, x, m)
+			}
+		} else {
+			turnaroundPoint := trajectory.getTurnaroundX(m)
+			if p.x > x { // ---------x----------<<--p.x-----
+				if turnaroundPoint < x { // ----*----x----------<<--p.x-----
+					return trajectory.TimeBetweenPositionsNoReversal(p.x, x, m)
+				} else { // ---------x----*-----<<--p.x-----
+					return math.NaN()
+				}
+			} else { // ----*----<<--p.x---------x-----
+				return trajectory.TimeBetweenPositionsNoReversal(p.x, turnaroundPoint, m) + trajectory.TimeBetweenPositionsNoReversal(turnaroundPoint, x, m)
+			}
+		}
+	} else {
+		if p.mu > 0 { // no reversal
+			turnaroundPoint := trajectory.getTurnaroundX(m)
+			if p.x > x { // ---------x---->>--p.x-----
+				if turnaroundPoint < x { // ----*----x---->>--p.x-----
+					return trajectory.TimeBetweenPositionsNoReversal(x, p.x, m)
+				} else { // ----x---*---->>--p.x-----
+					return math.NaN()
+				}
+			} else { // --*-->>--p.x--------x-----
+				return trajectory.TimeBetweenPositionsNoReversal(x, turnaroundPoint, m) + trajectory.TimeBetweenPositionsNoReversal(turnaroundPoint, p.x, m)
+			}
+		} else {
+			if p.x > x { // ----x------p.x--<<-----
+				return math.NaN()
+			} else { // ----p.x--<<----x---------
+				return trajectory.TimeBetweenPositionsNoReversal(x, p.x, m)
+			}
+		}
+	}
+}
+
+func (trajectory *TrajectoryConstants) SheathEnergyAtTime(t float64, m *Model) (e float64) {
+	sp := trajectory.amplitude * math.Cos(m.timeMotionW*t+trajectory.phase) //C2*math.Cos(wt) - C1*math.Sin(wt)
+	energyEV := m.timeMotionK * sp * sp * m.inverseCathodeFallLength * m.inverseCathodeFallLength
+	return energyEV
+}
+
+func (trajectory *TrajectoryConstants) SheathTimeFromEnergy(e float64, m *Model) (t float64) {
+	return (math.Acos(math.Sqrt(e*m.Parameters.CathodeFallLength*m.Parameters.CathodeFallLength/m.timeMotionK)/trajectory.amplitude) - trajectory.phase) / m.timeMotionW
+}
+
+func (trajectory *TrajectoryConstants) axialVelocityAt(x float64, m *Model) (v float64) {
+	v = utils.EV2electronVelocity(trajectory.totEnergy + m.VfromL(x) - trajectory.radialEnergy)
+	if math.IsNaN(v) {
+		println("v is nan")
+	}
+	return
+}
+
+func (p *Particle) axialVelocityNow() (v float64) {
+	return utils.EV2electronVelocity(p.getAxialEnergy())
 }
 
 func (p *Particle) setEnergy(eKinetic float64, s *Model, zeroChangeAcceptable bool, setX bool) {
 	// p.MoveRadial(eKinetic, s, zeroChangeAcceptable)
 	// r2 := p.y*p.y + p.z*p.z
-	if eKinetic < p.eStar {
-		stopPotential := -p.getStopPotential()
-		fmt.Printf("stopPoint = %f\np: %v; %p\n", s.LfromV(stopPotential), p, p)
-		panic("eKinetic < p.eStar")
+	if eKinetic < p.trajectory.radialEnergy {
+		fmt.Printf("stopPoint = %f\np: %v; %p\n", p.trajectory.getTurnaroundX(s), p, p)
+		panic("eKinetic < p.trajectory.eStar")
 	}
 	if math.Abs(p.eKinetic-eKinetic) < 1e-16 && !zeroChangeAcceptable {
 		fmt.Printf("need to be at cell: %f coord by V is %f, coord real is %f\n", s.LfromV(-p.getPotentialEnergy())/s.XStep, s.LfromV(-p.getPotentialEnergy()), p.x)
@@ -94,22 +270,23 @@ func (p *Particle) setEnergy(eKinetic float64, s *Model, zeroChangeAcceptable bo
 	if s.Parameters.Volumetric {
 		p.updateExtraDims(s)
 	}
+	p.updateDynamicTimeMotionConstants(s)
 }
 
 func (p *Particle) recalcParams(s *Model) {
 	if math.IsNaN(p.mu) {
 		// panic("mu is nan")
 		fmt.Println("particle's mu is nan")
-		p.totEnergy = 0
+		p.trajectory.totEnergy = 0
 		return
 	}
-	p.eStar = p.eKinetic * (1 - p.mu*p.mu)
+	p.trajectory.radialEnergy = p.eKinetic * (1 - p.mu*p.mu)
 	// r2 := p.y*p.y + p.z*p.z
-	p.totEnergy = p.eKinetic + -s.VfromL(p.x)
-	if p.totEnergy < 0. {
+	p.trajectory.totEnergy = p.eKinetic + -s.VfromL(p.x)
+	if p.trajectory.totEnergy < 0. {
 		panic("total energy below 0")
 	}
-	if p.totEnergy > s.Va+s.Vc+5 {
+	if p.trajectory.totEnergy > s.Va+s.Vc+5 {
 		println("total energy greater than might ever be")
 	}
 
@@ -147,40 +324,24 @@ func (p *Particle) redirect(cosChi, cosPhi float64, m *Model) {
 		}
 	}
 	p.recalcParams(m)
-}
-
-func (p *Particle) getTimeIntervalsBetweenPositionsNoReversal(x1, x2, axialEnergy1_eV, axialEnergy2_eV float64, m *Model) (timeIntervals []float64) {
-	if m.Parameters.CathodeFallLength < x1 && m.Parameters.CathodeFallLength < x2 { // outside of sheath
-		timeIntervals = append(timeIntervals, m.ConstEFieldTime(axialEnergy1_eV, axialEnergy2_eV))
-	} else if x1 < m.Parameters.CathodeFallLength && m.Parameters.CathodeFallLength < x2 { // crossing sheath boundary accelerating
-		sheathBoundaryAxialEnergy := p.getAxialEnergyAtSheathBoundary(m)
-		timeIntervals = append(timeIntervals, m.SheathTime(x1, axialEnergy1_eV, sheathBoundaryAxialEnergy))
-		timeIntervals = append(timeIntervals, m.ConstEFieldTime(sheathBoundaryAxialEnergy, axialEnergy2_eV))
-	} else if x2 < m.Parameters.CathodeFallLength && m.Parameters.CathodeFallLength < x1 { //crossing sheath boundary decelerating
-		sheathBoundaryAxialEnergy := p.getAxialEnergyAtSheathBoundary(m)
-		timeIntervals = append(timeIntervals, m.ConstEFieldTime(axialEnergy1_eV, sheathBoundaryAxialEnergy))
-		timeIntervals = append(timeIntervals, m.SheathTime(m.Parameters.CathodeFallLength, sheathBoundaryAxialEnergy, axialEnergy2_eV))
-	} else { // in the sheath
-		timeIntervals = append(timeIntervals, m.SheathTime(x1, axialEnergy1_eV, axialEnergy2_eV))
-	}
-	return
+	p.updateDynamicTimeMotionConstants(m)
 }
 
 func (p *Particle) updateExtraDims(m *Model) {
 	/// updates particle's y and z, and sets new prev_bt value
 	var timeIntervalsToSum []float64
 	if math.Signbit(p.prevMuSign) != math.Signbit(p.mu) { //reversal occured
-		xRev := m.LfromV(-p.getStopPotential())
+		// xRev := m.LfromV(p.getStopPotential())
 
-		timeIntervalsToSum = p.getTimeIntervalsBetweenPositionsNoReversal(p.prevX, xRev, p.prevAxialEnergy, 0, m)
-		timeIntervalsToSum = append(timeIntervalsToSum, p.getTimeIntervalsBetweenPositionsNoReversal(xRev, p.x, 0, p.getAxialEnergy(), m)...)
+		// timeIntervalsToSum = p.getTimeIntervalsBetweenPositionsNoReversal(p.prevX, xRev, p.prevAxialEnergy, 0, m)
+		// timeIntervalsToSum = append(timeIntervalsToSum, p.getTimeIntervalsBetweenPositionsNoReversal(xRev, p.x, 0, p.getAxialEnergy(), m)...)
 
 	} else {
-		timeIntervalsToSum = p.getTimeIntervalsBetweenPositionsNoReversal(p.prevX, p.x, p.prevAxialEnergy, p.getAxialEnergy(), m)
+		// timeIntervalsToSum = p.getTimeIntervalsBetweenPositionsNoReversal(p.prevX, p.x, p.prevAxialEnergy, p.getAxialEnergy(), m)
 	}
 
 	timeBetweenCollisions := utils.SumFloat64Slice(timeIntervalsToSum, true)
 
-	p.y = p.sinEta * utils.EV2electronVelocity(p.eStar) * timeBetweenCollisions
-	p.z = p.cosEta * utils.EV2electronVelocity(p.eStar) * timeBetweenCollisions
+	p.y = p.sinEta * utils.EV2electronVelocity(p.trajectory.radialEnergy) * timeBetweenCollisions
+	p.z = p.cosEta * utils.EV2electronVelocity(p.trajectory.radialEnergy) * timeBetweenCollisions
 }

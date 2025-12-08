@@ -19,14 +19,14 @@ func LoadExtensions(dh *model.DataHubType) {
 		AmbipolarDiffusionCoefficientKey: DiffusionConstants,
 		CharacteristicDiffusionScaleKey:  DiffusionConstants,
 
-		DensityPerCathodeElectronFluxKey:                DensityPerCathodeElectronFlux,
-		CathodeElectronCurrentFractionKey:               GlowDischargeDensity,
-		CathodeElectronCurrentFractionMarginKey:         GlowDischargeDensity,
-		CathodeIonCurrentFractionKey:                    GlowDischargeDensity,
-		CathodeIonCurrentFractionMarginKey:              GlowDischargeDensity,
-		FirstDensityPeakIndexKey:                        GlowDischargeDensity,
-		SourceIntegralPerCathodeElectronFluxKey:         GlowDischargeDensity,
-		SourceIntegralPerCathodeElectronFluxVarianceKey: GlowDischargeDensity,
+		DensityPerCathodeElectronFluxKey:              DensityPerCathodeElectronFlux,
+		CathodeElectronCurrentFractionKey:             GlowDischargeDensity,
+		CathodeElectronCurrentFractionMarginKey:       GlowDischargeDensity,
+		CathodeIonCurrentFractionKey:                  GlowDischargeDensity,
+		CathodeIonCurrentFractionMarginKey:            GlowDischargeDensity,
+		FirstDensityPeakIndexKey:                      GlowDischargeDensity,
+		SourceIntegralPerCathodeElectronFluxKey:       GlowDischargeDensity,
+		SourceIntegralPerCathodeElectronFluxMarginKey: GlowDischargeDensity,
 	}
 	for name, ext := range extensions {
 		dh.Register(name, ext)
