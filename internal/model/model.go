@@ -757,7 +757,10 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 								case config.Equal:
 									ejected.eKinetic = 0.5 * particlePtr.eKinetic
 								case config.Opal:
-									w := utils.OpalIonizationShapeParameters[m.Parameters.Species]
+									w, exist := utils.OpalIonizationShapeParameters[m.Parameters.Species]
+									if !exist {
+										panic("species field not found in the configuration")
+									}
 									ejected.eKinetic = w * math.Tan(rand.Float64()*math.Atan(particlePtr.eKinetic/(2.*w)))
 								case config.UniformRandom:
 									ejected.eKinetic = particlePtr.eKinetic * rand.Float64()
