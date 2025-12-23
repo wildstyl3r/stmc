@@ -11,7 +11,7 @@ import (
 
 func CurrentDensityEquation(parameters config.ModelParameters) float64 {
 	dc, secondaryEmissionCoefficient, Vc, N := parameters.CathodeFallLength, gammaAnalyticF(parameters), parameters.CathodeFallPotential, parameters.GasDensity
-	ionDriftVelocity := utils.IonDriftVelocity[parameters.Species]
+	ionDriftVelocity := utils.IonDriftVelocity[parameters.GetSpeciesString()]
 	return (1 + secondaryEmissionCoefficient) * ionDriftVelocity(Vc, dc, N) * 2 * Vc / (dc * dc) * constants.FreeSpacePermittivityE0
 }
 

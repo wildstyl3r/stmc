@@ -66,6 +66,7 @@ const (
 	DetailedCollisionCounters                   = "DetailedCollisionCounters"
 	PlasmaDensity                               = "PlasmaDensity"
 	MeanEnergy                                  = "MeanEnergy"
+	MeanFreePath                                = "MeanFreePath"
 	NormalizedIonizationD                       = "NormalizedIonizationD"
 	MeanVelocityX                               = "MeanVelocityX"
 	MeanVelocityR                               = "MeanVelocityR"
@@ -77,6 +78,27 @@ func NewDataFlags() DataFlags {
 	return DataFlags{
 		all: flag.Bool("all", false, "save every available metric"),
 		Sequentials: map[string]sequentialDataItem{
+			MeanFreePath: {DataItem: DataItem{
+				SaveFlag: flag.Bool("mfp", true, "save mean free path"),
+				shortID:  "mfp",
+			},
+				values: func(m *model.Model) []DataFile {
+					dataFile := DataFile{
+						metricsName:   MeanFreePath,
+						indexName:     fmt.Sprintf("x (%s)", m.Parameters.OutputUnit(config.Length)),
+						valueName:     fmt.Sprintf("$\\lambda$ (%s)", m.Parameters.OutputUnit(config.Length)),
+						data:          make([]Row, m.NumCells),
+						confIntervals: true,
+					}
+					for x := range m.NumCells {
+						dataFile.data[x].index = m.XStep * float64(x)
+						dataFile.data[x].value, dataFile.data[x].margin = m.MeanFreePath[x].MeanWithErrorMargin(0.95)
+					}
+					return []DataFile{dataFile}
+				},
+				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
+				yUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
+			},
 			Potential: {
 				DataItem: DataItem{
 					SaveFlag: flag.Bool("p", false, "save potential"),
@@ -410,7 +432,7 @@ func NewDataFlags() DataFlags {
 					dataFile := DataFile{
 						metricsName: MeanEnergy,
 						indexName:   fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
-						valueName:   fmt.Sprintf("\\varepsilon(%s)", model.Parameters.OutputUnit(config.Energy)),
+						valueName:   fmt.Sprintf("$\\varepsilon(%s)$", model.Parameters.OutputUnit(config.Energy)),
 						data:        make([]Row, model.NumCells),
 					}
 
@@ -424,31 +446,65 @@ func NewDataFlags() DataFlags {
 						lookUpVelocity[eIndex] = math.Sqrt(utils.EV2J(model.Parameters.EnergyDiscretizationStep*(float64(eIndex)+0.5))) * energyRoot2Velocity
 					}
 
+					psiFIncrement := 1. / (float64(model.TotalElectronsEmittedOnCathode) * model.Parameters.EnergyDiscretizationStep * model.Parameters.MuDiscretizationStep)
+
 					for xIndex := 0; xIndex < model.NumCells; xIndex++ {
 						for eIndex := 0; eIndex < model.NumCellsE; eIndex++ {
 							currentEnergy := model.Parameters.EnergyDiscretizationStep * (float64(eIndex) + 0.5)
 							fXE := 0.
-							fXECompensation := 0.
+							fXE_mu := 0.
+							v_x_fXE := 0.
+							v_fXE := 0.
+							v_r_fXE := 0.
 							for muIndex := 0; muIndex < model.NumCellsMu; muIndex++ {
-								currentMu := max(-1, min(model.Parameters.MuDiscretizationStep*(float64(muIndex)+0.5)-1., 1))
+								currentMu := model.Parameters.MuDiscretizationStep*float64(muIndex) - 1.
 
 								f := 0.
 								if math.Abs(currentMu) > 0.0001 {
-									f = 1 / (lookUpVelocity[eIndex] * math.Abs(currentMu)) * float64(model.DistributionXEMu[xIndex][eIndex][muIndex])
+									f = psiFIncrement / (lookUpVelocity[eIndex] * math.Abs(currentMu)) * float64(model.DistributionXEMu[xIndex][eIndex][muIndex])
 								}
-								y := f - fXECompensation
-								temp := fXE + y
-								fXECompensation = (temp - fXE) - y
-								fXE = temp
+								fXE_mu += f * currentMu
+								fXE += f
+
+								v_x_fXE += f * lookUpVelocity[eIndex] * currentMu
+								v_fXE += f * lookUpVelocity[eIndex]
+								v_r_fXE += f * lookUpVelocity[eIndex] * math.Sqrt(1-currentMu*currentMu)
 							}
+							fXE_mu *= model.Parameters.MuDiscretizationStep
+							fXE *= model.Parameters.MuDiscretizationStep
+							v_x_fXE *= model.Parameters.MuDiscretizationStep
+							v_fXE *= model.Parameters.MuDiscretizationStep
+							v_r_fXE *= model.Parameters.MuDiscretizationStep
 
 							electronDensity[xIndex] += fXE
 
 							meanEnergy[xIndex] += fXE * currentEnergy
+							// de.driftVelocity[xIndex] += fXE * lookUpVelocity[eIndex]
+							// de.flux[xIndex] += v_x_fXE
+							// de.velocity[xIndex] += v_fXE
+							// de.radialVelocity[xIndex] += v_r_fXE
+							// de.rateIntegral[xIndex] += ionizationCS.CrossSectionAt(currentEnergy) * lookUpVelocity[eIndex] * fXE
 						}
+						electronDensity[xIndex] *= model.Parameters.EnergyDiscretizationStep
+
+						meanEnergy[xIndex] *= model.Parameters.EnergyDiscretizationStep
 						meanEnergy[xIndex] /= electronDensity[xIndex]
 						dataFile.data[xIndex].index = model.XStep * (float64(xIndex) + 0.5)
 						dataFile.data[xIndex].value = meanEnergy[xIndex]
+
+						// de.driftVelocity[xIndex] *= model.Parameters.EnergyDiscretizationStep
+						// de.driftVelocity[xIndex] /= de.electronDensity[xIndex]
+
+						// de.flux[xIndex] *= model.Parameters.EnergyDiscretizationStep
+						// de.velocity[xIndex] *= model.Parameters.EnergyDiscretizationStep
+						// de.velocity[xIndex] /= de.electronDensity[xIndex]
+						// de.radialVelocity[xIndex] *= model.Parameters.EnergyDiscretizationStep
+						// de.radialVelocity[xIndex] /= de.electronDensity[xIndex]
+
+						// de.rateIntegral[xIndex] *= model.Parameters.EnergyDiscretizationStep
+						// de.rateIntegral[xIndex] /= de.electronDensity[xIndex]
+
+						// de.sourceTerm[xIndex] = model.gasDensity * de.electronDensity[xIndex] * de.rateIntegral[xIndex] // dn/dt = N * n(x) * <sigma_i(x,e) * v(x,e)>
 					}
 					return []DataFile{dataFile}
 				},
@@ -507,7 +563,6 @@ func NewDataFlags() DataFlags {
 
 							//norm /= float64(model.TotalElectronsEmittedOnCathode)
 						}
-						fmt.Printf("norm: %.9f\n", norm)
 						dataFile.data[x].index = model.XStep * (float64(x) + 0.5)
 						dataFile.data[x].value = ionSourceX / norm / model.Parameters.Pressure
 					}

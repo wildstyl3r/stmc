@@ -204,49 +204,24 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 					mp := draft[draftName]
 					choiceElements := config.Options[groups[g]][choice]
 					for ce := range choiceElements {
-						choiceElementDescription := strings.Split(choiceElements[ce], "=")
-						if len(choiceElementDescription) != 2 {
-							fmt.Printf("Invalid optional parameter specification: [%s]\n", choiceElements[ce])
+						dummy := ModelParameters{}
+						_, dummyError := toml.Decode(choiceElements[ce], &dummy)
+						if dummyError != nil {
+							fmt.Printf("error decoding option: %v", dummyError)
 							os.Exit(0)
 						}
+						choiceElementDescription := strings.Split(choiceElements[ce], "=")
 
 						parameter := strings.Trim(choiceElementDescription[0], " ")
-						valueStr := strings.Trim(choiceElementDescription[1], " ")
+						// valueStr := strings.Trim(choiceElementDescription[1], " ")
 
 						modelField := reflect.ValueOf(&mp).Elem().FieldByName(parameter)
 						if !modelField.IsValid() {
 							fmt.Printf("Unknown parameter in optional specification: [%s]\n", parameter)
 							os.Exit(0)
 						}
-						var valueReflect reflect.Value
-						var err error
-						switch modelField.Kind() {
-						case reflect.Invalid:
-							fmt.Printf("Unknown parameter in optional specification: %s\n", parameter)
-							os.Exit(0)
-						case reflect.Bool:
-							var value bool
-							value, err = strconv.ParseBool(valueStr)
-							valueReflect = reflect.ValueOf(value)
-						case reflect.Float64:
-							var value float64
-							value, err = strconv.ParseFloat(valueStr, 64)
-							valueReflect = reflect.ValueOf(value)
-						case reflect.Int:
-							var value int
-							value, err = strconv.Atoi(valueStr)
-							valueReflect = reflect.ValueOf(value)
-						case reflect.String:
-							valueReflect = reflect.ValueOf(valueStr)
-						default:
-							fmt.Printf("Unsettable parameter in optional specification: %s\n", parameter)
-							os.Exit(0)
-						}
-						if err != nil {
-							fmt.Printf("Unable to parse value %s for field %s\n", valueStr, parameter)
-							os.Exit(0)
-						}
-						modelField.Set(valueReflect)
+						dummyField := reflect.ValueOf(&dummy).Elem().FieldByName(parameter)
+						modelField.Set(dummyField)
 						config.isDefinedMap[strings.Join([]string{"Models", modelName, parameter}, "#")] = struct{}{}
 					}
 
@@ -288,14 +263,21 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 	return config, meta
 }
 
+// type ChemicalComposition struct {
+// 	ComponentsShare    map[string]float64
+// 	DissociativeFactor int
+// 	InitialShare float64
+// }
+
 type ModelParameters struct {
 	CrossSections                           string
 	ElasticScatteringMode                   string
 	InelasticScatteringMode                 string
 	IonizationEnergySharing                 string
 	IonizationScatteringMode                string
-	Species                                 string
+	Species                                 map[string]float64
 	ThresholdType                           string
+	LowerThresholdValue                     float64
 	RequireCollisionRelativeMargin          map[string]float64
 	GapLength                               float64 `csv:"L" units:"Length:1"`
 	PressureGapLength                       float64 `csv:"pL" units:"Pressure:1,Length:1"`
@@ -345,6 +327,8 @@ type ModelParameters struct {
 	CalculateDistribution bool
 	DebugOutput           bool
 	CellTimeWeighting     bool
+	EnergyDeposition      bool
+	MeanFreePath          bool
 
 	SupressSpinner bool
 
@@ -352,9 +336,11 @@ type ModelParameters struct {
 	_crossSections        *lxgata.Collisions
 	_outputUnits          UnitConfig
 	_verbose              bool
+	_superelastics        bool
 	_threads              int
 	_prototypeName        string
 	_lowerEnergyThreshold float64
+	_mixtureParameters    map[string]lxgata.Species
 	// _isFieldDefined map[string]struct{}
 	_elasticScatteringMode   lxgata.ScatteringMode
 	_inelasticScatteringMode lxgata.ScatteringMode
@@ -368,6 +354,16 @@ func (p *ModelParameters) CrossSectionsData() *lxgata.Collisions {
 
 func (p *ModelParameters) SetCrossSectionsData(cd *lxgata.Collisions) {
 	p._crossSections = cd
+	for process := range cd.Processes {
+		if cd.Processes[process].Type == lxgata.DEEXCITATION {
+			p._superelastics = true
+			return
+		}
+	}
+}
+
+func (p *ModelParameters) HasSuperelastics() bool {
+	return p._superelastics
 }
 
 func (p *ModelParameters) OutputUnits() UnitConfig {
@@ -394,6 +390,19 @@ func (p *ModelParameters) Threads() int {
 	return p._threads
 }
 
+func (p *ModelParameters) GetMixtureParameters() map[string]lxgata.Species {
+	return p._mixtureParameters
+}
+
+func (p *ModelParameters) GetSpeciesString() string {
+	elements := []string{}
+	for key := range p.Species {
+		elements = append(elements, key)
+	}
+	slices.Sort(elements)
+	return strings.Join(elements, " ")
+}
+
 func (p *ModelParameters) GetScatteringModes() (elastic, inelastic lxgata.ScatteringMode) {
 	return p._elasticScatteringMode, p._inelasticScatteringMode
 }
@@ -416,7 +425,17 @@ func (p *ModelParameters) SimulationLength() float64 {
 
 func (p *ModelParameters) LowerEnergyThreshold() float64 {
 	if p._lowerEnergyThreshold == 0 {
+		if p.LowerThresholdValue != 0 {
+			p._lowerEnergyThreshold = p.LowerThresholdValue
+			return p._lowerEnergyThreshold
+		}
 		p._lowerEnergyThreshold = p.CrossSectionsData().MinThresholdOfKind(lxgata.CollisionType(strings.ToUpper(p.ThresholdType)))
+		for process := range p.CrossSectionsData().Processes {
+			if p.CrossSectionsData().Processes[process].Type == lxgata.DEEXCITATION {
+				p._lowerEnergyThreshold = -1
+				return -1
+			}
+		}
 	}
 	return p._lowerEnergyThreshold
 }
@@ -454,7 +473,7 @@ var defaultValues = map[string]any{ // in SI-eV
 	"CalculateCurrentDensity":               false,
 	"Volumetric":                            false,
 	"CountNulls":                            false,
-	"EnergyDiscretizationStep":              0.05,
+	"EnergyDiscretizationStep":              0.01,
 	"MuDiscretizationStep":                  1 / 50.,
 	"SourceIntegralRelativeMargin":          0.05,
 }
@@ -859,5 +878,26 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 	modelConfig._threads = config._threads
 	modelConfig._verbose = config._verbose
 
+	mixtureTotalWeight := 0.
+	for _, weight := range modelConfig.Species {
+		mixtureTotalWeight += weight
+	}
+	modelConfig._mixtureParameters = make(map[string]lxgata.Species)
+	for species, weight := range modelConfig.Species {
+		modelConfig._mixtureParameters[species] = lxgata.Species{
+			ShareOfUnity: weight / mixtureTotalWeight,
+			UParameter:   lxgata.Hartree,
+		}
+	}
+
 	return allGood
+}
+
+func StringifyMixture(mixture map[string]lxgata.Species) (s string) {
+	s = "{"
+	for key, val := range mixture {
+		s = s + key + ": " + strconv.FormatFloat(val.ShareOfUnity, 'e', 6, 64) + "_"
+	}
+	s = s[:len(s)-1] + "}"
+	return s
 }

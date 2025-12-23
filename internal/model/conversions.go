@@ -52,7 +52,7 @@ func (s *Model) LfromV(V float64) (l float64) {
 
 func (s *Model) EFieldFromL(x float64) (E float64) { // V/m
 	if x < s.Parameters.CathodeFallLength { // && r2 < s.cathodeRadius2 {
-		return math.FMA(2*math.FMA(s.Vc, s.inverseCathodeFallLength, s.Parameters.ConstEField), math.FMA(x, s.inverseCathodeFallLength, -1), s.Parameters.ConstEField)
+		return math.FMA(s.EFieldA, x, s.EFieldBb)
 		// } else if r2 < s.boundaryRadius2 {
 		// 	radial := s.VfromL(x, 0) / s.boundaryThickness
 		// 	return -math.Sqrt(radial*radial + s.Parameters.ConstEField*s.Parameters.ConstEField)

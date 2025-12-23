@@ -88,6 +88,7 @@ func sourceIntegralCalculationStep(requirePrecision bool, parameters *config.Mod
 			GammaMonteCarlo:                         1. / sourceIntegralMonteCarlo,
 			MeanElectronEnergyAtAnode:               stepModel.MeanElectronEnergyAtAnode,
 			MeanFreePathAnode:                       1. / (stepModel.Parameters.CrossSectionsData().TotalCrossSectionAt(stepModel.MeanElectronEnergyAtAnode) * stepModel.Parameters.GasDensity),
+			GlobalMeanFreePath:                      stepModel.GlobalMeanFreePath.Mean(),
 			Voltage:                                 stepModel.Parameters.CathodeFallPotential,
 			Pressure:                                stepModel.Parameters.Pressure,
 			CathodeCurrent:                          stepModel.Parameters.CathodeCurrentDensity * (math.Pi * parameters.CathodeRadius * parameters.CathodeRadius),

@@ -75,14 +75,21 @@ func main() {
 				continue
 			}
 
-			csID := parameters.CrossSections + parameters.ElasticScatteringMode + c.InelasticScatteringMode
+			csID := parameters.CrossSections + parameters.ElasticScatteringMode + c.InelasticScatteringMode + config.StringifyMixture(parameters.GetMixtureParameters())
 			if _, exists := speciesCrossSections[csID]; !exists {
 				elasticSM, inelasticSM := parameters.GetScatteringModes()
-				if crossSections, err := lxgata.LoadCrossSections(parameters.CrossSections, true, 0.001, 1000, elasticSM, inelasticSM, lxgata.Hartree, lxgata.IgnoreAtomicNumber); err == nil {
+				if crossSections, err := lxgata.LoadCrossSections(
+					parameters.CrossSections,
+					true,
+					0.001,
+					1000,
+					elasticSM,
+					inelasticSM,
+					lxgata.Hartree,
+					lxgata.IgnoreAtomicNumber,
+					parameters.GetMixtureParameters(),
+				); err == nil {
 					speciesCrossSections[csID] = &crossSections
-					for i := range crossSections.Processes {
-						crossSections.Processes[i].Expand(0.01, false)
-					}
 				} else {
 					panic(fmt.Errorf("invalid cross section file: %w", err))
 				}

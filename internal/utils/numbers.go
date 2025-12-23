@@ -30,6 +30,7 @@ func (ks *KahanSummable) Add(piece float64) {
 
 	if math.IsNaN(piece) {
 		println("piece is nan")
+		return
 	}
 
 	t := ks.val + piece

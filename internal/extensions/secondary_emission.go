@@ -9,7 +9,7 @@ import (
 // not applicable for UniformField
 func gammaAnalyticPhelpsF(parameters config.ModelParameters) float64 {
 	dc, j, Vc, N := parameters.CathodeFallLength, parameters.CathodeCurrentDensity, parameters.CathodeFallPotential, parameters.GasDensity
-	ionDriftVelocity := utils.IonDriftVelocity[parameters.Species]
+	ionDriftVelocity := utils.IonDriftVelocity[parameters.GetSpeciesString()]
 	return j*dc*dc/(2.*Vc*ionDriftVelocity(Vc, dc, N)*constants.FreeSpacePermittivityE0) - 1. //-> 0
 }
 
@@ -49,6 +49,7 @@ type OptimizationResult struct {
 	GammaMonteCarlo                         float64 `csv:"$\\gamma$ Monte Carlo"`
 	MeanElectronEnergyAtAnode               float64 `csv:"Mean electron energy at anode" units:"Energy:1"`
 	MeanFreePathAnode                       float64 `csv:"Mean free path at anode" units:"Length:1"`
+	GlobalMeanFreePath                      float64 `csv:"Global mean free path" units:"Length:1"`
 	Voltage                                 float64 `csv:"Voltage" units:"Voltage:1"`
 	Pressure                                float64 `csv:"p" units:"Pressure:1"`
 	CathodeCurrent                          float64 `csv:"I" units:"Current:1"`

@@ -27,6 +27,6 @@ func DiffusionConstants(m *model.Model) ([]string, []any, error) {
 		}
 
 	}
-	ambipolarDiffusionCoefficient := utils.WeakFieldConstantIonMobilityPerTorr[m.Parameters.Species] / (m.Parameters.Pressure / constants.Torr) * (m.Parameters.SlowElectronTemperature + m.Parameters.Temperature*constants.KBolzmannEv)
+	ambipolarDiffusionCoefficient := utils.WeakFieldConstantIonMobilityPerTorr[m.Parameters.GetSpeciesString()] / (m.Parameters.Pressure / constants.Torr) * (m.Parameters.SlowElectronTemperature + m.Parameters.Temperature*constants.KBolzmannEv)
 	return []string{CharacteristicDiffusionScaleKey, AmbipolarDiffusionCoefficientKey}, []any{cylindricalCharacteristicDiffusionLength, ambipolarDiffusionCoefficient}, nil
 }

@@ -151,9 +151,13 @@ for (i,(filename, scale)) in enumerate(files):
     dataframe = pd.read_csv(filename, skiprows=offset)
 
     if table_type == TableType.AGGREGATION:
-        x = get_occur_index(dataframe.columns, args.horizontal) or 0
-        y = get_occur_index(dataframe.columns, args.vertical) or 1
-        m = get_occur_index(dataframe.columns, args.margin) or None
+        x = get_occur_index(dataframe.columns, args.horizontal)
+        if x is None:
+            x = 0
+        y = get_occur_index(dataframe.columns, args.vertical)
+        if y is None:
+            y = 1
+        m = get_occur_index(dataframe.columns, args.margin)
         margin_name = dataframe.columns[m] if m is not None else None
         if label == "":
             label = add_math_to_str(dataframe.columns[y])
@@ -163,8 +167,12 @@ for (i,(filename, scale)) in enumerate(files):
             print(f"AGGREGATION unexpected column header: wanted {axis_names}, got {[dataframe.columns[x], dataframe.columns[y]]}")
         axs.errorbar(dataframe[dataframe.columns[x]], dataframe[dataframe.columns[y]], yerr=dataframe[margin_name] if margin_name is not None else (dataframe[dataframe.columns[y]+"Margin"] if dataframe.columns[y]+"Margin" in dataframe.columns else None),label=label,fmt=markers[marker], ms=3)
     elif table_type==TableType.ONE_DIM_DISTRIBUTION_WITH_TWO_MARGINS:
-        x = get_occur_index(dataframe.columns, args.horizontal) or 0
-        y = get_occur_index(dataframe.columns, args.vertical) or 1
+        x = get_occur_index(dataframe.columns, args.horizontal)
+        if x is None:
+            x = 0
+        y = get_occur_index(dataframe.columns, args.vertical)
+        if y is None:
+            y = 1
         lm = get_occur_index(dataframe.columns, "marginL")
         um = get_occur_index(dataframe.columns, "marginU")
         if x == y:
@@ -184,8 +192,12 @@ for (i,(filename, scale)) in enumerate(files):
 
         axs.errorbar(dataframe[dataframe.columns[x]], dataframe[dataframe.columns[y]], yerr=margin,label=label,fmt=markers[marker], ms=3)
     else:
-        x = get_occur_index(dataframe.columns, args.horizontal) or 0
-        y = get_occur_index(dataframe.columns, args.vertical) or 1
+        x = get_occur_index(dataframe.columns, args.horizontal)
+        if x is None:
+            x = 0
+        y = get_occur_index(dataframe.columns, args.vertical)
+        if y is None:
+            y = 1
         m = get_occur_index(dataframe.columns, "margin")
         if x == y:
             y = 1-x
