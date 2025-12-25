@@ -34,6 +34,6 @@ func BasicCalculation(parameters config.ModelParameters, outputDir, modelName st
 			return 0
 		}
 	})
-	cr := utils.CoreResult{}
+	cr := m.CoreResult()
 	return &cr, nil, m, nil
 }
