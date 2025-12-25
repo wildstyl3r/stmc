@@ -443,7 +443,7 @@ func (p *ModelParameters) LowerEnergyThreshold() float64 {
 			p._lowerEnergyThreshold = p.LowerThresholdValue
 			return p._lowerEnergyThreshold
 		}
-		p._lowerEnergyThreshold = p.CrossSectionsData().MinThresholdOfKind(lxgata.CollisionType(strings.ToUpper(p.ThresholdType)))
+		p._lowerEnergyThreshold = p.CrossSectionsData().MinThresholdOfKind(lxgata.CollisionType(strings.ToUpper(p.ThresholdType))) - 0.5
 		for process := range p.CrossSectionsData().Processes {
 			if p.CrossSectionsData().Processes[process].Type == lxgata.DEEXCITATION {
 				p._lowerEnergyThreshold = -1
