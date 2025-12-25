@@ -14,10 +14,6 @@ import (
 
 type CSV [][]string
 
-type Indexable[T cmp.Ordered] interface {
-	Index() T
-}
-
 func (data CSV) Less(i, j int) bool {
 	return natsort.Compare(data[i][0], data[j][0])
 }

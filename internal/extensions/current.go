@@ -19,7 +19,7 @@ func CurrentDensityRelativeError(sourceIntegral, sourceIntegralMargin, dc, dcMar
 	return sourceIntegralMargin/(sourceIntegral*(sourceIntegral+1)) + 2.5*dcMargin/dc
 }
 
-func CurrentDensityCalculation(parameters config.ModelParameters, outputDir, modelName string) (dataRow CurrentDensityDataRow, altRow *CurrentDensityDataRow, finalModel, altModel *model.Model) {
+func CurrentDensityCalculation(parameters config.ModelParameters, outputDir, modelName string) (dataRow, altRow *CurrentDensityDataRow, finalModel, altModel *model.Model) {
 	minDc := parameters.CathodeFallLengthPrecision
 	maxDc := parameters.SimulationLength()
 	numberOfSteps := int((maxDc - minDc) / parameters.CathodeFallLengthPrecision)
@@ -41,7 +41,7 @@ func CurrentDensityCalculation(parameters config.ModelParameters, outputDir, mod
 		}, true, outputDir, modelName)
 }
 
-func CurrentDensityCalculation2(parameters config.ModelParameters, outputDir, modelName string) (dataRow CurrentDensityDataRow, altRow *CurrentDensityDataRow, finalModel, altModel *model.Model) {
+func CurrentDensityCalculation2(parameters config.ModelParameters, outputDir, modelName string) (dataRow, altRow *CurrentDensityDataRow, finalModel, altModel *model.Model) {
 	minDc := parameters.CathodeFallLengthPrecision
 	maxDc := parameters.SimulationLength()
 	numberOfSteps := int((maxDc - minDc) / parameters.CathodeFallLengthPrecision)

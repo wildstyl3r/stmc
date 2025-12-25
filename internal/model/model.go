@@ -50,10 +50,24 @@ type Model struct {
 	IonizationsSumUpToCell  []utils.Aggregation
 
 	TotalElectronsEmittedOnCathode int
+	ElectronsReturned              utils.Aggregation
 
 	MeanElectronEnergyAtAnode float64
 
 	DataHub *DataHubType
+}
+
+func (m *Model) CoreResult() utils.CoreResult {
+	return utils.CoreResult{
+		ModelName:                  m.Parameters.PrototypeName(),
+		ReducedFieldAtCathode:      m.ReducedFieldAtCathode(),
+		ReducedFieldAtSheathCenter: m.ReducedFieldMidSheath(),
+		CathodeFallLength:          m.Parameters.CathodeFallLength,
+		PressureCathodeFallLength:  m.Parameters.CathodeFallLength * m.Parameters.Pressure,
+		GlobalMeanFreePath:         m.GlobalMeanFreePath.Mean(),
+		Voltage:                    m.Parameters.CathodeFallPotential,
+		Pressure:                   m.Parameters.Pressure,
+	}
 }
 
 func (m *Model) InitVars() {
@@ -241,11 +255,24 @@ func (m *Model) nextCollisionTime(p *Particle, tupd chan<- TrajectoryUpdate) (co
 	return
 }
 
-func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collisionDescription *lxgata.Collision, throwOut, reversal bool, freePath utils.KahanSummable) {
+type BoundaryConditionType int
+
+const (
+	None BoundaryConditionType = iota
+	ArrivalAtCathode
+	ArrivalAtSimEnd
+	ArrivalAtTubeWall
+)
+
+func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collisionDescription *lxgata.Collision, reversal bool, throwOut BoundaryConditionType, freePath utils.KahanSummable) {
 	R := -math.Log(1. - rand.Float64())
 
-	if !(0 <= p.x && p.x < m.Parameters.SimulationLength()) {
-		throwOut = true
+	if p.x < 0 {
+		throwOut = ArrivalAtCathode
+		return
+	}
+	if p.x > m.Parameters.SimulationLength() {
+		throwOut = ArrivalAtSimEnd
 		return
 	}
 
@@ -263,7 +290,7 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 	for {
 		var lowEnergy, segmentStartEnergy, highEnergy float64
 		var nextCellIndex, highEnergyCellIndex int
-		var reversalOccured, arrivalAtCathode, arrivalAtSimEnd, arrivalAtTubeWall, highEnergyAligned bool
+		var reversalOccured, highEnergyAligned bool
 		if p.mu < 0 {
 			if !alignedToEnergyGrid {
 				nextCellIndex = int(p.eKinetic / m.Parameters.EnergyStep)
@@ -289,7 +316,8 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 
 			//check for cathode return
 			if p.trajectory.totEnergy-lowEnergy > m.Vc+m.Va {
-				arrivalAtCathode = true
+				throwOut = ArrivalAtCathode
+				p.x = 0
 				lowEnergy = p.trajectory.totEnergy - (m.Vc + m.Va)
 			}
 			segmentStartEnergy, segmentEndEnergy = highEnergy, lowEnergy
@@ -307,7 +335,7 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 
 			//check for gap end arrival
 			if p.trajectory.totEnergy <= highEnergy {
-				arrivalAtSimEnd = true
+				throwOut = ArrivalAtSimEnd
 				highEnergy, highEnergyAligned = p.trajectory.totEnergy, false
 			} else {
 				highEnergyCellIndex, highEnergyAligned = nextCellIndex, true
@@ -378,11 +406,12 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 					segmentEndEnergy = collisionEnergy
 					p.setEnergy(collisionEnergy, m, true, true)
 					if p.trajectory.totEnergy < collisionEnergy || m.Parameters.SimulationLength() < p.x {
-						arrivalAtSimEnd = true
+						throwOut = ArrivalAtSimEnd
 						segmentEndEnergy = p.trajectory.totEnergy
 					} else if p.x < 0 {
-						arrivalAtCathode = true
+						throwOut = ArrivalAtCathode
 						segmentEndEnergy = p.trajectory.totEnergy - (m.Vc + m.Va)
+						p.x = 0
 					} else {
 						if !m.Parameters.Volumetric || p.y*p.y+p.z*p.z < m.tubeRadius2 {
 							var totalCrossSectionPrimed = M * math.Abs(m.EFieldFromL(p.x)) / (math.Sqrt(collisionEnergy) * m.Parameters.GasDensity)
@@ -390,7 +419,7 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 							collisionDescription = m.Parameters.CrossSectionsData().SampleWithNullCollision(collisionEnergy, totalCrossSectionPrimed)
 							collisionOccured = true
 						} else {
-							arrivalAtTubeWall = true
+							throwOut = ArrivalAtTubeWall
 						}
 					}
 				}
@@ -416,17 +445,7 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 			}
 		}
 
-		if collisionOccured || arrivalAtTubeWall {
-			break
-		}
-
-		if arrivalAtCathode {
-			p.x = 0
-			throwOut = true
-			break
-		}
-
-		if arrivalAtSimEnd {
+		if throwOut == ArrivalAtSimEnd {
 			if m.Parameters.ParallelPlaneHollowCathode {
 				if p.mu < 0 {
 					println("DEBUG: arrival at half-gap from beyond")
@@ -435,6 +454,7 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 				// p.eKinetic = p.trajectory.totEnergy
 				p.setEnergy(p.trajectory.totEnergy, m, true, false)
 				alignedToEnergyGrid = false
+				throwOut = None
 			} else {
 				if m.Parameters.AnodeBackscatteringCoefficient0 != 0 {
 					backscatteringCoefficient := m.Parameters.AnodeBackscatteringCoefficient0 * math.Exp(m.Parameters.AnodeBackscatteringCoefficientB*(1-p.mu))
@@ -449,12 +469,13 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 							p.eKinetic = p.eKinetic - 9
 						}
 						p.recalcParams(m)
+						throwOut = None
 					} else {
-						throwOut = true
+						throwOut = ArrivalAtSimEnd
 						break
 					}
 				} else {
-					throwOut = true
+					throwOut = ArrivalAtSimEnd
 					p.x = m.Parameters.SimulationLength()
 					p.eKinetic = p.trajectory.totEnergy
 					p.mu = math.Sqrt(p.getAxialEnergy() / p.trajectory.totEnergy)
@@ -471,10 +492,14 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 		} else {
 			alignedToEnergyGrid = true
 		}
-		if m.Parameters.Volumetric && !math.IsInf(m.tubeRadius2, 0) { //&& currentCellIndex == wallCollisionEnergyStep
-			throwOut = true
+
+		if collisionOccured || throwOut != None {
 			break
 		}
+		// if m.Parameters.Volumetric && !math.IsInf(m.tubeRadius2, 0) { //&& currentCellIndex == wallCollisionEnergyStep
+		// 	throwOut = ArrivalAtTubeWall
+		// 	break
+		// }
 		currentCellIndex = nextCellIndex
 	}
 	if tupd != nil {
@@ -607,6 +632,8 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 			}()
 		}
 
+		electronsReturned := make([]int, nElectrons)
+
 		for origin := range nElectrons {
 			particle := m.newParticle(origin + m.TotalElectronsEmittedOnCathode)
 			if m.Parameters.CalculateDistribution {
@@ -627,9 +654,9 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 					}
 
 					lowerEnergyThreshold := m.Parameters.LowerEnergyThreshold()
-					for lowerEnergyThreshold < particlePtr.trajectory.totEnergy {
+					for lowerEnergyThreshold < particlePtr.trajectory.totEnergy { //&& (!m.Parameters.ReturningElectrons || particlePtr.trajectory.totEnergy+m.VfromL(0)-particlePtr.trajectory.radialEnergy > 0) {
 						fillStart := particlePtr.x
-						collision, throwOut, reversal, freePath := m.nextCollision(particlePtr, trajFlow /*, stateflow*/)
+						collision, reversal, throwOut, freePath := m.nextCollision(particlePtr, trajFlow /*, stateflow*/)
 						if m.Parameters.MeanFreePath {
 							if reversal {
 								fillStart = particlePtr.trajectory.getTurnaroundX(m)
@@ -643,8 +670,10 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 							}
 						}
 
-						if throwOut {
-
+						if throwOut != None {
+							if throwOut == ArrivalAtCathode {
+								electronsReturned[particlePtr.origin]++
+							}
 							break
 						}
 						if collision != nil {
@@ -799,6 +828,7 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 			m.IonizationsSumUpToCell[x].Update(PerAvalancheCollisionSumsUpToCell)
 
 		}
+		m.ElectronsReturned.Update(electronsReturned)
 		m.TotalElectronsEmittedOnCathode += nElectrons
 		nElectrons = electronsToSimulate(m)
 	}

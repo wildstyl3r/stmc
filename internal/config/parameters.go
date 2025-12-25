@@ -269,6 +269,17 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 // 	InitialShare float64
 // }
 
+type CalculationMode int
+
+const (
+	Unspecified CalculationMode = iota
+	BasicCalculation
+	ReturningElectronsCalculation
+	GammaCalculation
+	VoltageCalculation
+	CurrentCalculation
+)
+
 type ModelParameters struct {
 	CrossSections                           string
 	ElasticScatteringMode                   string
@@ -316,9 +327,12 @@ type ModelParameters struct {
 	TubeBackscatteringCoefficientB       float64
 	TubeBackscatteringEnergyLossFraction float64
 
+	ReturningElectrons bool
+
 	CalculateSecondaryEmissionCoefficient bool
 	CalculateCurrentDensity               bool
 	CalculateVoltage                      bool
+	CalculationMode                       CalculationMode
 	NoDiffusionLoss                       bool
 	SimplifiedDiffusionScale              bool
 	CathodeFallLengthPrecision            float64
@@ -888,6 +902,18 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 			ShareOfUnity: weight / mixtureTotalWeight,
 			UParameter:   lxgata.Hartree,
 		}
+	}
+
+	if modelConfig.CalculateCurrentDensity {
+		modelConfig.CalculationMode = CurrentCalculation
+	} else if modelConfig.CalculateSecondaryEmissionCoefficient {
+		modelConfig.CalculationMode = GammaCalculation
+	} else if modelConfig.CalculateVoltage {
+		modelConfig.CalculationMode = VoltageCalculation
+	} else if modelConfig.ReturningElectrons {
+		modelConfig.CalculationMode = ReturningElectronsCalculation
+	} else {
+		modelConfig.CalculationMode = BasicCalculation
 	}
 
 	return allGood

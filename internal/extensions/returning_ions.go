@@ -75,11 +75,7 @@ func sourceIntegralCalculationStep(requirePrecision bool, parameters *config.Mod
 	sourceIntegralAnalytic := analyticSourceIntegral(*parameters) //sourceIntegralAnalyticF(stepModel.Parameters.CathodeFallLength, stepModel.Parameters.CathodeCurrentDensity, stepModel.Parameters.CathodeFallPotential, stepModel.Parameters.GasDensity, utils.IonDriftVelocity[stepModel.Parameters.Species])
 	difference := sourceIntegralAnalytic - sourceIntegralMonteCarlo
 	return OptimizationResult{
-			ModelName:                               parameters.PrototypeName(),
-			ReducedFieldAtCathode:                   stepModel.ReducedFieldAtCathode(),
-			ReducedFieldAtSheathCenter:              stepModel.ReducedFieldMidSheath(),
-			CathodeFallLength:                       stepModel.Parameters.CathodeFallLength,
-			PressureCathodeFallLength:               stepModel.Parameters.CathodeFallLength * stepModel.Parameters.Pressure,
+			CoreResult:                              stepModel.CoreResult(),
 			SourceIntegralDifference:                difference,
 			SourceIntegralAnalytic:                  sourceIntegralAnalytic,
 			SourceIntegralMonteCarlo:                sourceIntegralMonteCarlo,
@@ -88,9 +84,6 @@ func sourceIntegralCalculationStep(requirePrecision bool, parameters *config.Mod
 			GammaMonteCarlo:                         1. / sourceIntegralMonteCarlo,
 			MeanElectronEnergyAtAnode:               stepModel.MeanElectronEnergyAtAnode,
 			MeanFreePathAnode:                       1. / (stepModel.Parameters.CrossSectionsData().TotalCrossSectionAt(stepModel.MeanElectronEnergyAtAnode) * stepModel.Parameters.GasDensity),
-			GlobalMeanFreePath:                      stepModel.GlobalMeanFreePath.Mean(),
-			Voltage:                                 stepModel.Parameters.CathodeFallPotential,
-			Pressure:                                stepModel.Parameters.Pressure,
 			CathodeCurrent:                          stepModel.Parameters.CathodeCurrentDensity * (math.Pi * parameters.CathodeRadius * parameters.CathodeRadius),
 			CathodeCurrentDensity:                   stepModel.Parameters.CathodeCurrentDensity,
 			CathodeCurrentDensityPerPressureSquared: stepModel.Parameters.CathodeCurrentDensity / (parameters.Pressure * parameters.Pressure),
@@ -104,7 +97,7 @@ type SourceIntegralDataRow struct {
 	GammaMonteCarloMargin float64 `csv:"$\\gamma$ Monte Carlo margin"`
 }
 
-func SourceIntegralCalculation(parameters config.ModelParameters, outputDir, modelName string) (dataRow SourceIntegralDataRow, altDataRow *SourceIntegralDataRow, finalmodel, altModel *model.Model) {
+func SourceIntegralCalculation(parameters config.ModelParameters, outputDir, modelName string) (dataRow, altDataRow *SourceIntegralDataRow, finalmodel, altModel *model.Model) {
 	_, maxDc := EstimateCathodeFallLengthLimits(parameters)
 	minDc := parameters.CathodeFallLengthPrecision
 	numberOfSteps := int((maxDc - minDc) / parameters.CathodeFallLengthPrecision)
@@ -129,7 +122,7 @@ func GeneralizedCalculation[K cmp.Ordered, T utils.Indexable[K]](parameters conf
 	stopCondition func(p config.ModelParameters, simc, sia float64) bool,
 	preferGreaterRoot bool,
 	outputDir, modelName string,
-) (dataRow T, altDataRow *T, finalModel, altModel *model.Model) {
+) (dataRow, altDataRow *T, finalModel, altModel *model.Model) {
 	//imprecise monte-carlo data gathering
 	//regression fitting
 
@@ -247,7 +240,7 @@ func GeneralizedCalculation[K cmp.Ordered, T utils.Indexable[K]](parameters conf
 	fmt.Printf("[ analytic: %6f ; Monte Carlo: %6f +/- %.2f%% ]\n", optResult.SourceIntegralAnalytic, optResult.SourceIntegralMonteCarlo, optResult.SourceIntegralMargin/optResult.SourceIntegralMonteCarlo*100)
 	optResult.CathodeFallLengthMargin = math.Abs(optResult.SourceIntegralMargin / utils.PolynomialDerivative(optResult.CathodeFallLength, regression.Coefficients))
 	optResult.PressureCathodeFallLengthMargin = optResult.CathodeFallLengthMargin * optResult.Pressure
-	dataRow = extractor(optResult, variance, m)
+	row := extractor(optResult, variance, m)
 	if !math.IsInf(altSourceDifferenceRoot, -1) {
 		setUp(altSourceDifferenceRoot, &parameters)
 		altResult, altVariance, altM := sourceIntegralCalculationStep(true, &parameters, sourceIntegralAnalyticF)
@@ -255,8 +248,8 @@ func GeneralizedCalculation[K cmp.Ordered, T utils.Indexable[K]](parameters conf
 		altResult.CathodeFallLengthMargin = math.Abs(altResult.SourceIntegralMargin / utils.PolynomialDerivative(altResult.CathodeFallLength, regression.Coefficients))
 		altResult.PressureCathodeFallLengthMargin = altResult.CathodeFallLengthMargin * altResult.Pressure
 		altDataRow := extractor(altResult, altVariance, altM)
-		return dataRow, &altDataRow, m, altM
+		return &row, &altDataRow, m, altM
 	} else {
-		return dataRow, nil, m, nil
+		return &row, nil, m, nil
 	}
 }

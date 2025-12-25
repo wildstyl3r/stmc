@@ -56,12 +56,8 @@ func main() {
 		modelNames := groups[gName]
 		natsort.Sort(modelNames)
 
-		var currentData []*extensions.CurrentDensityDataRow
-		var voltageData []*extensions.VoltageDataRow
-		var sourceIntegralData []*extensions.SourceIntegralDataRow
-		var altCurrentData []*extensions.CurrentDensityDataRow
-		var altVoltageData []*extensions.VoltageDataRow
-		var altSourceIntegralData []*extensions.SourceIntegralDataRow
+		dataRows := make(map[config.CalculationMode][]utils.Indexable[float64])
+		altDataRows := make(map[config.CalculationMode][]utils.Indexable[float64])
 
 		for i := range modelNames {
 			parameters := c.Models[modelNames[i]]
@@ -102,84 +98,98 @@ func main() {
 
 			var m, altM *model.Model
 
-			if parameters.CalculateSecondaryEmissionCoefficient {
-				// var gammaDataRow *extensions.GammaDataRow
-				// gammaDataRow, m = extensions.GammaCalculation(configFlags, parameters, c.OutputDir)
-				// gammaDataRow.ModelName = modelName
-				// config.AnyToSIeV(gammaDataRow, []string{"CathodeFallLength"}, parameters.OutputUnits(), false)
-				// gammaData = append(gammaData, gammaDataRow)
-				var siDataRow extensions.SourceIntegralDataRow
-				var altRow *extensions.SourceIntegralDataRow
-				siDataRow, altRow, m, altM = extensions.SourceIntegralCalculation(parameters, c.OutputDir, modelNames[i])
-				siDataRow.ModelName = m.Parameters.PrototypeName()
-				config.AnyToSIeV(&siDataRow, parameters.OutputUnits(), false)
-				sourceIntegralData = append(sourceIntegralData, &siDataRow)
-				if altRow != nil {
-					altRow.ModelName = altM.Parameters.PrototypeName()
-					config.AnyToSIeV(altRow, parameters.OutputUnits(), false)
-					altSourceIntegralData = append(altSourceIntegralData, altRow)
-				}
-			} else if parameters.CalculateCurrentDensity {
-				var currentDataRow extensions.CurrentDensityDataRow
-				var altRow *extensions.CurrentDensityDataRow
-				currentDataRow, altRow, m, altM = extensions.CurrentDensityCalculation(parameters, c.OutputDir, modelNames[i])
-				currentDataRow.ModelName = m.Parameters.PrototypeName()
-				config.AnyToSIeV(&currentDataRow, parameters.OutputUnits(), false)
-				currentData = append(currentData, &currentDataRow)
-				if altRow != nil {
-					altRow.ModelName = altM.Parameters.PrototypeName()
-					config.AnyToSIeV(altRow, parameters.OutputUnits(), false)
-					altCurrentData = append(altCurrentData, altRow)
-				} else {
-					altCurrentData = append(altCurrentData, &currentDataRow)
-				}
-			} else if parameters.CalculateVoltage {
-				var voltageDataRow extensions.VoltageDataRow
-				var altRow *extensions.VoltageDataRow
-				voltageDataRow, altRow, m, altM = extensions.VoltageCalculation2(parameters, c.OutputDir, modelNames[i])
-				voltageDataRow.ModelName = m.Parameters.PrototypeName()
-				config.AnyToSIeV(&voltageDataRow, parameters.OutputUnits(), false)
-				voltageData = append(voltageData, &voltageDataRow)
-				if altRow != nil {
-					altRow.ModelName = altM.Parameters.PrototypeName()
-					config.AnyToSIeV(altRow, parameters.OutputUnits(), false)
-					altVoltageData = append(altVoltageData, altRow)
-				}
-			} else {
-				m = model.NewModel(parameters)
-
-				extensions.LoadExtensions(m.DataHub)
-				// additionStep := 0
-				m.Run(func(m *model.Model) int {
-					if m.TotalElectronsEmittedOnCathode == 0 {
-						return m.Parameters.NElectrons
-					} else {
-						// if additionStep < parameters.AdditionSteps {
-						// additionStep += 1
-						collisions := m.GetMetrics(extensions.SingleElectronDetailedCollisionRateKey).(map[string]utils.GriddedInterval)
-						for substring := range m.Parameters.RequireCollisionRelativeMargin {
-							for processName, counters := range collisions {
-								if strings.Contains(processName, substring) {
-									excessLeap := utils.RelativeExcessLeap(counters.Values)
-									if excessLeap > 8.5 {
-										fmt.Printf("\nrelative excess leap for %s is %f\n", processName, excessLeap)
-										fmt.Printf("+ %d electrons\n", m.Parameters.AddByNElectrons)
-										return m.Parameters.AddByNElectrons
-									}
-								}
-							}
-						}
-						// }
-						// if len(m.Parameters.RequireCollisionRelativeMargin) > 0 {
-						// 	// lowerMargins := m.GetMetrics(extensions.SingleElectronDetailedCollisionRateLowerMarginKey).(map[string]utils.GriddedInterval)
-						// 	upperMargins := m.GetMetrics(extensions.SingleElectronDetailedCollisionRateUpperMarginKey).(map[string]utils.GriddedInterval)
-						// 	values := m.GetMetrics(extensions.SingleElectronDetailedCollisionRateKey).(map[string]utils.GriddedInterval)
-
-						// }
-						return 0
-					}
-				})
+			var dataRow, altRow utils.Indexable[float64]
+			switch parameters.CalculationMode {
+			case config.BasicCalculation:
+				dataRow, altRow, m, altM = extensions.BasicCalculation(parameters, c.OutputDir, modelNames[i])
+			case config.CurrentCalculation:
+				dataRow, altRow, m, altM = extensions.CurrentDensityCalculation(parameters, c.OutputDir, modelNames[i])
+			case config.GammaCalculation:
+				dataRow, altRow, m, altM = extensions.SourceIntegralCalculation(parameters, c.OutputDir, modelNames[i])
+			case config.ReturningElectronsCalculation:
+			case config.VoltageCalculation:
+				dataRow, altRow, m, altM = extensions.VoltageCalculation2(parameters, c.OutputDir, modelNames[i])
+			default:
+				panic(fmt.Sprintf("unexpected config.CalculationMode: %#v", parameters.CalculationMode))
 			}
+			dataRow.(*utils.CoreResult).ModelName = m.Parameters.PrototypeName()
+			config.AnyToSIeV(dataRow, parameters.OutputUnits(), false)
+			dataRows[parameters.CalculationMode] = append(dataRows[parameters.CalculationMode], dataRow)
+			if altRow != nil && altM != nil {
+				altRow.(*utils.CoreResult).ModelName = altM.Parameters.PrototypeName()
+				config.AnyToSIeV(altRow, parameters.OutputUnits(), false)
+				altDataRows[parameters.CalculationMode] = append(altDataRows[parameters.CalculationMode], altRow)
+			}
+
+			// if parameters.CalculateSecondaryEmissionCoefficient {
+			// 	// var gammaDataRow *extensions.GammaDataRow
+			// 	// gammaDataRow, m = extensions.GammaCalculation(configFlags, parameters, c.OutputDir)
+			// 	// gammaDataRow.ModelName = modelName
+			// 	// config.AnyToSIeV(gammaDataRow, []string{"CathodeFallLength"}, parameters.OutputUnits(), false)
+			// 	// gammaData = append(gammaData, gammaDataRow)
+			// 	var siDataRow extensions.SourceIntegralDataRow
+			// 	var altRow *extensions.SourceIntegralDataRow
+			// 	siDataRow, altRow, m, altM = extensions.SourceIntegralCalculation(parameters, c.OutputDir, modelNames[i])
+			// 	siDataRow.ModelName = m.Parameters.PrototypeName()
+			// 	config.AnyToSIeV(&siDataRow, parameters.OutputUnits(), false)
+			// 	sourceIntegralData = append(sourceIntegralData, &siDataRow)
+			// 	if altRow != nil {
+			// 		altRow.ModelName = altM.Parameters.PrototypeName()
+			// 		config.AnyToSIeV(altRow, parameters.OutputUnits(), false)
+			// 		altSourceIntegralData = append(altSourceIntegralData, altRow)
+			// 	}
+			// } else if parameters.CalculateCurrentDensity {
+			// 	var currentDataRow extensions.CurrentDensityDataRow
+			// 	var altRow *extensions.CurrentDensityDataRow
+			// 	currentDataRow, altRow, m, altM = extensions.CurrentDensityCalculation(parameters, c.OutputDir, modelNames[i])
+			// 	currentDataRow.ModelName = m.Parameters.PrototypeName()
+			// 	config.AnyToSIeV(&currentDataRow, parameters.OutputUnits(), false)
+			// 	currentData = append(currentData, &currentDataRow)
+			// 	if altRow != nil {
+			// 		altRow.ModelName = altM.Parameters.PrototypeName()
+			// 		config.AnyToSIeV(altRow, parameters.OutputUnits(), false)
+			// 		altCurrentData = append(altCurrentData, altRow)
+			// 	} else {
+			// 		altCurrentData = append(altCurrentData, &currentDataRow)
+			// 	}
+			// } else if parameters.CalculateVoltage {
+			// 	var dataRow extensions.VoltageDataRow
+			// 	var altRow *extensions.VoltageDataRow
+			// 	dataRow, altRow, m, altM = extensions.VoltageCalculation2(parameters, c.OutputDir, modelNames[i])
+			// 	dataRow.ModelName = m.Parameters.PrototypeName()
+			// 	config.AnyToSIeV(&dataRow, parameters.OutputUnits(), false)
+			// 	voltageData = append(voltageData, &dataRow)
+			// 	if altRow != nil {
+			// 		altRow.ModelName = altM.Parameters.PrototypeName()
+			// 		config.AnyToSIeV(altRow, parameters.OutputUnits(), false)
+			// 		altVoltageData = append(altVoltageData, altRow)
+			// 	}
+			// } else {
+			// 	m = model.NewModel(parameters)
+
+			// 	extensions.LoadExtensions(m.DataHub)
+			// 	// additionStep := 0
+			// 	m.Run(func(m *model.Model) int {
+			// 		if m.TotalElectronsEmittedOnCathode == 0 {
+			// 			return m.Parameters.NElectrons
+			// 		} else {
+			// 			collisions := m.GetMetrics(extensions.SingleElectronDetailedCollisionRateKey).(map[string]utils.GriddedInterval)
+			// 			for substring := range m.Parameters.RequireCollisionRelativeMargin {
+			// 				for processName, counters := range collisions {
+			// 					if strings.Contains(processName, substring) {
+			// 						excessLeap := utils.RelativeExcessLeap(counters.Values)
+			// 						if excessLeap > 8.5 {
+			// 							fmt.Printf("\nrelative excess leap for %s is %f\n", processName, excessLeap)
+			// 							fmt.Printf("+ %d electrons\n", m.Parameters.AddByNElectrons)
+			// 							return m.Parameters.AddByNElectrons
+			// 						}
+			// 					}
+			// 				}
+			// 			}
+			// 			return 0
+			// 		}
+			// 	})
+			// }
 			if m != nil {
 				output.Save(modelNames[i], m, dataExtractorFlags, c.OutputDir)
 			}
@@ -190,46 +200,76 @@ func main() {
 
 			fmt.Printf("Elapsed time: %v\n", time.Since(modelStartTime))
 		}
-		if len(currentData) > 0 {
-			err := utils.WriteAsCSV(config.MakeHeader(currentData[0], c.OutputUnits), currentData, c.OutputDir+"/"+gName, "result", true)
+		for mode, list := range dataRows {
+			var err error
+			switch mode {
+			case config.BasicCalculation:
+				concreteList := make([]*utils.CoreResult, len(list))
+				for i, elem := range list {
+					concreteList[i] = elem.(*utils.CoreResult)
+				}
+				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), concreteList, c.OutputDir+"/"+gName, "result", true)
+			case config.CurrentCalculation:
+				concreteList := make([]*extensions.CurrentDensityDataRow, len(list))
+				for i, elem := range list {
+					concreteList[i] = elem.(*extensions.CurrentDensityDataRow)
+				}
+				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), concreteList, c.OutputDir+"/"+gName, "result", true)
+			case config.GammaCalculation:
+				concreteList := make([]*extensions.SourceIntegralDataRow, len(list))
+				for i, elem := range list {
+					concreteList[i] = elem.(*extensions.SourceIntegralDataRow)
+				}
+				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), concreteList, c.OutputDir+"/"+gName, "result", true)
+			case config.ReturningElectronsCalculation:
+			case config.VoltageCalculation:
+				concreteList := make([]*extensions.VoltageDataRow, len(list))
+				for i, elem := range list {
+					concreteList[i] = elem.(*extensions.VoltageDataRow)
+				}
+				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), concreteList, c.OutputDir+"/"+gName, "result", true)
+			default:
+				panic(fmt.Sprintf("unexpected config.CalculationMode: %#v", mode))
+			}
 
 			if err != nil {
-				println("unable to write current data:", err)
+				fmt.Printf("unable to write data for %s, error: %v", c.OutputDir+"/"+gName, err)
 			}
 		}
-		if len(voltageData) > 0 {
-			err := utils.WriteAsCSV(config.MakeHeader(voltageData[0], c.OutputUnits), voltageData, c.OutputDir+"/"+gName, "result", true)
-
-			if err != nil {
-				println("unable to write voltage data:", err)
+		for mode, list := range altDataRows {
+			var err error
+			switch mode {
+			case config.BasicCalculation:
+				concreteList := make([]utils.CoreResult, len(list))
+				for i, elem := range list {
+					concreteList[i] = elem.(utils.CoreResult)
+				}
+				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result", true)
+			case config.CurrentCalculation:
+				concreteList := make([]extensions.CurrentDensityDataRow, len(list))
+				for i, elem := range list {
+					concreteList[i] = elem.(extensions.CurrentDensityDataRow)
+				}
+				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result", true)
+			case config.GammaCalculation:
+				concreteList := make([]extensions.SourceIntegralDataRow, len(list))
+				for i, elem := range list {
+					concreteList[i] = elem.(extensions.SourceIntegralDataRow)
+				}
+				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result", true)
+			case config.ReturningElectronsCalculation:
+			case config.VoltageCalculation:
+				concreteList := make([]extensions.VoltageDataRow, len(list))
+				for i, elem := range list {
+					concreteList[i] = elem.(extensions.VoltageDataRow)
+				}
+				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result", true)
+			default:
+				panic(fmt.Sprintf("unexpected config.CalculationMode: %#v", mode))
 			}
-		}
-		if len(sourceIntegralData) > 0 {
-			err := utils.WriteAsCSV(config.MakeHeader(sourceIntegralData[0], c.OutputUnits), sourceIntegralData, c.OutputDir+"/"+gName, "result", true)
 
 			if err != nil {
-				println("unable to write source integral data:", err)
-			}
-		}
-		if len(altCurrentData) > 0 {
-			err := utils.WriteAsCSV(config.MakeHeader(altCurrentData[0], c.OutputUnits), altCurrentData, c.OutputDir+"/"+gName, "alt_result", true)
-
-			if err != nil {
-				println("unable to write current data:", err)
-			}
-		}
-		if len(altVoltageData) > 0 {
-			err := utils.WriteAsCSV(config.MakeHeader(altVoltageData[0], c.OutputUnits), altVoltageData, c.OutputDir+"/"+gName, "alt_result", true)
-
-			if err != nil {
-				println("unable to write voltage data:", err)
-			}
-		}
-		if len(altSourceIntegralData) > 0 {
-			err := utils.WriteAsCSV(config.MakeHeader(altSourceIntegralData[0], c.OutputUnits), altSourceIntegralData, c.OutputDir+"/"+gName, "alt_result", true)
-
-			if err != nil {
-				println("unable to write source integral data:", err)
+				fmt.Printf("unable to write data for %s, error: %v", c.OutputDir+"/"+gName, err)
 			}
 		}
 	}

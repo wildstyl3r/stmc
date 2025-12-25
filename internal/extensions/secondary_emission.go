@@ -34,12 +34,8 @@ func EstimateCathodeFallLengthLimits(parameters config.ModelParameters) (from fl
 }
 
 type OptimizationResult struct {
-	ModelName                               string  `csv:"Model name"`
-	ReducedFieldAtCathode                   float64 `csv:"E/n at cathode"`
-	ReducedFieldAtSheathCenter              float64 `csv:"E/n at mid-sheath"`
-	CathodeFallLength                       float64 `csv:"Sheath length" units:"Length:1"`
+	utils.CoreResult
 	CathodeFallLengthMargin                 float64 `csv:"Sheath length margin" units:"Length:1"`
-	PressureCathodeFallLength               float64 `csv:"pd" units:"Length:1"`
 	PressureCathodeFallLengthMargin         float64 `csv:"pd margin" units:"Length:1"`
 	SourceIntegralDifference                float64 `csv:"Source integral loss"`
 	SourceIntegralAnalytic                  float64 `csv:"Source integral analytic"`
@@ -49,14 +45,7 @@ type OptimizationResult struct {
 	GammaMonteCarlo                         float64 `csv:"$\\gamma$ Monte Carlo"`
 	MeanElectronEnergyAtAnode               float64 `csv:"Mean electron energy at anode" units:"Energy:1"`
 	MeanFreePathAnode                       float64 `csv:"Mean free path at anode" units:"Length:1"`
-	GlobalMeanFreePath                      float64 `csv:"Global mean free path" units:"Length:1"`
-	Voltage                                 float64 `csv:"Voltage" units:"Voltage:1"`
-	Pressure                                float64 `csv:"p" units:"Pressure:1"`
 	CathodeCurrent                          float64 `csv:"I" units:"Current:1"`
 	CathodeCurrentDensity                   float64 `csv:"j" units:"Current:1,Length:-2"`
 	CathodeCurrentDensityPerPressureSquared float64 `csv:"j/p2" units:"Current:1,Length:-2,Pressure:-2"`
-}
-
-func (row OptimizationResult) Index() float64 {
-	return row.ReducedFieldAtCathode
 }
