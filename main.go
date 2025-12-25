@@ -106,7 +106,6 @@ func main() {
 				dataRow, altRow, m, altM = extensions.CurrentDensityCalculation(parameters, c.OutputDir, modelNames[i])
 			case config.GammaCalculation:
 				dataRow, altRow, m, altM = extensions.SourceIntegralCalculation(parameters, c.OutputDir, modelNames[i])
-			case config.ReturningElectronsCalculation:
 			case config.VoltageCalculation:
 				dataRow, altRow, m, altM = extensions.VoltageCalculation2(parameters, c.OutputDir, modelNames[i])
 			default:
@@ -221,7 +220,6 @@ func main() {
 					concreteList[i] = elem.(*extensions.SourceIntegralDataRow)
 				}
 				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), concreteList, c.OutputDir+"/"+gName, "result", true)
-			case config.ReturningElectronsCalculation:
 			case config.VoltageCalculation:
 				concreteList := make([]*extensions.VoltageDataRow, len(list))
 				for i, elem := range list {
@@ -257,7 +255,6 @@ func main() {
 					concreteList[i] = elem.(extensions.SourceIntegralDataRow)
 				}
 				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result", true)
-			case config.ReturningElectronsCalculation:
 			case config.VoltageCalculation:
 				concreteList := make([]extensions.VoltageDataRow, len(list))
 				for i, elem := range list {

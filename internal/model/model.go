@@ -58,6 +58,7 @@ type Model struct {
 }
 
 func (m *Model) CoreResult() utils.CoreResult {
+	electronsReturned, electronsReturnedMargin := m.ElectronsReturned.MeanWithErrorMargin(0.95)
 	return utils.CoreResult{
 		ModelName:                  m.Parameters.PrototypeName(),
 		ReducedFieldAtCathode:      m.ReducedFieldAtCathode(),
@@ -67,6 +68,8 @@ func (m *Model) CoreResult() utils.CoreResult {
 		GlobalMeanFreePath:         m.GlobalMeanFreePath.Mean(),
 		Voltage:                    m.Parameters.CathodeFallPotential,
 		Pressure:                   m.Parameters.Pressure,
+		ElectronsReturned:          electronsReturned,
+		ElectronsReturnedMargin:    electronsReturnedMargin,
 	}
 }
 
@@ -656,7 +659,7 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 					}
 
 					lowerEnergyThreshold := m.Parameters.LowerEnergyThreshold()
-					for lowerEnergyThreshold < particlePtr.trajectory.totEnergy { //&& (!m.Parameters.ReturningElectrons || particlePtr.trajectory.totEnergy+m.VfromL(0)-particlePtr.trajectory.radialEnergy > 0) {
+					for lowerEnergyThreshold < particlePtr.trajectory.totEnergy && (!m.Parameters.ReturningElectrons || particlePtr.trajectory.totEnergy+m.VfromL(0)-particlePtr.trajectory.radialEnergy > 0) {
 						fillStart := particlePtr.x
 						collision, reversal, throwOut, freePath := m.nextCollision(particlePtr, trajFlow /*, stateflow*/)
 						if m.Parameters.MeanFreePath {

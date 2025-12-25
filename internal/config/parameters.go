@@ -274,7 +274,6 @@ type CalculationMode int
 const (
 	Unspecified CalculationMode = iota
 	BasicCalculation
-	ReturningElectronsCalculation
 	GammaCalculation
 	VoltageCalculation
 	CurrentCalculation
@@ -910,8 +909,6 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 		modelConfig.CalculationMode = GammaCalculation
 	} else if modelConfig.CalculateVoltage {
 		modelConfig.CalculationMode = VoltageCalculation
-	} else if modelConfig.ReturningElectrons {
-		modelConfig.CalculationMode = ReturningElectronsCalculation
 	} else {
 		modelConfig.CalculationMode = BasicCalculation
 	}

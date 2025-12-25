@@ -11,6 +11,8 @@ type CoreResult struct {
 	GlobalMeanFreePath         float64 `csv:"Global mean free path" units:"Length:1"`
 	Voltage                    float64 `csv:"Voltage" units:"Voltage:1"`
 	Pressure                   float64 `csv:"p" units:"Pressure:1"`
+	ElectronsReturned          float64 `csv:"electrons returned"`
+	ElectronsReturnedMargin    float64 `csv:"electrons returned margin"`
 }
 
 type Indexable[T cmp.Ordered] interface {
