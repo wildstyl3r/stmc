@@ -75,7 +75,7 @@ func sourceIntegralCalculationStep(requirePrecision bool, parameters *config.Mod
 	sourceIntegralAnalytic := analyticSourceIntegral(*parameters) //sourceIntegralAnalyticF(stepModel.Parameters.CathodeFallLength, stepModel.Parameters.CathodeCurrentDensity, stepModel.Parameters.CathodeFallPotential, stepModel.Parameters.GasDensity, utils.IonDriftVelocity[stepModel.Parameters.Species])
 	difference := sourceIntegralAnalytic - sourceIntegralMonteCarlo
 	return OptimizationResult{
-			CoreResult:                              stepModel.CoreResult(),
+			// CoreResult:                              stepModel.CoreResult(),
 			SourceIntegralDifference:                difference,
 			SourceIntegralAnalytic:                  sourceIntegralAnalytic,
 			SourceIntegralMonteCarlo:                sourceIntegralMonteCarlo,

@@ -290,7 +290,7 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 	for {
 		var lowEnergy, segmentStartEnergy, highEnergy float64
 		var nextCellIndex, highEnergyCellIndex int
-		var reversalOccured, highEnergyAligned bool
+		var reversalOccured, arrivalAtCathode, arrivalAtSimEnd, arrivalAtTubeWall, highEnergyAligned bool
 		if p.mu < 0 {
 			if !alignedToEnergyGrid {
 				nextCellIndex = int(p.eKinetic / m.Parameters.EnergyStep)
@@ -316,8 +316,7 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 
 			//check for cathode return
 			if p.trajectory.totEnergy-lowEnergy > m.Vc+m.Va {
-				throwOut = ArrivalAtCathode
-				p.x = 0
+				arrivalAtCathode = true
 				lowEnergy = p.trajectory.totEnergy - (m.Vc + m.Va)
 			}
 			segmentStartEnergy, segmentEndEnergy = highEnergy, lowEnergy
@@ -335,7 +334,7 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 
 			//check for gap end arrival
 			if p.trajectory.totEnergy <= highEnergy {
-				throwOut = ArrivalAtSimEnd
+				arrivalAtSimEnd = true
 				highEnergy, highEnergyAligned = p.trajectory.totEnergy, false
 			} else {
 				highEnergyCellIndex, highEnergyAligned = nextCellIndex, true
@@ -406,12 +405,11 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 					segmentEndEnergy = collisionEnergy
 					p.setEnergy(collisionEnergy, m, true, true)
 					if p.trajectory.totEnergy < collisionEnergy || m.Parameters.SimulationLength() < p.x {
-						throwOut = ArrivalAtSimEnd
+						arrivalAtSimEnd = true
 						segmentEndEnergy = p.trajectory.totEnergy
 					} else if p.x < 0 {
-						throwOut = ArrivalAtCathode
+						arrivalAtCathode = true
 						segmentEndEnergy = p.trajectory.totEnergy - (m.Vc + m.Va)
-						p.x = 0
 					} else {
 						if !m.Parameters.Volumetric || p.y*p.y+p.z*p.z < m.tubeRadius2 {
 							var totalCrossSectionPrimed = M * math.Abs(m.EFieldFromL(p.x)) / (math.Sqrt(collisionEnergy) * m.Parameters.GasDensity)
@@ -419,7 +417,7 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 							collisionDescription = m.Parameters.CrossSectionsData().SampleWithNullCollision(collisionEnergy, totalCrossSectionPrimed)
 							collisionOccured = true
 						} else {
-							throwOut = ArrivalAtTubeWall
+							arrivalAtTubeWall = true
 						}
 					}
 				}
@@ -445,7 +443,17 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 			}
 		}
 
-		if throwOut == ArrivalAtSimEnd {
+		if collisionOccured || arrivalAtTubeWall {
+			break
+		}
+
+		if arrivalAtCathode {
+			p.x = 0
+			throwOut = ArrivalAtCathode
+			break
+		}
+
+		if arrivalAtSimEnd {
 			if m.Parameters.ParallelPlaneHollowCathode {
 				if p.mu < 0 {
 					println("DEBUG: arrival at half-gap from beyond")
@@ -454,7 +462,6 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 				// p.eKinetic = p.trajectory.totEnergy
 				p.setEnergy(p.trajectory.totEnergy, m, true, false)
 				alignedToEnergyGrid = false
-				throwOut = None
 			} else {
 				if m.Parameters.AnodeBackscatteringCoefficient0 != 0 {
 					backscatteringCoefficient := m.Parameters.AnodeBackscatteringCoefficient0 * math.Exp(m.Parameters.AnodeBackscatteringCoefficientB*(1-p.mu))
@@ -469,7 +476,6 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 							p.eKinetic = p.eKinetic - 9
 						}
 						p.recalcParams(m)
-						throwOut = None
 					} else {
 						throwOut = ArrivalAtSimEnd
 						break
@@ -492,14 +498,10 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 		} else {
 			alignedToEnergyGrid = true
 		}
-
-		if collisionOccured || throwOut != None {
+		if m.Parameters.Volumetric && !math.IsInf(m.tubeRadius2, 0) { //&& currentCellIndex == wallCollisionEnergyStep
+			throwOut = ArrivalAtTubeWall
 			break
 		}
-		// if m.Parameters.Volumetric && !math.IsInf(m.tubeRadius2, 0) { //&& currentCellIndex == wallCollisionEnergyStep
-		// 	throwOut = ArrivalAtTubeWall
-		// 	break
-		// }
 		currentCellIndex = nextCellIndex
 	}
 	if tupd != nil {
