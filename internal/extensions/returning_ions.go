@@ -1,7 +1,6 @@
 package extensions
 
 import (
-	"cmp"
 	"fmt"
 	"math"
 	"os"
@@ -70,34 +69,42 @@ func gammaAnalyticF(parameters config.ModelParameters) float64 {
 // 	return 0.5 * (initialDcL + initialDcR)
 // }
 
-func sourceIntegralCalculationStep(requirePrecision bool, parameters *config.ModelParameters, analyticSourceIntegral func(config.ModelParameters) float64) (optResult OptimizationResult, sourceIntegralVariance float64, stepModel *model.Model) {
-	sourceIntegralMonteCarlo, sourceIntegralVariance, stepModel := sourceIntegralMonteCarloF(*parameters, requirePrecision)
-	sourceIntegralAnalytic := analyticSourceIntegral(*parameters) //sourceIntegralAnalyticF(stepModel.Parameters.CathodeFallLength, stepModel.Parameters.CathodeCurrentDensity, stepModel.Parameters.CathodeFallPotential, stepModel.Parameters.GasDensity, utils.IonDriftVelocity[stepModel.Parameters.Species])
-	difference := sourceIntegralAnalytic - sourceIntegralMonteCarlo
+func sourceIntegralCalculationStep(requirePrecision bool, parameters *config.ModelParameters, inverseAnalyticEffectiveGamma func(config.ModelParameters) float64) (optResult OptimizationResult, inverseEffectiveGammaVariance float64, stepModel *model.Model) {
+	inverseSurfaceGammaMonteCarlo, inverseSurfaceGammaVariance, stepModel := sourceIntegralMonteCarloF(*parameters, requirePrecision)
+	surfaceGammaMonteCarlo := 1. / inverseSurfaceGammaMonteCarlo
+	escapeFactor := (1. - stepModel.ElectronsReturned.Mean())
+	// inverseEffectiveGammaMonteCarlo,
+	inverseEffectiveGammaVariance = inverseSurfaceGammaVariance / (escapeFactor * escapeFactor)
+	inverseEffectiveGammaAnalytic := inverseAnalyticEffectiveGamma(*parameters) //sourceIntegralAnalyticF(stepModel.Parameters.CathodeFallLength, stepModel.Parameters.CathodeCurrentDensity, stepModel.Parameters.CathodeFallPotential, stepModel.Parameters.GasDensity, utils.IonDriftVelocity[stepModel.Parameters.Species])
+	effectiveGammaAnalytic := 1. / inverseEffectiveGammaAnalytic
+	difference := inverseEffectiveGammaAnalytic - inverseSurfaceGammaMonteCarlo/escapeFactor
 	return OptimizationResult{
 			CoreResult:                              stepModel.CoreResult(),
 			SourceIntegralDifference:                difference,
-			SourceIntegralAnalytic:                  sourceIntegralAnalytic,
-			SourceIntegralMonteCarlo:                sourceIntegralMonteCarlo,
-			SourceIntegralMargin:                    utils.EstimateMargin(0.95, sourceIntegralVariance, float64(stepModel.TotalElectronsEmittedOnCathode)),
-			GammaAnalytic:                           1. / sourceIntegralAnalytic,
-			GammaMonteCarlo:                         1. / sourceIntegralMonteCarlo,
+			SourceIntegralAnalytic:                  inverseEffectiveGammaAnalytic * escapeFactor,
+			SourceIntegralMonteCarlo:                inverseSurfaceGammaMonteCarlo,
+			SourceIntegralMargin:                    utils.EstimateMargin(0.95, inverseSurfaceGammaVariance, float64(stepModel.TotalElectronsEmittedOnCathode)),
+			EffectiveGammaMonteCarlo:                surfaceGammaMonteCarlo * escapeFactor,
+			EffectiveGammaAnalytic:                  effectiveGammaAnalytic,
+			SurfaceGammaAnalytic:                    effectiveGammaAnalytic / escapeFactor,
+			SurfaceGammaMonteCarlo:                  surfaceGammaMonteCarlo,
 			MeanElectronEnergyAtAnode:               stepModel.MeanElectronEnergyAtAnode,
 			MeanFreePathAnode:                       1. / (stepModel.Parameters.CrossSectionsData().TotalCrossSectionAt(stepModel.MeanElectronEnergyAtAnode) * stepModel.Parameters.GasDensity),
 			CathodeCurrent:                          stepModel.Parameters.CathodeCurrentDensity * (math.Pi * parameters.CathodeRadius * parameters.CathodeRadius),
 			CathodeCurrentDensity:                   stepModel.Parameters.CathodeCurrentDensity,
 			CathodeCurrentDensityPerPressureSquared: stepModel.Parameters.CathodeCurrentDensity / (parameters.Pressure * parameters.Pressure),
 		},
-		sourceIntegralVariance,
+		inverseEffectiveGammaVariance,
 		stepModel
 }
 
 type SourceIntegralDataRow struct {
 	OptimizationResult
-	GammaMonteCarloMargin float64 `csv:"$\\gamma$ Monte Carlo margin"`
+	GammaMonteCarloMargin float64 `csv:"surface $\\gamma$ Monte Carlo margin"`
+	EffectiveGammaMargin  float64 `csv:"effective $\\gamma$ Monte Carlo margin"`
 }
 
-func SourceIntegralCalculation(parameters config.ModelParameters, outputDir, modelName string) (dataRow, altDataRow *SourceIntegralDataRow, finalmodel, altModel *model.Model) {
+func SourceIntegralCalculation(parameters config.ModelParameters, outputDir, modelName string) (dataRow, altDataRow utils.ResultInterface, finalmodel, altModel *model.Model) {
 	_, maxDc := EstimateCathodeFallLengthLimits(parameters)
 	minDc := parameters.CathodeFallLengthPrecision
 	numberOfSteps := int((maxDc - minDc) / parameters.CathodeFallLengthPrecision)
@@ -105,24 +112,24 @@ func SourceIntegralCalculation(parameters config.ModelParameters, outputDir, mod
 		func(dc float64, mp *config.ModelParameters) {
 			mp.CathodeFallLength = dc
 		},
-		func(optResult OptimizationResult, variance float64, m *model.Model) SourceIntegralDataRow {
-			return SourceIntegralDataRow{
-				OptimizationResult:    optResult,
+		func(optResult *OptimizationResult, variance float64, m *model.Model) utils.ResultInterface {
+			return &SourceIntegralDataRow{
+				OptimizationResult:    *optResult,
 				GammaMonteCarloMargin: (math.Abs(optResult.SourceIntegralDifference) + optResult.SourceIntegralMargin) / (optResult.SourceIntegralMonteCarlo * optResult.SourceIntegralMonteCarlo),
 			}
-		}, func(p config.ModelParameters, simc, sia float64) bool {
-			return (sia > 0 && simc > 3*sia)
+		}, func(p *config.ModelParameters, optR *OptimizationResult) bool {
+			return (optR.EffectiveGammaAnalytic > 0 && optR.EffectiveGammaAnalytic > 3*optR.EffectiveGammaMonteCarlo)
 		}, true, outputDir, modelName)
 }
 
-func GeneralizedCalculation[K cmp.Ordered, T utils.Indexable[K]](parameters config.ModelParameters,
+func GeneralizedCalculation(parameters config.ModelParameters,
 	numberOfSteps int, offset, stepSize float64,
 	setUp func(arg float64, mp *config.ModelParameters),
-	extractor func(optResult OptimizationResult, variance float64, m *model.Model) T,
-	stopCondition func(p config.ModelParameters, simc, sia float64) bool,
+	extractor func(optResult *OptimizationResult, variance float64, m *model.Model) utils.ResultInterface,
+	stopCondition func(p *config.ModelParameters, optResult *OptimizationResult) bool,
 	preferGreaterRoot bool,
 	outputDir, modelName string,
-) (dataRow, altDataRow *T, finalModel, altModel *model.Model) {
+) (dataRow, altDataRow utils.ResultInterface, finalModel, altModel *model.Model) {
 	//imprecise monte-carlo data gathering
 	//regression fitting
 
@@ -132,7 +139,7 @@ func GeneralizedCalculation[K cmp.Ordered, T utils.Indexable[K]](parameters conf
 	stepArg, stepSourceIntegralMC, stepVariance := make([]float64, 0, numberOfSteps), make([]float64, 0, numberOfSteps), make([]float64, 0, numberOfSteps)
 	minArg, maxArg := offset, offset+float64(numberOfSteps)*stepSize
 	{
-		var debugData []T = make([]T, 0, numberOfSteps)
+		var debugData []utils.ResultInterface = make([]utils.ResultInterface, 0, numberOfSteps)
 		progress := progressbar.Default(int64(numberOfSteps))
 		parameters.SupressSpinner = true
 		for i := range numberOfSteps {
@@ -144,10 +151,10 @@ func GeneralizedCalculation[K cmp.Ordered, T utils.Indexable[K]](parameters conf
 			progress.Describe(fmt.Sprintf("[ analytic: %6f ; Monte Carlo: %6f +/- %.2f%% ]", optResult.SourceIntegralAnalytic, optResult.SourceIntegralMonteCarlo, optResult.SourceIntegralMargin/optResult.SourceIntegralMonteCarlo*100))
 			stepArg, stepSourceIntegralMC, stepVariance = append(stepArg, arg), append(stepSourceIntegralMC, optResult.SourceIntegralMonteCarlo), append(stepVariance, variance)
 			if parameters.DebugOutput {
-				row := extractor(optResult, variance, m)
+				row := extractor(&optResult, variance, m)
 				debugData = append(debugData, row)
 			}
-			if len(stepArg) > 20 && stopCondition(parameters, optResult.SourceIntegralMonteCarlo, optResult.SourceIntegralAnalytic) {
+			if len(stepArg) > 20 && stopCondition(&parameters, &optResult) {
 				maxArg = offset + float64(i)*stepSize
 				// progress.Add(numberOfSteps - i)
 				fmt.Println("\nearly stop condition is met")
@@ -240,16 +247,16 @@ func GeneralizedCalculation[K cmp.Ordered, T utils.Indexable[K]](parameters conf
 	fmt.Printf("[ analytic: %6f ; Monte Carlo: %6f +/- %.2f%% ]\n", optResult.SourceIntegralAnalytic, optResult.SourceIntegralMonteCarlo, optResult.SourceIntegralMargin/optResult.SourceIntegralMonteCarlo*100)
 	optResult.CathodeFallLengthMargin = math.Abs(optResult.SourceIntegralMargin / utils.PolynomialDerivative(optResult.CathodeFallLength, regression.Coefficients))
 	optResult.PressureCathodeFallLengthMargin = optResult.CathodeFallLengthMargin * optResult.Pressure
-	row := extractor(optResult, variance, m)
+	row := extractor(&optResult, variance, m)
 	if !math.IsInf(altSourceDifferenceRoot, -1) {
 		setUp(altSourceDifferenceRoot, &parameters)
 		altResult, altVariance, altM := sourceIntegralCalculationStep(true, &parameters, sourceIntegralAnalyticF)
 		fmt.Printf("[ analytic: %6f ; Monte Carlo: %6f +/- %.2f%% ]\n", altResult.SourceIntegralAnalytic, altResult.SourceIntegralMonteCarlo, altResult.SourceIntegralMargin/altResult.SourceIntegralMonteCarlo*100)
 		altResult.CathodeFallLengthMargin = math.Abs(altResult.SourceIntegralMargin / utils.PolynomialDerivative(altResult.CathodeFallLength, regression.Coefficients))
 		altResult.PressureCathodeFallLengthMargin = altResult.CathodeFallLengthMargin * altResult.Pressure
-		altDataRow := extractor(altResult, altVariance, altM)
-		return &row, &altDataRow, m, altM
+		altDataRow := extractor(&altResult, altVariance, altM)
+		return row, altDataRow, m, altM
 	} else {
-		return &row, nil, m, nil
+		return row, nil, m, nil
 	}
 }

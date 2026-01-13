@@ -77,7 +77,7 @@ func Argsort(s []float64, abs bool) (indices []int) {
 	return indices
 }
 
-func ArgsortIndexable[T cmp.Ordered](s []Indexable[T], abs bool) (indices []int) {
+func ArgsortIndexable(s []ResultInterface, abs bool) (indices []int) {
 	indices = make([]int, len(s))
 	for i := range indices {
 		indices[i] = i

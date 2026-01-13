@@ -68,7 +68,7 @@ func (uc *UnitConfig) GetForClass(class UnitClass) string {
 type Config struct {
 	OutputDir string
 	Models    map[string]ModelParameters
-	Options   map[string]map[string][]string
+	Options   map[string]map[string]ModelParameters //[]string
 	ModelParameters
 	ModelTable   string
 	isDefinedMap map[string]struct{}
@@ -202,28 +202,34 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 				for choice := range config.Options[groups[g]] {
 					modelName := groups[g] + "-" + choice + "_" + draftName
 					mp := draft[draftName]
-					choiceElements := config.Options[groups[g]][choice]
-					for ce := range choiceElements {
-						dummy := ModelParameters{}
-						_, dummyError := toml.Decode(choiceElements[ce], &dummy)
-						if dummyError != nil {
-							fmt.Printf("error decoding option: %v", dummyError)
-							os.Exit(0)
+					choiceParameters := config.Options[groups[g]][choice]
+					choiceReflect := reflect.TypeOf(choiceParameters)
+					for i := 0; i < choiceReflect.NumField(); i++ {
+						parameter := choiceReflect.Field(i).Name
+						if meta.IsDefined("Options", groups[g], choice, parameter) {
+							modelField := reflect.ValueOf(&mp).Elem().FieldByName(parameter)
+							if !modelField.IsValid() {
+								fmt.Printf("Unknown parameter in optional specification: [%s]\n", parameter)
+								os.Exit(0)
+							}
+							dummyField := reflect.ValueOf(&choiceParameters).Elem().FieldByName(parameter)
+							modelField.Set(dummyField)
+							config.isDefinedMap[strings.Join([]string{"Models", modelName, parameter}, "#")] = struct{}{}
 						}
-						choiceElementDescription := strings.Split(choiceElements[ce], "=")
-
-						parameter := strings.Trim(choiceElementDescription[0], " ")
-						// valueStr := strings.Trim(choiceElementDescription[1], " ")
-
-						modelField := reflect.ValueOf(&mp).Elem().FieldByName(parameter)
-						if !modelField.IsValid() {
-							fmt.Printf("Unknown parameter in optional specification: [%s]\n", parameter)
-							os.Exit(0)
-						}
-						dummyField := reflect.ValueOf(&dummy).Elem().FieldByName(parameter)
-						modelField.Set(dummyField)
-						config.isDefinedMap[strings.Join([]string{"Models", modelName, parameter}, "#")] = struct{}{}
 					}
+					// for ce := range choiceParameters {
+					// 	dummy := ModelParameters{}
+					// 	_, dummyError := toml.Decode(choiceParameters[ce], &dummy)
+					// 	if dummyError != nil {
+					// 		fmt.Printf("error decoding option: %v", dummyError)
+					// 		os.Exit(0)
+					// 	}
+					// 	choiceElementDescription := strings.Split(choiceParameters[ce], "=")
+
+					// 	parameter := strings.Trim(choiceElementDescription[0], " ")
+					// 	// valueStr := strings.Trim(choiceElementDescription[1], " ")
+
+					// }
 
 					for def := range config.isDefinedMap {
 						descr := strings.Split(def, "#")
@@ -335,6 +341,8 @@ type ModelParameters struct {
 	NoDiffusionLoss                       bool
 	SimplifiedDiffusionScale              bool
 	CathodeFallLengthPrecision            float64
+
+	ForwardEmission bool
 
 	CountNulls            bool
 	CalculateDistribution bool
@@ -477,7 +485,7 @@ var defaultValues = map[string]any{ // in SI-eV
 	"ConstEField":                           -100., //[V/m]
 	"Temperature":                           300.,  //[K]
 	"CathodeFallLengthPrecision":            1e-4,  //[m]
-	"EnergyStep":                            0.01,  //[eV]
+	"EnergyStep":                            0.05,  //[eV]
 	"AngleStep":                             45.,
 	"NElectrons":                            1000,
 	"MakeDir":                               true,
@@ -597,7 +605,39 @@ func AnyToSIeV(target any, units UnitConfig, direct bool) {
 	// }
 }
 
+func embeddedNames(target reflect.Value, units UnitConfig) (names []string) {
+	targetReflect := reflect.Indirect(target)
+	targetType := targetReflect.Type()
+	for i := range targetReflect.NumField() {
+		field := targetType.Field(i)
+		value := targetReflect.Field(i)
+		if field.Anonymous && field.Type.Kind() == reflect.Struct {
+			names = append(names, embeddedNames(value, units)...)
+		} else {
+			tag := field.Tag.Get("csv")
+			if tag == "-" {
+				break
+			}
+			var csvFieldName string
+			if tag != "" {
+				csvFieldName = tag
+			} else {
+				csvFieldName = field.Name
+			}
+			fieldUnits := field.Tag.Get("units")
+			unitElements := GetUnitElements(fieldUnits)
+			if len(unitElements) != 0 {
+				names = append(names, csvFieldName+" "+unitElements.String(units))
+			} else {
+				names = append(names, csvFieldName)
+			}
+		}
+	}
+	return names
+}
+
 func MakeHeader(target any, units UnitConfig) (header []string) {
+	return embeddedNames(reflect.ValueOf(target), units)
 	targetReflect := reflect.Indirect(reflect.ValueOf(target))
 	targetType := targetReflect.Type()
 	for i := 0; i < targetReflect.NumField(); i++ {

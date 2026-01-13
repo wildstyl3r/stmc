@@ -41,8 +41,10 @@ type OptimizationResult struct {
 	SourceIntegralAnalytic                  float64 `csv:"Source integral analytic"`
 	SourceIntegralMonteCarlo                float64 `csv:"Source integral Monte Carlo"`
 	SourceIntegralMargin                    float64 `csv:"Source integral margin"`
-	GammaAnalytic                           float64 `csv:"$\\gamma$ analytic"`
-	GammaMonteCarlo                         float64 `csv:"$\\gamma$ Monte Carlo"`
+	EffectiveGammaAnalytic                  float64 `csv:"effective $\\gamma$ analytic"`
+	EffectiveGammaMonteCarlo                float64 `csv:"effective $\\gamma$ Monte Carlo"`
+	SurfaceGammaAnalytic                    float64 `csv:"surface $\\gamma$ analytic"`
+	SurfaceGammaMonteCarlo                  float64 `csv:"surface $\\gamma$ Monte Carlo"`
 	MeanElectronEnergyAtAnode               float64 `csv:"Mean electron energy at anode" units:"Energy:1"`
 	MeanFreePathAnode                       float64 `csv:"Mean free path at anode" units:"Length:1"`
 	CathodeCurrent                          float64 `csv:"I" units:"Current:1"`

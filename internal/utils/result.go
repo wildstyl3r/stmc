@@ -1,6 +1,6 @@
 package utils
 
-import "cmp"
+import "reflect"
 
 type CoreResult struct {
 	ModelName                  string  `csv:"Model name"`
@@ -15,10 +15,28 @@ type CoreResult struct {
 	ElectronsReturnedMargin    float64 `csv:"electrons returned margin"`
 }
 
-type Indexable[T cmp.Ordered] interface {
-	Index() T
+type ResultInterface interface {
+	Index() float64
+	SetModelName(string)
 }
 
-func (row CoreResult) Index() float64 {
+func (row *CoreResult) Index() float64 {
 	return row.ReducedFieldAtCathode
+}
+
+func (row *CoreResult) SetModelName(s string) {
+	row.ModelName = s
+}
+
+func HomogeneousResultInterfaceSliceToStructSlice(s []ResultInterface) any {
+	if len(s) == 0 {
+		return nil
+	}
+	t := reflect.TypeOf(s[0])
+	sliceType := reflect.SliceOf(t)
+	structSlice := reflect.MakeSlice(sliceType, len(s), len(s))
+	for i := range s {
+		structSlice.Index(i).Set(reflect.ValueOf(s[i]))
+	}
+	return structSlice.Interface()
 }

@@ -274,7 +274,6 @@ func (a *Aggregation) Mean() float64 {
 }
 
 func (a *Aggregation) meanAndVariance() (float64, float64) {
-	//variance estimation may be slightly worse than in non-aggregated case, but we should be OK with that
 	m := a.Mean()
 	return m, float64(a.squareSum)/float64(a.Number) - m*m
 }

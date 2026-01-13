@@ -25,7 +25,7 @@ func (data CSV) Swap(i, j int) {
 	data[i], data[j] = data[j], data[i]
 }
 
-func WriteAsCSV[Index cmp.Ordered, T Indexable[Index]](header []string, rows []T, path, filename string, sortRowsByIndex bool) error {
+func WriteAsCSV(header []string, rows []ResultInterface, path, filename string, sortRowsByIndex bool) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -48,9 +48,9 @@ func WriteAsCSV[Index cmp.Ordered, T Indexable[Index]](header []string, rows []T
 			return err
 		}
 		csvWriter.Flush()
-		return gocsv.MarshalWithoutHeaders(rows, file)
+		return gocsv.MarshalWithoutHeaders(HomogeneousResultInterfaceSliceToStructSlice(rows), file)
 	}
-	return gocsv.Marshal(rows, file)
+	return gocsv.Marshal(HomogeneousResultInterfaceSliceToStructSlice(rows), file)
 }
 
 func ReadDataCSV(filename string) (metadata [][]string, columnNames []string, values [][]float64, err error) {

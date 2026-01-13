@@ -19,7 +19,7 @@ func CurrentDensityRelativeError(sourceIntegral, sourceIntegralMargin, dc, dcMar
 	return sourceIntegralMargin/(sourceIntegral*(sourceIntegral+1)) + 2.5*dcMargin/dc
 }
 
-func CurrentDensityCalculation(parameters config.ModelParameters, outputDir, modelName string) (dataRow, altRow *CurrentDensityDataRow, finalModel, altModel *model.Model) {
+func CurrentDensityCalculation(parameters config.ModelParameters, outputDir, modelName string) (dataRow, altRow utils.ResultInterface, finalModel, altModel *model.Model) {
 	minDc := parameters.CathodeFallLengthPrecision
 	maxDc := parameters.SimulationLength()
 	numberOfSteps := int((maxDc - minDc) / parameters.CathodeFallLengthPrecision)
@@ -27,21 +27,21 @@ func CurrentDensityCalculation(parameters config.ModelParameters, outputDir, mod
 		func(dc float64, mp *config.ModelParameters) {
 			mp.CathodeFallLength = dc
 		},
-		func(optResult OptimizationResult, variance float64, m *model.Model) CurrentDensityDataRow {
+		func(optResult *OptimizationResult, variance float64, m *model.Model) utils.ResultInterface {
 			optResult.CathodeCurrentDensity = CurrentDensityEquation(m.Parameters)
 			optResult.CathodeCurrent = optResult.CathodeCurrentDensity * (math.Pi * parameters.CathodeRadius * parameters.CathodeRadius)
 			optResult.CathodeCurrentDensityPerPressureSquared = optResult.CathodeCurrentDensity / (optResult.Pressure * optResult.Pressure)
-			return CurrentDensityDataRow{
-				OptimizationResult:                            optResult,
+			return &CurrentDensityDataRow{
+				OptimizationResult:                            *optResult,
 				CathodeCurrentDensityMargin:                   optResult.CathodeCurrentDensity * CurrentDensityRelativeError(optResult.SourceIntegralMonteCarlo, math.Abs(optResult.SourceIntegralDifference)+optResult.SourceIntegralMargin, optResult.CathodeFallLength, optResult.CathodeFallLengthMargin),
 				CathodeCurrentDensityPerPressureSquaredMargin: optResult.CathodeCurrentDensity / (parameters.Pressure * parameters.Pressure) * CurrentDensityRelativeError(optResult.SourceIntegralMonteCarlo, math.Abs(optResult.SourceIntegralDifference)+optResult.SourceIntegralMargin, optResult.CathodeFallLength, optResult.CathodeFallLengthMargin),
 			}
-		}, func(mp config.ModelParameters, simc, sia float64) bool {
-			return (sia > 0 && simc > 2*sia && simc > 30.)
+		}, func(mp *config.ModelParameters, optR *OptimizationResult) bool {
+			return (optR.EffectiveGammaAnalytic > 0 && optR.EffectiveGammaAnalytic > 2*optR.EffectiveGammaMonteCarlo && optR.EffectiveGammaMonteCarlo < 1./30)
 		}, true, outputDir, modelName)
 }
 
-func CurrentDensityCalculation2(parameters config.ModelParameters, outputDir, modelName string) (dataRow, altRow *CurrentDensityDataRow, finalModel, altModel *model.Model) {
+func CurrentDensityCalculation2(parameters config.ModelParameters, outputDir, modelName string) (dataRow, altRow utils.ResultInterface, finalModel, altModel *model.Model) {
 	minDc := parameters.CathodeFallLengthPrecision
 	maxDc := parameters.SimulationLength()
 	numberOfSteps := int((maxDc - minDc) / parameters.CathodeFallLengthPrecision)
@@ -49,18 +49,18 @@ func CurrentDensityCalculation2(parameters config.ModelParameters, outputDir, mo
 		func(dc float64, mp *config.ModelParameters) {
 			mp.CathodeFallLength = dc
 		},
-		func(optResult OptimizationResult, variance float64, m *model.Model) CurrentDensityDataRow {
+		func(optResult *OptimizationResult, variance float64, m *model.Model) utils.ResultInterface {
 			optResult.CathodeCurrentDensity = CurrentDensityEquation(m.Parameters)
 			optResult.CathodeCurrentDensityPerPressureSquared = optResult.CathodeCurrentDensity / (optResult.Pressure * optResult.Pressure)
 			currentDensityMargin := optResult.CathodeCurrentDensity * CurrentDensityRelativeError(optResult.SourceIntegralMonteCarlo, math.Abs(optResult.SourceIntegralDifference)+optResult.SourceIntegralMargin, optResult.CathodeFallLength, optResult.CathodeFallLengthMargin)
-			return CurrentDensityDataRow{
-				OptimizationResult:                            optResult,
+			return &CurrentDensityDataRow{
+				OptimizationResult:                            *optResult,
 				CathodeCurrentMargin:                          currentDensityMargin * (math.Pi * parameters.CathodeRadius * parameters.CathodeRadius),
 				CathodeCurrentDensityMargin:                   currentDensityMargin,
 				CathodeCurrentDensityPerPressureSquaredMargin: currentDensityMargin / (parameters.Pressure * parameters.Pressure),
 			}
-		}, func(mp config.ModelParameters, simc, sia float64) bool {
-			return (sia > 0 && simc > 2*sia && simc > 30.)
+		}, func(mp *config.ModelParameters, optR *OptimizationResult) bool {
+			return (optR.EffectiveGammaAnalytic > 0 && optR.EffectiveGammaAnalytic > 2*optR.EffectiveGammaMonteCarlo && optR.EffectiveGammaMonteCarlo < 1./30)
 		}, true, outputDir, modelName)
 }
 

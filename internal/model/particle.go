@@ -26,7 +26,12 @@ type Particle struct {
 
 func (m *Model) newParticle(origin int) Particle {
 	eKinetic := 4. + rand.Float64()
-	mu := rand.Float64()
+	var mu float64
+	if m.Parameters.ForwardEmission {
+		mu = 1.
+	} else {
+		mu = rand.Float64()
+	}
 	p := Particle{
 		x:          0,
 		eKinetic:   eKinetic,
