@@ -209,8 +209,276 @@ const (
 	Turnover
 )
 
+// func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collisionDescription *lxgata.Collision, reversal bool, throwOut BoundaryConditionType, freePath utils.KahanSummable) {
+// 	R := -math.Log(1. - rand.Float64())
+
+// 	if p.x < 0 {
+// 		throwOut = ArrivalAtCathode
+// 		return
+// 	}
+// 	if p.x > m.Parameters.SimulationLength() {
+// 		throwOut = ArrivalAtSimEnd
+// 		return
+// 	}
+
+// 	var currentCellIndex int
+// 	var cachedVelocity float64
+// 	var isVelocityCached = false
+
+// 	alignedToEnergyGrid := false
+
+// 	var pathStartEnergy, segmentEndEnergy float64
+// 	if tupd != nil {
+// 		pathStartEnergy = p.eKinetic
+// 	}
+
+// 	turnoverEnergy := p.trajectory.radialEnergy
+// 	cathodeEnergy := p.trajectory.totEnergy + m.VfromL(0)
+// 	simEndEnergy := p.trajectory.totEnergy + m.VfromL(m.Parameters.SimulationLength())
+
+// 	for {
+// 		var nextEnergy, currentEnergy, lowEnergy, highEnergy float64
+// 		var nextCellIndex, highEnergyCellIndex int
+// 		var turnoverOccured, arrivalAtCathode, arrivalAtSimEnd, arrivalAtTubeWall, highEnergyAligned bool
+// 		currentEnergyAligned := alignedToEnergyGrid
+
+// 		if !alignedToEnergyGrid {
+// 			if p.mu < 0 {
+// 				nextCellIndex = int(math.Floor(p.eKinetic / m.Parameters.EnergyStep))
+// 			} else {
+// 				nextCellIndex = int(math.Ceil(p.eKinetic / m.Parameters.EnergyStep))
+// 			}
+// 			nextEnergy, currentEnergy = m.LookupEnergy[nextCellIndex], p.eKinetic
+// 		} else {
+// 			if p.mu < 0 {
+// 				nextCellIndex = currentCellIndex - 1
+// 			} else {
+// 				nextCellIndex = currentCellIndex + 1
+// 			}
+// 			nextEnergy, currentEnergy = m.LookupEnergy[nextCellIndex], m.LookupEnergy[currentCellIndex]
+// 		}
+// 		nextEnergyAligned := true
+// 		turnoverPossible := false
+// 		// misalignmentCause := MCNone
+// 		if nextEnergy < turnoverEnergy {
+// 			nextEnergy = turnoverEnergy
+// 			nextEnergyAligned = false
+// 			nextCellIndex = currentCellIndex
+// 			turnoverPossible = true
+// 			// misalignmentCause = Turnover
+// 		}
+// 		if nextEnergy < cathodeEnergy {
+// 			nextEnergy = cathodeEnergy
+// 			nextEnergyAligned = false
+// 			arrivalAtCathode = true
+// 			// misalignmentCause = Cathode
+// 		}
+// 		if nextEnergy > simEndEnergy {
+// 			nextEnergy = simEndEnergy
+// 			nextEnergyAligned = false
+// 			arrivalAtSimEnd = true
+// 			// misalignmentCause = SimEnd
+// 		}
+// 		// log.Printf("%v", misalignmentCause)
+
+// 		if p.mu < 0 {
+// 			lowEnergy, highEnergy = nextEnergy, currentEnergy
+// 			highEnergyAligned, highEnergyCellIndex = currentEnergyAligned, currentCellIndex
+// 		} else {
+// 			lowEnergy, highEnergy = currentEnergy, nextEnergy
+// 			highEnergyAligned, highEnergyCellIndex = nextEnergyAligned, nextCellIndex
+// 		}
+
+// 		var M, G float64
+// 		if highEnergyAligned {
+// 			M = m.lookupMNumerator[highEnergyCellIndex] / -m.EFieldFromPotential(-(p.trajectory.totEnergy - highEnergy))
+// 		} else {
+// 			M = m.Parameters.GasDensity * m.Parameters.CrossSectionsData().TotalCrossSectionAt(highEnergy) * math.Sqrt(highEnergy) / -m.EFieldFromPotential(-(p.trajectory.totEnergy - highEnergy))
+// 		}
+
+// 		var higherVelocity, lowerVelocity float64
+// 		if isVelocityCached {
+// 			if p.mu < 0 {
+// 				higherVelocity, lowerVelocity = cachedVelocity, math.Sqrt(lowEnergy-p.trajectory.radialEnergy)
+// 			} else {
+// 				higherVelocity, lowerVelocity = math.Sqrt(highEnergy-p.trajectory.radialEnergy), cachedVelocity
+// 			}
+// 		} else {
+// 			higherVelocity, lowerVelocity = math.Sqrt(highEnergy-p.trajectory.radialEnergy), math.Sqrt(lowEnergy-p.trajectory.radialEnergy)
+// 		}
+// 		if p.mu < 0 {
+// 			cachedVelocity = lowerVelocity
+// 		} else {
+// 			cachedVelocity = higherVelocity
+// 		}
+// 		// isVelocityCached = true
+
+// 		G = 2 * M * (higherVelocity - lowerVelocity)
+
+// 		collisionOccured := false
+// 		if G < R {
+// 			R -= G
+// 			if turnoverPossible {
+// 				turnoverOccured = true
+// 				p.x = m.LfromV(p.trajectory.getTurnaroundX(m))
+// 				p.mu = +0.
+// 				p.eKinetic = p.trajectory.radialEnergy
+// 				alignedToEnergyGrid = false
+// 				// pathStartEnergy = p.trajectory.radialEnergy
+// 				reversal = true
+// 				continue
+// 			}
+// 		} else {
+// 			var delta float64
+// 			if p.mu < 0 {
+// 				delta = math.Sqrt(currentEnergy-p.trajectory.radialEnergy) - R/(2.*M) // == sqrt(pColl - p.trajectory.eStar) i.e. abs(speed) equivalent along x axis
+// 				if delta < 0 {
+// 					R -= 2 * M * math.Sqrt(currentEnergy-p.trajectory.radialEnergy)
+// 					nextEnergy = p.trajectory.radialEnergy
+// 					nextEnergyAligned = false
+// 					nextCellIndex = currentCellIndex
+// 					turnoverOccured = true
+// 					p.x = m.LfromV(p.trajectory.getTurnaroundX(m))
+// 					p.mu = +0.
+// 					p.eKinetic = p.trajectory.radialEnergy
+// 					alignedToEnergyGrid = false
+// 					// pathStartEnergy = p.trajectory.radialEnergy
+// 					reversal = true
+// 					continue
+// 				}
+// 			} else {
+// 				delta = R/(2.*M) + math.Sqrt(currentEnergy-p.trajectory.radialEnergy)
+// 			}
+// 			if math.IsNaN(delta) {
+// 				panic("delta is NaN")
+// 			}
+// 			if !turnoverOccured {
+// 				collisionEnergy := math.FMA(delta, delta, p.trajectory.radialEnergy) // R = 2M[sqrt(p.e-p.trajectory.eStar) - sqrt(eColl - p.trajectory.eStar)]
+// 				nextEnergy = collisionEnergy
+// 				if simEndEnergy < collisionEnergy || m.Parameters.SimulationLength() < p.x {
+// 					arrivalAtSimEnd = true
+// 					nextEnergy = simEndEnergy
+// 				} else if collisionEnergy < cathodeEnergy {
+// 					arrivalAtCathode = true
+// 					nextEnergy = cathodeEnergy
+// 				} else {
+// 					if !m.Parameters.Volumetric || p.y*p.y+p.z*p.z < m.tubeRadius2 {
+// 						collisionOccured = true
+// 						arrivalAtCathode = false
+// 						arrivalAtSimEnd = false
+// 					} else {
+// 						arrivalAtTubeWall = true
+// 					}
+// 				}
+// 			}
+// 		}
+// 		p.setEnergy(nextEnergy, m, true, collisionOccured || arrivalAtTubeWall)
+
+// 		if m.Parameters.MeanFreePath {
+// 			meanEnergy := 0.5 * (currentEnergy + nextEnergy)
+// 			meanMu := math.Sqrt((meanEnergy - p.trajectory.radialEnergy) / meanEnergy)
+// 			var deltaX float64
+// 			if p.mu < 0 {
+// 				deltaX = m.LfromV(highEnergy-p.trajectory.totEnergy) - m.LfromV(nextEnergy-p.trajectory.totEnergy)
+// 			} else {
+// 				deltaX = m.LfromV(nextEnergy-p.trajectory.totEnergy) - m.LfromV(lowEnergy-p.trajectory.totEnergy)
+
+// 			}
+// 			deltaPath := deltaX / meanMu
+// 			if !math.IsNaN(deltaPath) && !math.IsInf(deltaPath, 0) {
+// 				freePath.Add(deltaX / meanMu)
+// 			}
+// 		}
+
+// 		if collisionOccured {
+// 			var totalCrossSectionPrimed = M * math.Abs(m.EFieldFromL(p.x)) / (math.Sqrt(nextEnergy) * m.Parameters.GasDensity)
+// 			collisionDescription = m.Parameters.CrossSectionsData().SampleWithNullCollision(nextEnergy, totalCrossSectionPrimed)
+// 			break
+// 		}
+
+// 		if arrivalAtTubeWall {
+// 			throwOut = ArrivalAtTubeWall
+// 			break
+// 		}
+
+// 		if arrivalAtCathode {
+// 			p.x = 0
+// 			throwOut = ArrivalAtCathode
+// 			break
+// 		}
+
+// 		if arrivalAtSimEnd {
+// 			if m.Parameters.ParallelPlaneHollowCathode {
+// 				if p.mu < 0 {
+// 					println("DEBUG: arrival at half-gap from beyond")
+// 				}
+// 				p.mu = -p.mu
+// 				// p.eKinetic = p.trajectory.totEnergy
+// 				p.setEnergy(p.trajectory.totEnergy, m, true, false)
+// 				alignedToEnergyGrid = false
+// 			} else {
+// 				if m.Parameters.AnodeBackscatteringCoefficient0 != 0 {
+// 					backscatteringCoefficient := m.Parameters.AnodeBackscatteringCoefficient0 * math.Exp(m.Parameters.AnodeBackscatteringCoefficientB*(1-p.mu))
+
+// 					p.setEnergy(p.trajectory.totEnergy, m, true, true)
+// 					if rand.Float64() < backscatteringCoefficient && p.y*p.y+p.z*p.z < m.cathodeRadius2 {
+// 						p.mu = -p.mu
+// 						alignedToEnergyGrid = false
+// 						if m.Parameters.AnodeBackscatteringEnergyLossFraction != 0 {
+// 							p.eKinetic *= (1. - m.Parameters.AnodeBackscatteringEnergyLossFraction)
+// 						} else if p.eKinetic > 9 && rand.Float64() > 0.5 {
+// 							p.eKinetic = p.eKinetic - 9
+// 						}
+// 						p.recalcParams(m)
+// 					} else {
+// 						throwOut = ArrivalAtSimEnd
+// 						break
+// 					}
+// 				} else {
+// 					throwOut = ArrivalAtSimEnd
+// 					p.x = m.Parameters.SimulationLength()
+// 					p.eKinetic = p.trajectory.totEnergy
+// 					p.mu = math.Sqrt(p.getAxialEnergy() / p.trajectory.totEnergy)
+// 					break
+// 				}
+
+//				}
+//			} else {
+//				alignedToEnergyGrid = true
+//			}
+//			if m.Parameters.Volumetric && !math.IsInf(m.tubeRadius2, 0) { //&& currentCellIndex == wallCollisionEnergyStep
+//				throwOut = ArrivalAtTubeWall
+//				break
+//			}
+//			currentCellIndex = nextCellIndex
+//		}
+//		if tupd != nil {
+//			if reversal {
+//				tupd <- TrajectoryUpdate{
+//					startEnergy: pathStartEnergy,
+//					endEnergy:   p.trajectory.radialEnergy,
+//					trajectory:  p.trajectory,
+//					origin:      p.origin,
+//				}
+//				tupd <- TrajectoryUpdate{
+//					startEnergy: p.trajectory.radialEnergy,
+//					endEnergy:   segmentEndEnergy,
+//					trajectory:  p.trajectory,
+//					origin:      p.origin,
+//				}
+//			} else {
+//				tupd <- TrajectoryUpdate{
+//					startEnergy: pathStartEnergy,
+//					endEnergy:   segmentEndEnergy,
+//					trajectory:  p.trajectory,
+//					origin:      p.origin,
+//				}
+//			}
+//		}
+//		return
+//	}
 func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collisionDescription *lxgata.Collision, reversal bool, throwOut BoundaryConditionType, freePath utils.KahanSummable) {
-	R := -math.Log(1. - rand.Float64())
+	R := utils.NewKahanSummable(-math.Log(1. - rand.Float64()))
 
 	if p.x < 0 {
 		throwOut = ArrivalAtCathode
@@ -232,70 +500,59 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 		pathStartEnergy = p.eKinetic
 	}
 
-	turnoverEnergy := p.trajectory.radialEnergy
-	// turnoverCellIndex := int(turnoverEnergy / m.Parameters.EnergyStep)
-	cathodeEnergy := p.trajectory.totEnergy + m.VfromL(0)
-	// cathodeCellIndex := int(cathodeEnergy / m.Parameters.EnergyStep)
-	simEndEnergy := p.trajectory.totEnergy + m.VfromL(m.Parameters.SimulationLength())
-	// simEndCellIndex := int(math.Ceil(simEndEnergy / m.Parameters.EnergyStep))
-
 	for {
-		var nextEnergy, currentEnergy, lowEnergy, highEnergy float64 //, segmentStartEnergy, highEnergy,
-		var currentEnergyAligned bool
+		var lowEnergy, segmentStartEnergy, highEnergy float64
 		var nextCellIndex, highEnergyCellIndex int
 		var reversalOccured, arrivalAtCathode, arrivalAtSimEnd, arrivalAtTubeWall, highEnergyAligned bool
-
-		if !alignedToEnergyGrid {
-			currentEnergyAligned = false
-			if p.mu < 0 {
+		if p.mu < 0 {
+			if !alignedToEnergyGrid {
 				nextCellIndex = int(math.Floor(p.eKinetic / m.Parameters.EnergyStep))
-			} else if !alignedToEnergyGrid && p.mu >= 0 {
-				nextCellIndex = int(math.Ceil(p.eKinetic / m.Parameters.EnergyStep))
-			}
-			nextEnergy, currentEnergy = m.LookupEnergy[nextCellIndex], p.eKinetic
-			alignedToEnergyGrid = true
-		} else {
-			currentEnergyAligned = true
-			if p.mu < 0 {
-				nextCellIndex = currentCellIndex - 1
+				lowEnergy, highEnergy = m.LookupEnergy[nextCellIndex], p.eKinetic
+
 			} else {
+				if currentCellIndex == 0 {
+					lowEnergy, highEnergy = -m.Parameters.EnergyStep, 0
+				} else {
+					lowEnergy, highEnergy = m.LookupEnergy[currentCellIndex-1], m.LookupEnergy[currentCellIndex]
+				}
+
+				highEnergyCellIndex, highEnergyAligned = currentCellIndex, true
+				nextCellIndex = currentCellIndex - 1
+			}
+
+			//check for reversal
+			if lowEnergy < p.trajectory.radialEnergy {
+				lowEnergy, alignedToEnergyGrid = p.trajectory.radialEnergy, false
+				nextCellIndex = currentCellIndex
+				reversalOccured = true
+			}
+
+			//check for cathode return
+			if p.trajectory.totEnergy-lowEnergy > m.Vc+m.Va {
+				arrivalAtCathode = true
+				lowEnergy = p.trajectory.totEnergy - (m.Vc + m.Va)
+			}
+			segmentStartEnergy, segmentEndEnergy = highEnergy, lowEnergy
+		} else {
+			if !alignedToEnergyGrid {
+				nextCellIndex = int(p.eKinetic/m.Parameters.EnergyStep) + 1
+				lowEnergy, highEnergy = p.eKinetic, m.LookupEnergy[nextCellIndex]
+			} else {
+				// if currentCellIndex+1 >= len(m.LookupEnergy) {
+
+				// }
+				lowEnergy, highEnergy = m.LookupEnergy[currentCellIndex], m.LookupEnergy[currentCellIndex+1]
 				nextCellIndex = currentCellIndex + 1
 			}
-			nextEnergy, currentEnergy = m.LookupEnergy[nextCellIndex], m.LookupEnergy[currentCellIndex]
-		}
-		nextEnergyAligned := true
-		// misalignmentCause := MCNone
-		if nextEnergy < turnoverEnergy {
-			nextEnergy = turnoverEnergy
-			alignedToEnergyGrid = false
-			nextEnergyAligned = false
-			nextCellIndex = currentCellIndex
-			// misalignmentCause = Turnover
-		}
-		if nextEnergy < cathodeEnergy {
-			nextEnergy = cathodeEnergy
-			alignedToEnergyGrid = false
-			nextEnergyAligned = false
-			arrivalAtCathode = true
-			// misalignmentCause = Cathode
-		}
-		if nextEnergy > simEndEnergy {
-			nextEnergy = simEndEnergy
-			alignedToEnergyGrid = false
-			nextEnergyAligned = false
-			arrivalAtSimEnd = true
-			// misalignmentCause = SimEnd
-		}
-		// log.Printf("%v", misalignmentCause)
 
-		if p.mu < 0 {
-			lowEnergy, highEnergy = nextEnergy, currentEnergy
-			highEnergyCellIndex = int(math.Ceil(currentEnergy / m.Parameters.EnergyStep))
-			highEnergyAligned = currentEnergyAligned
-		} else {
-			lowEnergy, highEnergy = currentEnergy, nextEnergy
-			highEnergyCellIndex = int(math.Ceil(nextEnergy / m.Parameters.EnergyStep))
-			highEnergyAligned = nextEnergyAligned
+			//check for gap end arrival
+			if p.trajectory.totEnergy <= highEnergy {
+				arrivalAtSimEnd = true
+				highEnergy, highEnergyAligned = p.trajectory.totEnergy, false
+			} else {
+				highEnergyCellIndex, highEnergyAligned = nextCellIndex, true
+			}
+			segmentStartEnergy, segmentEndEnergy = lowEnergy, highEnergy
 		}
 
 		var M, G float64
@@ -320,77 +577,86 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 		} else {
 			cachedVelocity = higherVelocity
 		}
-		// isVelocityCached = true
+		isVelocityCached = true
 
 		G = 2 * M * (higherVelocity - lowerVelocity)
 
 		collisionOccured := false
-		if G < R {
-			R -= G
-			if nextEnergy == turnoverEnergy {
-				reversalOccured = true
+		if G < R.Val() {
+			R.Add(-G)
+			if m.Parameters.MeanFreePath {
+				meanEnergy := 0.5 * (segmentStartEnergy + segmentEndEnergy)
+				meanMu := math.Sqrt((meanEnergy - p.trajectory.radialEnergy) / meanEnergy)
+				deltaX := m.LfromV(highEnergy-p.trajectory.totEnergy) - m.LfromV(lowEnergy-p.trajectory.totEnergy)
+				deltaPath := deltaX / meanMu
+				if !math.IsNaN(deltaPath) && !math.IsInf(deltaPath, 0) {
+					freePath.Add(deltaX / meanMu)
+				}
+
 			}
 		} else {
-			var delta float64
-			if p.mu < 0 {
-				delta = math.Sqrt(currentEnergy-p.trajectory.radialEnergy) - R/(2.*M) // == sqrt(pColl - p.trajectory.eStar) i.e. abs(speed) equivalent along x axis
-				if delta < 0 {
-					R -= 2 * M * math.Sqrt(currentEnergy-p.trajectory.radialEnergy)
-					nextEnergy = p.trajectory.radialEnergy
-					reversalOccured = true
-				}
-			} else {
-				delta = R/(2.*M) + math.Sqrt(currentEnergy-p.trajectory.radialEnergy)
-			}
-			if math.IsNaN(delta) {
-				panic("delta is NaN")
-			}
-			if !reversalOccured {
-				collisionEnergy := math.FMA(delta, delta, p.trajectory.radialEnergy) // R = 2M[sqrt(p.e-p.trajectory.eStar) - sqrt(eColl - p.trajectory.eStar)]
-				nextEnergy = collisionEnergy
-				if simEndEnergy < collisionEnergy || m.Parameters.SimulationLength() < p.x {
-					arrivalAtSimEnd = true
-					nextEnergy = simEndEnergy
-				} else if collisionEnergy < cathodeEnergy {
-					arrivalAtCathode = true
-					nextEnergy = cathodeEnergy
+			{
+				var delta float64
+				if p.mu < 0 {
+					delta = math.Sqrt(segmentStartEnergy-p.trajectory.radialEnergy) - R.Val()/(2.*M) // == sqrt(pColl - p.trajectory.eStar) i.e. abs(speed) equivalent along x axis
+					if delta < 0 {
+						R.Add(-2 * M * math.Sqrt(segmentStartEnergy-p.trajectory.radialEnergy))
+						segmentEndEnergy = p.trajectory.radialEnergy
+						reversalOccured = true
+					}
+					if math.IsNaN(delta) {
+						panic("delta is NaN")
+					}
 				} else {
-					if !m.Parameters.Volumetric || p.y*p.y+p.z*p.z < m.tubeRadius2 {
-						collisionOccured = true
-						arrivalAtCathode = false
-						arrivalAtSimEnd = false
+					delta = R.Val()/(2.*M) + math.Sqrt(segmentStartEnergy-p.trajectory.radialEnergy)
+					if math.IsNaN(delta) {
+						panic("delta is NaN")
+					}
+				}
+				if !reversalOccured {
+					collisionEnergy := math.FMA(delta, delta, p.trajectory.radialEnergy) // R = 2M[sqrt(p.e-p.trajectory.eStar) - sqrt(eColl - p.trajectory.eStar)]
+					segmentEndEnergy = collisionEnergy
+					p.setEnergy(collisionEnergy, m, true, true)
+					if p.trajectory.totEnergy < collisionEnergy || m.Parameters.SimulationLength() < p.x {
+						arrivalAtSimEnd = true
+						segmentEndEnergy = p.trajectory.totEnergy
+					} else if p.x < 0 {
+						arrivalAtCathode = true
+						segmentEndEnergy = p.trajectory.totEnergy - (m.Vc + m.Va)
 					} else {
-						arrivalAtTubeWall = true
+						if !m.Parameters.Volumetric || p.y*p.y+p.z*p.z < m.tubeRadius2 {
+							var totalCrossSectionPrimed = M * math.Abs(m.EFieldFromL(p.x)) / (math.Sqrt(collisionEnergy) * m.Parameters.GasDensity)
+							// collisionDescription = m.collisionSelector(collisionEnergy, p.x, M)
+							collisionDescription = m.Parameters.CrossSectionsData().SampleWithNullCollision(collisionEnergy, totalCrossSectionPrimed)
+							collisionOccured = true
+						} else {
+							arrivalAtTubeWall = true
+						}
+					}
+				}
+				if m.Parameters.MeanFreePath {
+					if p.mu < 0 {
+						meanEnergy := 0.5 * (segmentStartEnergy + segmentEndEnergy)
+						meanMu := math.Sqrt((meanEnergy - p.trajectory.radialEnergy) / meanEnergy)
+						deltaX := m.LfromV(highEnergy-p.trajectory.totEnergy) - m.LfromV(segmentEndEnergy-p.trajectory.totEnergy)
+						deltaPath := deltaX / meanMu
+						if !math.IsNaN(deltaPath) && !math.IsInf(deltaPath, 0) {
+							freePath.Add(deltaX / meanMu)
+						}
+					} else {
+						meanEnergy := 0.5 * (segmentStartEnergy + segmentEndEnergy)
+						meanMu := math.Sqrt((meanEnergy - p.trajectory.radialEnergy) / meanEnergy)
+						deltaX := m.LfromV(segmentEndEnergy-p.trajectory.totEnergy) - m.LfromV(lowEnergy-p.trajectory.totEnergy)
+						deltaPath := deltaX / meanMu
+						if !math.IsNaN(deltaPath) && !math.IsInf(deltaPath, 0) {
+							freePath.Add(deltaX / meanMu)
+						}
 					}
 				}
 			}
 		}
-		p.setEnergy(nextEnergy, m, true, collisionOccured || arrivalAtTubeWall)
 
-		if m.Parameters.MeanFreePath {
-			meanEnergy := 0.5 * (currentEnergy + nextEnergy)
-			meanMu := math.Sqrt((meanEnergy - p.trajectory.radialEnergy) / meanEnergy)
-			var deltaX float64
-			if p.mu < 0 {
-				deltaX = m.LfromV(highEnergy-p.trajectory.totEnergy) - m.LfromV(nextEnergy-p.trajectory.totEnergy)
-			} else {
-				deltaX = m.LfromV(nextEnergy-p.trajectory.totEnergy) - m.LfromV(lowEnergy-p.trajectory.totEnergy)
-
-			}
-			deltaPath := deltaX / meanMu
-			if !math.IsNaN(deltaPath) && !math.IsInf(deltaPath, 0) {
-				freePath.Add(deltaX / meanMu)
-			}
-		}
-
-		if collisionOccured {
-			var totalCrossSectionPrimed = M * math.Abs(m.EFieldFromL(p.x)) / (math.Sqrt(nextEnergy) * m.Parameters.GasDensity)
-			collisionDescription = m.Parameters.CrossSectionsData().SampleWithNullCollision(nextEnergy, totalCrossSectionPrimed)
-			break
-		}
-
-		if arrivalAtTubeWall {
-			throwOut = ArrivalAtTubeWall
+		if collisionOccured || arrivalAtTubeWall {
 			break
 		}
 
@@ -437,7 +703,7 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 
 			}
 		} else if reversalOccured {
-			p.x = m.LfromV(p.trajectory.getTurnaroundX(m))
+			isVelocityCached = false
 			p.mu = +0.
 			p.eKinetic = p.trajectory.radialEnergy
 			alignedToEnergyGrid = false

@@ -1,6 +1,7 @@
 *.toml
 *.txt
 *.exe
+*.go_old
 stmc
 Ar*
 go.sum

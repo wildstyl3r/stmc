@@ -69,32 +69,31 @@ func gammaAnalyticF(parameters config.ModelParameters) float64 {
 // 	return 0.5 * (initialDcL + initialDcR)
 // }
 
-func sourceIntegralCalculationStep(requirePrecision bool, parameters *config.ModelParameters, inverseAnalyticEffectiveGamma func(config.ModelParameters) float64) (optResult OptimizationResult, inverseEffectiveGammaVariance float64, stepModel *model.Model) {
-	inverseSurfaceGammaMonteCarlo, inverseSurfaceGammaVariance, stepModel := sourceIntegralMonteCarloF(*parameters, requirePrecision)
-	surfaceGammaMonteCarlo := 1. / inverseSurfaceGammaMonteCarlo
+func sourceIntegralCalculationStep(requirePrecision bool, parameters *config.ModelParameters, analyticSourceIntegral func(config.ModelParameters) float64) (optResult OptimizationResult, effectiveSourceIntegralVariance float64, stepModel *model.Model) {
+	effectiveSourceIntegralMonteCarlo, effectiveSourceIntegralVariance, stepModel := sourceIntegralMonteCarloF(*parameters, requirePrecision)
+	effectiveGammaMonteCarlo := 1. / effectiveSourceIntegralMonteCarlo
+	effectiveSourceIntegralAnalytic := analyticSourceIntegral(*parameters) //sourceIntegralAnalyticF(stepModel.Parameters.CathodeFallLength, stepModel.Parameters.CathodeCurrentDensity, stepModel.Parameters.CathodeFallPotential, stepModel.Parameters.GasDensity, utils.IonDriftVelocity[stepModel.Parameters.Species])
+	effectiveGammaAnalytic := 1. / effectiveSourceIntegralAnalytic
+
 	escapeFactor := (1. - stepModel.ElectronsReturned.Mean())
-	// inverseEffectiveGammaMonteCarlo,
-	inverseEffectiveGammaVariance = inverseSurfaceGammaVariance / (escapeFactor * escapeFactor)
-	inverseEffectiveGammaAnalytic := inverseAnalyticEffectiveGamma(*parameters) //sourceIntegralAnalyticF(stepModel.Parameters.CathodeFallLength, stepModel.Parameters.CathodeCurrentDensity, stepModel.Parameters.CathodeFallPotential, stepModel.Parameters.GasDensity, utils.IonDriftVelocity[stepModel.Parameters.Species])
-	effectiveGammaAnalytic := 1. / inverseEffectiveGammaAnalytic
-	difference := inverseEffectiveGammaAnalytic - inverseSurfaceGammaMonteCarlo/escapeFactor
+	difference := effectiveSourceIntegralAnalytic - effectiveSourceIntegralMonteCarlo
 	return OptimizationResult{
 			CoreResult:                              stepModel.CoreResult(),
 			SourceIntegralDifference:                difference,
-			SourceIntegralAnalytic:                  inverseEffectiveGammaAnalytic * escapeFactor,
-			SourceIntegralMonteCarlo:                inverseSurfaceGammaMonteCarlo,
-			SourceIntegralMargin:                    utils.EstimateMargin(0.95, inverseSurfaceGammaVariance, float64(stepModel.TotalElectronsEmittedOnCathode)),
-			EffectiveGammaMonteCarlo:                surfaceGammaMonteCarlo * escapeFactor,
+			SourceIntegralAnalytic:                  effectiveSourceIntegralAnalytic,
+			SourceIntegralMonteCarlo:                effectiveSourceIntegralMonteCarlo,
+			SourceIntegralMargin:                    utils.EstimateMargin(0.95, effectiveSourceIntegralVariance, float64(stepModel.TotalElectronsEmittedOnCathode)),
+			EffectiveGammaMonteCarlo:                effectiveGammaMonteCarlo,
 			EffectiveGammaAnalytic:                  effectiveGammaAnalytic,
 			SurfaceGammaAnalytic:                    effectiveGammaAnalytic / escapeFactor,
-			SurfaceGammaMonteCarlo:                  surfaceGammaMonteCarlo,
+			SurfaceGammaMonteCarlo:                  effectiveGammaMonteCarlo / escapeFactor,
 			MeanElectronEnergyAtAnode:               stepModel.MeanElectronEnergyAtAnode,
 			MeanFreePathAnode:                       1. / (stepModel.Parameters.CrossSectionsData().TotalCrossSectionAt(stepModel.MeanElectronEnergyAtAnode) * stepModel.Parameters.GasDensity),
 			CathodeCurrent:                          stepModel.Parameters.CathodeCurrentDensity * (math.Pi * parameters.CathodeRadius * parameters.CathodeRadius),
 			CathodeCurrentDensity:                   stepModel.Parameters.CathodeCurrentDensity,
 			CathodeCurrentDensityPerPressureSquared: stepModel.Parameters.CathodeCurrentDensity / (parameters.Pressure * parameters.Pressure),
 		},
-		inverseEffectiveGammaVariance,
+		effectiveSourceIntegralVariance,
 		stepModel
 }
 
@@ -118,7 +117,7 @@ func SourceIntegralCalculation(parameters config.ModelParameters, outputDir, mod
 				GammaMonteCarloMargin: (math.Abs(optResult.SourceIntegralDifference) + optResult.SourceIntegralMargin) / (optResult.SourceIntegralMonteCarlo * optResult.SourceIntegralMonteCarlo),
 			}
 		}, func(p *config.ModelParameters, optR *OptimizationResult) bool {
-			return (optR.EffectiveGammaAnalytic > 0 && optR.EffectiveGammaAnalytic > 3*optR.EffectiveGammaMonteCarlo)
+			return (optR.EffectiveGammaAnalytic > 0 && optR.EffectiveGammaAnalytic > 2*optR.EffectiveGammaMonteCarlo)
 		}, true, outputDir, modelName)
 }
 
