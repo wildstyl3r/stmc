@@ -12,7 +12,7 @@ import (
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
-func sourceIntegralMonteCarloF(parameters config.ModelParameters, requirePrecision bool) (sumMean, sumMargin float64, m *model.Model) {
+func sourceIntegralMonteCarloF(parameters *config.ModelParameters, requirePrecision bool) (sumMean, sumMargin float64, m *model.Model) {
 	m = model.NewModel(parameters)
 	LoadExtensions(m.DataHub)
 	m.Run(func(m *model.Model) int {
@@ -34,21 +34,21 @@ func sourceIntegralMonteCarloF(parameters config.ModelParameters, requirePrecisi
 }
 
 // not applicable for UniformField
-func sourceIntegralAnalyticPhelpsF(parameters config.ModelParameters) float64 {
+func sourceIntegralAnalyticPhelpsF(parameters *config.ModelParameters) float64 {
 	return 1. / gammaAnalyticPhelpsF(parameters) //-> 0
 }
 
-func gammaDonkoF(parameters config.ModelParameters) float64 {
+func gammaDonkoF(parameters *config.ModelParameters) float64 {
 	return 0.01 * math.Pow(parameters.ReducedFieldAtCathode()/1000, 0.6)
 }
 
-func sourceIntegralAnalyticF(parameters config.ModelParameters) float64 {
+func sourceIntegralAnalyticF(parameters *config.ModelParameters) float64 {
 	return 1. / gammaAnalyticF(parameters)
 }
-func gammaAnalyticF(parameters config.ModelParameters) float64 {
-	if parameters.CalculateSecondaryEmissionCoefficient {
+func gammaAnalyticF(parameters *config.ModelParameters) float64 {
+	if parameters.GetCalculationMode() == config.GammaCalculation {
 		return gammaAnalyticPhelpsF(parameters)
-	} else if parameters.CalculateCurrentDensity || parameters.CalculateVoltage {
+	} else if parameters.GetCalculationMode() == config.CurrentCalculation || parameters.GetCalculationMode() == config.VoltageCalculation {
 		if parameters.UseDonkosSEC {
 			return gammaDonkoF(parameters)
 		} else if parameters.SecondaryEmissionCoefficient != 0 {
@@ -69,13 +69,14 @@ func gammaAnalyticF(parameters config.ModelParameters) float64 {
 // 	return 0.5 * (initialDcL + initialDcR)
 // }
 
-func sourceIntegralCalculationStep(requirePrecision bool, parameters *config.ModelParameters, analyticSourceIntegral func(config.ModelParameters) float64) (optResult OptimizationResult, effectiveSourceIntegralVariance float64, stepModel *model.Model) {
-	effectiveSourceIntegralMonteCarlo, effectiveSourceIntegralVariance, stepModel := sourceIntegralMonteCarloF(*parameters, requirePrecision)
+func sourceIntegralCalculationStep(requirePrecision bool, parameters *config.ModelParameters, analyticSourceIntegral func(*config.ModelParameters) float64) (optResult OptimizationResult, effectiveSourceIntegralVariance float64, stepModel *model.Model) {
+	effectiveSourceIntegralMonteCarlo, effectiveSourceIntegralVariance, stepModel := sourceIntegralMonteCarloF(parameters, requirePrecision)
 	effectiveGammaMonteCarlo := 1. / effectiveSourceIntegralMonteCarlo
-	effectiveSourceIntegralAnalytic := analyticSourceIntegral(*parameters) //sourceIntegralAnalyticF(stepModel.Parameters.CathodeFallLength, stepModel.Parameters.CathodeCurrentDensity, stepModel.Parameters.CathodeFallPotential, stepModel.Parameters.GasDensity, utils.IonDriftVelocity[stepModel.Parameters.Species])
+	effectiveSourceIntegralAnalytic := analyticSourceIntegral(parameters) //sourceIntegralAnalyticF(stepModel.Parameters.CathodeFallLength, stepModel.Parameters.CathodeCurrentDensity, stepModel.Parameters.CathodeFallPotential, stepModel.Parameters.GasDensity, utils.IonDriftVelocity[stepModel.Parameters.Species])
 	effectiveGammaAnalytic := 1. / effectiveSourceIntegralAnalytic
 
 	escapeFactor := (1. - stepModel.ElectronsReturned.Mean())
+	// ionizingElectrons := stepModel.IonizingCathodeElectrons.Mean()
 	difference := effectiveSourceIntegralAnalytic - effectiveSourceIntegralMonteCarlo
 	return OptimizationResult{
 			CoreResult:                              stepModel.CoreResult(),
@@ -99,22 +100,28 @@ func sourceIntegralCalculationStep(requirePrecision bool, parameters *config.Mod
 
 type SourceIntegralDataRow struct {
 	OptimizationResult
-	GammaMonteCarloMargin float64 `csv:"surface $\\gamma$ Monte Carlo margin"`
-	EffectiveGammaMargin  float64 `csv:"effective $\\gamma$ Monte Carlo margin"`
+	EffectiveGammaMonteCarloMargin float64 `csv:"effective $\\gamma$ Monte Carlo margin"`
+	SurfaceGammaMonteCarloMargin   float64 `csv:"surface $\\gamma$ Monte Carlo margin"`
 }
 
-func SourceIntegralCalculation(parameters config.ModelParameters, outputDir, modelName string) (dataRow, altDataRow utils.ResultInterface, finalmodel, altModel *model.Model) {
-	_, maxDc := EstimateCathodeFallLengthLimits(parameters)
+func SourceIntegralCalculation(parameters *config.ModelParameters, outputDir, modelName string) (dataRow, altDataRow utils.ResultInterface, finalmodel, altModel *model.Model) {
+	_, maxDc := EstimateCathodeFallLengthLimits(*parameters)
 	minDc := parameters.CathodeFallLengthPrecision
 	numberOfSteps := int((maxDc - minDc) / parameters.CathodeFallLengthPrecision)
-	return GeneralizedCalculation(parameters, numberOfSteps, minDc, parameters.CathodeFallLengthPrecision,
+	return GeneralizedCalculation(*parameters, numberOfSteps, minDc, parameters.CathodeFallLengthPrecision,
 		func(dc float64, mp *config.ModelParameters) {
 			mp.CathodeFallLength = dc
 		},
 		func(optResult *OptimizationResult, variance float64, m *model.Model) utils.ResultInterface {
+			effectiveGammaMonteCarloMargin := (math.Abs(optResult.SourceIntegralDifference) + optResult.SourceIntegralMargin) / (optResult.SourceIntegralMonteCarlo * optResult.SourceIntegralMonteCarlo)
+			// ionizingElectrons, ionizingElectronsMargin := optResult.IonizingCathodeElectrons, optResult.IonizingCathodeElectronsMargin
+			escapeFactor := (1. - optResult.ElectronsReturned)
+			relativeEscapedElectronsMargin := optResult.ElectronsReturnedMargin / escapeFactor
+			relativeEffectiveGammaMargin := effectiveGammaMonteCarloMargin / optResult.EffectiveGammaMonteCarlo
 			return &SourceIntegralDataRow{
-				OptimizationResult:    *optResult,
-				GammaMonteCarloMargin: (math.Abs(optResult.SourceIntegralDifference) + optResult.SourceIntegralMargin) / (optResult.SourceIntegralMonteCarlo * optResult.SourceIntegralMonteCarlo),
+				OptimizationResult:             *optResult,
+				EffectiveGammaMonteCarloMargin: effectiveGammaMonteCarloMargin,
+				SurfaceGammaMonteCarloMargin:   optResult.SurfaceGammaMonteCarlo * math.Sqrt(relativeEffectiveGammaMargin*relativeEffectiveGammaMargin+relativeEscapedElectronsMargin*relativeEscapedElectronsMargin),
 			}
 		}, func(p *config.ModelParameters, optR *OptimizationResult) bool {
 			return (optR.EffectiveGammaAnalytic > 0 && optR.EffectiveGammaAnalytic > 2*optR.EffectiveGammaMonteCarlo)
@@ -179,12 +186,12 @@ func GeneralizedCalculation(parameters config.ModelParameters,
 
 		_, minArg = utils.BinarySearch(func(arg float64) bool {
 			setUp(arg, &parameters)
-			return sourceIntegralAnalyticF(parameters) > 0
-		}, minArg, maxArg, stepSize*0.00001)
+			return sourceIntegralAnalyticF(&parameters) > 0
+		}, minArg, maxArg, stepSize*0.00000001)
 
 		equation := func(arg float64) float64 {
 			setUp(arg, &parameters)
-			analytic := sourceIntegralAnalyticF(parameters)
+			analytic := sourceIntegralAnalyticF(&parameters)
 			approx := regression.F(arg)
 			return analytic - approx
 		}
@@ -192,7 +199,7 @@ func GeneralizedCalculation(parameters config.ModelParameters,
 			baseline := equation(minArg) < 0
 			left, right := utils.BinarySearch(func(arg float64) bool {
 				return equation(arg) < 0 != baseline
-			}, minArg, maxArg, stepSize*0.000001)
+			}, minArg, maxArg, stepSize*0.00000001)
 			sourceDifferenceRoot = 0.5 * (left + right)
 			fmt.Printf("The only root is at %f, eq at root: %f\n", sourceDifferenceRoot, equation(sourceDifferenceRoot))
 		} else {
@@ -200,23 +207,23 @@ func GeneralizedCalculation(parameters config.ModelParameters,
 			if (equation(minArg+stepSize)-equation(minArg))/stepSize > 0 {
 				maxDiff = utils.TernarySearchMax(func(arg float64) float64 {
 					return equation(arg)
-				}, minArg, maxArg, stepSize*0.000001)
+				}, minArg, maxArg, stepSize*0.00000001)
 
 			} else {
 				maxDiff = utils.TernarySearchMax(func(arg float64) float64 {
 					return -equation(arg)
-				}, minArg, maxArg, stepSize*0.000001)
+				}, minArg, maxArg, stepSize*0.00000001)
 			}
 			baseline := equation(minArg) < 0
 			firstRootL, firstRootR := utils.BinarySearch(func(arg float64) bool {
 				return equation(arg) < 0 != baseline
-			}, minArg, maxDiff, stepSize*0.000001)
+			}, minArg, maxDiff, stepSize*0.00000001)
 			firstRoot := 0.5 * (firstRootL + firstRootR)
 
 			baseline = equation(maxArg) < 0
 			secondRootL, secondRootR := utils.BinarySearch(func(arg float64) bool {
 				return equation(arg) < 0 == baseline
-			}, maxDiff, maxArg, stepSize*0.000001)
+			}, maxDiff, maxArg, stepSize*0.00000001)
 			secondRoot := 0.5 * (secondRootL + secondRootR)
 
 			if math.Abs(firstRoot-secondRoot) < stepSize {

@@ -13,13 +13,13 @@ func VoltageFromDc(parameters config.ModelParameters, dc float64) float64 {
 	parameters.CathodeFallLength = dc
 	_, maxV := utils.BinarySearch(func(V float64) bool {
 		parameters.CathodeFallPotential = V
-		phelps := sourceIntegralAnalyticPhelpsF(parameters)
+		phelps := sourceIntegralAnalyticPhelpsF(&parameters)
 		return phelps > 0
 	}, 1500, 10, 0.000001)
 	lV, rV := utils.BinarySearch(func(V float64) bool {
 		parameters.CathodeFallPotential = V
-		phelps := sourceIntegralAnalyticPhelpsF(parameters)
-		other := sourceIntegralAnalyticF(parameters)
+		phelps := sourceIntegralAnalyticPhelpsF(&parameters)
+		other := sourceIntegralAnalyticF(&parameters)
 		return phelps-other > 0.
 	}, 1, maxV, 0.000001)
 	return 0.5 * (lV + rV)
@@ -37,12 +37,12 @@ func DcFromVoltage(parameters config.ModelParameters, voltage float64) float64 {
 	parameters.CathodeFallPotential = voltage
 	_, minDc := utils.BinarySearch(func(dc float64) bool {
 		parameters.CathodeFallLength = dc
-		return sourceIntegralAnalyticPhelpsF(parameters) > 0
+		return sourceIntegralAnalyticPhelpsF(&parameters) > 0
 	}, parameters.CathodeFallLengthPrecision, parameters.SimulationLength(), parameters.CathodeFallLengthPrecision*0.000001)
 
 	ldc, rdc := utils.BinarySearch(func(dc float64) bool {
 		parameters.CathodeFallLength = dc
-		delta := sourceIntegralAnalyticF(parameters) - sourceIntegralAnalyticPhelpsF(parameters) //gammaAnalyticF(parameters)
+		delta := sourceIntegralAnalyticF(&parameters) - sourceIntegralAnalyticPhelpsF(&parameters) //gammaAnalyticF(parameters)
 		return delta > 0
 	}, minDc, parameters.SimulationLength(), parameters.CathodeFallLengthPrecision*0.000001)
 	return 0.5 * (ldc + rdc)
@@ -72,10 +72,10 @@ func VoltageCalculation(parameters config.ModelParameters, outputDir, modelName 
 
 }
 
-func VoltageCalculation2(parameters config.ModelParameters, outputDir, modelName string) (dataRow, altRow utils.ResultInterface, finalModel, altModel *model.Model) {
-	minDc, maxDc := DcFromVoltage(parameters, 80), DcFromVoltage(parameters, 1500)
+func VoltageCalculation2(parameters *config.ModelParameters, outputDir, modelName string) (dataRow, altRow utils.ResultInterface, finalModel, altModel *model.Model) {
+	minDc, maxDc := DcFromVoltage(*parameters, 80), DcFromVoltage(*parameters, 1500)
 	numberOfSteps := int((maxDc - minDc) / parameters.CathodeFallLengthPrecision)
-	return GeneralizedCalculation(parameters, numberOfSteps, minDc, parameters.CathodeFallLengthPrecision,
+	return GeneralizedCalculation(*parameters, numberOfSteps, minDc, parameters.CathodeFallLengthPrecision,
 		func(dc float64, mp *config.ModelParameters) {
 			mp.CathodeFallLength = dc
 			mp.CathodeFallPotential = VoltageFromDc(*mp, dc)

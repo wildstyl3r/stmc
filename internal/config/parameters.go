@@ -39,11 +39,11 @@ const (
 )
 
 type UnitConfig struct {
-	L string
-	T string
-	P string
-	I string
-	E string
+	L string `form:"label=Length,options=mm|cm|m" toml:"L,omitzero,omitempty"`
+	T string `form:"hide" toml:"T,omitzero,omitempty"`
+	P string `form:"label=Pressure,options=Torr|Pa|mbar|bar" toml:"P,omitzero,omitempty"`
+	I string `form:"label=Current,options=mkA|mA|A" toml:"I,omitzero,omitempty"`
+	E string `form:"label=Energy,options=eV|J" toml:"E,omitzero,omitempty"`
 }
 
 func (uc *UnitConfig) GetForClass(class UnitClass) string {
@@ -66,16 +66,16 @@ func (uc *UnitConfig) GetForClass(class UnitClass) string {
 }
 
 type Config struct {
-	OutputDir string
-	Models    map[string]ModelParameters
-	Options   map[string]map[string]ModelParameters //[]string
-	ModelParameters
-	ModelTable   string
-	isDefinedMap map[string]struct{}
-	AddPotential float64
+	OutputDir    string     `form:"label=Output path,widget=folder"`
+	InputUnits   UnitConfig `form:"orientation=horiz" toml:"IputUnits,omitzero,omitempty"`
+	OutputUnits  UnitConfig `form:"orientation=horiz" toml:"OutputUnits,omitzero,omitempty"`
+	AddPotential float64    `form:"label=Potential offset" toml:"AddPotential,omitzero,omitempty"`
 
-	InputUnits  UnitConfig
-	OutputUnits UnitConfig
+	ModelParameters `form:"label=Global defaults,sparse"`
+	ModelTable      string                                 `form:"label=Models from file,widget=file" toml:"ModelTable,omitzero,omitempty"`
+	Models          map[string]*ModelParameters            `form:"element=Model" toml:"Models,omitzero,omitempty"`
+	Options         map[string]map[string]*ModelParameters `toml:"Options,omitzero,omitempty"` //[]string
+	isDefinedMap    map[string]struct{}
 }
 
 func (c *Config) isDefined(path []string, meta *toml.MetaData) bool {
@@ -101,8 +101,9 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 	config.isDefinedMap = map[string]struct{}{}
 	meta, err := toml.DecodeFile(strings.TrimSuffix(*flags.ConfigFileNamePointer, ".toml")+".toml", &config)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		fmt.Println(err)
+		fmt.Fprintln(os.Stdout, err)
+		// os.Exit(1)
 	}
 
 	var unknownUnits []string
@@ -156,10 +157,11 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 		}
 
 		groupname := utils.GetFilename(config.ModelTable)
-		config.Models = make(map[string]ModelParameters, len(models))
+		config.Models = make(map[string]*ModelParameters, len(models))
 		for line := range models {
 			modelName := groupname + "_l" + strconv.Itoa(line+1)
-			config.Models[modelName] = *models[line]
+			baseModel := *models[line]
+			config.Models[modelName] = &baseModel
 			for fieldName := range fieldsRead {
 				// config.Models[modelName]._isFieldDefined[fieldsRead[fieldName]] = struct{}{}
 				config.isDefinedMap[strings.Join([]string{"Models", modelName, fieldsRead[fieldName]}, "#")] = struct{}{}
@@ -173,16 +175,17 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 	}
 
 	for modelName := range config.Models {
-		model := config.Models[modelName]
-		model._prototypeName = modelName
-		config.Models[modelName] = model
+		config.Models[modelName]._prototypeName = modelName
+		// model._prototypeName = modelName
+		// config.Models[modelName] = model
 	}
 
 	if len(config.Options) > 0 {
 		temporary := config.Models
-		config.Models = make(map[string]ModelParameters, len(temporary))
+		config.Models = make(map[string]*ModelParameters, len(temporary))
 		for modelName := range temporary {
-			config.Models["/"+modelName] = temporary[modelName]
+			t := *temporary[modelName]
+			config.Models["/"+modelName] = &t
 		}
 
 		groups := make([]string, 0, len(config.Options))
@@ -197,11 +200,11 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 				os.Exit(0)
 			}
 			draft := config.Models
-			config.Models = make(map[string]ModelParameters, len(draft)*len(config.Options[groups[g]]))
+			config.Models = make(map[string]*ModelParameters, len(draft)*len(config.Options[groups[g]]))
 			for draftName := range draft {
 				for choice := range config.Options[groups[g]] {
 					modelName := groups[g] + "-" + choice + "_" + draftName
-					mp := draft[draftName]
+					mp := *draft[draftName]
 					choiceParameters := config.Options[groups[g]][choice]
 					choiceReflect := reflect.TypeOf(choiceParameters)
 					for i := 0; i < choiceReflect.NumField(); i++ {
@@ -243,7 +246,7 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 							config.isDefinedMap[strings.Join(descr, "#")] = struct{}{}
 						}
 					}
-					config.Models[modelName] = mp
+					config.Models[modelName] = &mp
 				}
 			}
 		}
@@ -286,74 +289,75 @@ const (
 )
 
 type ModelParameters struct {
-	CrossSections                           string
-	ElasticScatteringMode                   string
-	InelasticScatteringMode                 string
-	IonizationEnergySharing                 string
-	IonizationScatteringMode                string
-	Species                                 map[string]float64
-	ThresholdType                           string
-	LowerThresholdValue                     float64
-	RequireCollisionRelativeMargin          map[string]float64
-	GapLength                               float64 `csv:"L" units:"Length:1"`
-	PressureGapLength                       float64 `csv:"pL" units:"Pressure:1,Length:1"`
-	CathodeFallLength                       float64 `csv:"d" units:"Length:1"`
-	PressureCathodeFallLength               float64 `csv:"pd" units:"Pressure:1,Length:1"`
-	CathodeFallPotential                    float64 `csv:"Voltage"`
-	CathodeCurrentDensity                   float64 `csv:"j" units:"Current:1,Length:-2"`
-	CathodeCurrentDensityPerPressureSquared float64 `csv:"j/p2" units:"Current:1,Length:-2,Pressure:-2"`
-	CathodeCurrent                          float64 `csv:"I" units:"Current:1"`
-	SecondaryEmissionCoefficient            float64
-	UseDonkosSEC                            bool
-	UniformField                            bool
-	ConstEField                             float64 `units:"Voltage:1,Length:-1"`
-	Temperature                             float64
-	Pressure                                float64 `csv:"p" units:"Pressure:1"`
-	CathodeRadius                           float64 `units:"Length:1"`
-	TubeRadius                              float64 `units:"Length:1"`
+	CrossSections                           string             `form:"label=Cross section file,widget=file" toml:"CrossSections,omitzero,omitempty"`
+	ElasticScatteringMode                   string             `form:"label=Elastic scattering model,options=BornBethe|ScreenedCoulomb|Isotropic" toml:"ElasticScatteringMode,omitzero,omitempty"`
+	InelasticScatteringMode                 string             `form:"label=Inelastic scattering model,options=BornBethe|ScreenedCoulomb|Isotropic" toml:"InelasticScatteringMode,omitzero,omitempty"`
+	IonizationEnergySharing                 string             `form:"label=Ionization energy sharing,options=Opal|UniformRandom|Equal" toml:"IonizationEnergySharing,omitzero,omitempty"`
+	IonizationScatteringMode                string             `form:"label=Ionization scattering model,options=Boeuf|Isotropic|ScreenedCoulomb|Born" toml:"IonizationScatteringMode,omitzero,omitempty"`
+	Species                                 map[string]float64 `form:"label=Species,widget=floatmap,element=Species" toml:"Species,omitzero,omitempty"`
+	ThresholdType                           string             `toml:"ThresholdType,omitzero,omitempty"`
+	LowerThresholdValue                     float64            `toml:"LowerThresholdValue,omitzero,omitempty"`
+	RequireCollisionRelativeMargin          map[string]float64 `form:"label=Precision for collisions of interest,widget=floatmap,element=Process Wildcard" toml:"RequireCollisionRelativeMargin,omitzero,omitempty"`
+	GapLength                               float64            `csv:"L" units:"Length:1" toml:"GapLength,omitzero,omitempty"`
+	PressureGapLength                       float64            `csv:"pL" units:"Pressure:1,Length:1" toml:"PressureGapLength,omitzero,omitempty"`
+	CathodeFallLength                       float64            `csv:"d" units:"Length:1" toml:"CathodeFallLength,omitzero,omitempty"`
+	PressureCathodeFallLength               float64            `csv:"pd" units:"Pressure:1,Length:1" toml:"PressureCathodeFallLength,omitzero,omitempty"`
+	CathodeFallPotential                    float64            `csv:"Voltage" toml:"CathodeFallPotential,omitzero,omitempty"`
+	CathodeCurrentDensity                   float64            `csv:"j" units:"Current:1,Length:-2" toml:"CathodeCurrentDensity,omitzero,omitempty"`
+	CathodeCurrentDensityPerPressureSquared float64            `csv:"j/p2" units:"Current:1,Length:-2,Pressure:-2" toml:"CathodeCurrentDensityPerPressureSquared,omitzero,omitempty"`
+	CathodeCurrentPerPressureSquared        float64            `csv:"I/p2" units:"Current:1,Pressure:-2" toml:"CathodeCurrentPerPressureSquared,omitzero,omitempty"`
+	CathodeCurrent                          float64            `csv:"I" units:"Current:1" toml:"CathodeCurrent,omitzero,omitempty"`
+	SecondaryEmissionCoefficient            float64            `toml:"SecondaryEmissionCoefficient,omitzero,omitempty"`
+	UseDonkosSEC                            bool               `toml:"UseDonkosSEC,omitzero,omitempty"`
+	UniformField                            bool               `toml:"UniformField,omitzero,omitempty"`
+	ConstEField                             float64            `units:"Voltage:1,Length:-1" toml:"ConstEField,omitzero,omitempty"`
+	Temperature                             float64            `toml:"Temperature,omitzero,omitempty"`
+	Pressure                                float64            `toml:"Pressure,omitzero,omitempty" csv:"p" units:"Pressure:1"`
+	CathodeRadius                           float64            `toml:"CathodeRadius,omitzero,omitempty" units:"Length:1"`
+	TubeRadius                              float64            `toml:"TubeRadius,omitzero,omitempty" units:"Length:1"`
 
-	SourceIntegralRelativeMargin float64
+	SourceIntegralRelativeMargin float64 `toml:"SourceIntegralRelativeMargin,omitzero,omitempty"`
 
 	// AmbipolarDiffusionCoefficient float64
-	SlowElectronTemperature float64
+	SlowElectronTemperature float64 `toml:"SlowElectronTemperature,omitzero,omitempty"`
 
-	EnergyStep, AngleStep                          float64 // [eV]
-	EnergyDiscretizationStep, MuDiscretizationStep float64
-	NElectrons                                     int
-	AddByNElectrons                                int
-	MakeDir                                        bool
-	ParallelPlaneHollowCathode                     bool
-	Volumetric                                     bool
-	AnodeBackscatteringCoefficient0                float64
-	AnodeBackscatteringCoefficientB                float64
-	AnodeBackscatteringEnergyLossFraction          float64
+	EnergyStep                            float64 `toml:"EnergyStep,omitzero,omitempty"` // [eV]
+	AngleStep                             float64 `toml:"AngleStep,omitzero,omitempty"`
+	EnergyDiscretizationStep              float64 `toml:"EnergyDiscretizationStep,omitzero,omitempty"`
+	MuDiscretizationStep                  float64 `toml:"MuDiscretizationStep,omitzero,omitempty"`
+	NElectrons                            int     `toml:"NElectrons,omitzero,omitempty"`
+	AddByNElectrons                       int     `toml:"AddByNElectrons,omitzero,omitempty"`
+	ParallelPlaneHollowCathode            bool    `toml:"ParallelPlaneHollowCathode,omitzero,omitempty"`
+	Volumetric                            bool    `toml:"Volumetric,omitzero,omitempty"`
+	AnodeBackscatteringCoefficient0       float64 `toml:"AnodeBackscatteringCoefficient0,omitzero,omitempty"`
+	AnodeBackscatteringCoefficientB       float64 `toml:"AnodeBackscatteringCoefficientB,omitzero,omitempty"`
+	AnodeBackscatteringEnergyLossFraction float64 `toml:"AnodeBackscatteringEnergyLossFraction,omitzero,omitempty"`
 
-	TubeBackscatteringCoefficient0       float64
-	TubeBackscatteringCoefficientB       float64
-	TubeBackscatteringEnergyLossFraction float64
+	TubeBackscatteringCoefficient0       float64 `toml:"TubeBackscatteringCoefficient0,omitzero,omitempty"`
+	TubeBackscatteringCoefficientB       float64 `toml:"TubeBackscatteringCoefficientB,omitzero,omitempty"`
+	TubeBackscatteringEnergyLossFraction float64 `toml:"TubeBackscatteringEnergyLossFraction,omitzero,omitempty"`
 
-	ReturningElectrons bool
+	ReturningElectrons bool `toml:"ReturningElectrons,omitzero,omitempty"`
 
-	CalculateSecondaryEmissionCoefficient bool
-	CalculateCurrentDensity               bool
-	CalculateVoltage                      bool
-	CalculationMode                       CalculationMode
-	NoDiffusionLoss                       bool
-	SimplifiedDiffusionScale              bool
-	CathodeFallLengthPrecision            float64
+	// CalculateSecondaryEmissionCoefficient bool
+	// CalculateCurrentDensity               bool
+	// CalculateVoltage           bool
+	CalculationMode            string  `form:"label=Calculation mode,options=Basic|Current|Gamma|Voltage" toml:"CalculationMode,omitzero,omitempty"` //CalculationMode
+	NoDiffusionLoss            bool    `toml:"NoDiffusionLoss,omitzero,omitempty"`
+	SimplifiedDiffusionScale   bool    `toml:"SimplifiedDiffusionScale,omitzero,omitempty"`
+	CathodeFallLengthPrecision float64 `toml:"CathodeFallLengthPrecision,omitzero,omitempty"`
 
-	ForwardEmission bool
+	ForwardEmission bool `toml:"ForwardEmission,omitzero,omitempty"`
 
-	CountNulls            bool
-	CalculateDistribution bool
-	DebugOutput           bool
-	CellTimeWeighting     bool
-	EnergyDeposition      bool
-	MeanFreePath          bool
+	CalculateDistribution bool `toml:"CalculateDistribution,omitzero,omitempty"`
+	DebugOutput           bool `toml:"DebugOutput,omitzero,omitempty"`
+	CellTimeWeighting     bool `toml:"CellTimeWeighting,omitzero,omitempty"`
+	EnergyDeposition      bool `toml:"EnergyDeposition,omitzero,omitempty"`
+	MeanFreePath          bool `toml:"MeanFreePath,omitzero,omitempty"`
 
-	SupressSpinner bool
+	SupressSpinner bool `form:"hide" toml:"-"`
 
-	GasDensity            float64
+	GasDensity            float64 `form:"hide" toml:"-"`
 	_crossSections        *lxgata.Collisions
 	_outputUnits          UnitConfig
 	_verbose              bool
@@ -367,6 +371,7 @@ type ModelParameters struct {
 	_inelasticScatteringMode lxgata.ScatteringMode
 	_ionizationEnergySharing IonizationEnergySharing
 	_ionizationScattering    IonizationScattering
+	_calculationMode         CalculationMode
 }
 
 func (p *ModelParameters) CrossSectionsData() *lxgata.Collisions {
@@ -381,6 +386,10 @@ func (p *ModelParameters) SetCrossSectionsData(cd *lxgata.Collisions) {
 			return
 		}
 	}
+}
+
+func (p *ModelParameters) GetCalculationMode() CalculationMode {
+	return p._calculationMode
 }
 
 func (p *ModelParameters) HasSuperelastics() bool {
@@ -477,26 +486,25 @@ func (p *ModelParameters) ReducedFieldMidSheath() float64 {
 }
 
 var defaultValues = map[string]any{ // in SI-eV
-	"ThresholdType":                         "Ionization",
-	"IonizationEnergySharing":               "UniformRandom",
-	"IonizationScatteringMode":              "Boeuf",
-	"Pressure":                              101325. / 760., //[Pa]
-	"UniformField":                          false,
-	"ConstEField":                           -100., //[V/m]
-	"Temperature":                           300.,  //[K]
-	"CathodeFallLengthPrecision":            1e-4,  //[m]
-	"EnergyStep":                            0.05,  //[eV]
-	"AngleStep":                             45.,
-	"NElectrons":                            1000,
-	"MakeDir":                               true,
-	"ParallelPlaneHollowCathode":            false,
-	"CalculateSecondaryEmissionCoefficient": false,
-	"CalculateCurrentDensity":               false,
-	"Volumetric":                            false,
-	"CountNulls":                            false,
-	"EnergyDiscretizationStep":              0.01,
-	"MuDiscretizationStep":                  1 / 50.,
-	"SourceIntegralRelativeMargin":          0.05,
+	"ThresholdType":              "Ionization",
+	"IonizationEnergySharing":    "UniformRandom",
+	"IonizationScatteringMode":   "Boeuf",
+	"Pressure":                   101325. / 760., //[Pa]
+	"UniformField":               false,
+	"ConstEField":                -100., //[V/m]
+	"Temperature":                300.,  //[K]
+	"CathodeFallLengthPrecision": 1e-4,  //[m]
+	"EnergyStep":                 0.05,  //[eV]
+	"AngleStep":                  45.,
+	"NElectrons":                 1000,
+	"ParallelPlaneHollowCathode": false,
+	"CalculationMode":            "Basic",
+	// "CalculateSecondaryEmissionCoefficient": false,
+	// "CalculateCurrentDensity":               false,
+	"Volumetric":                   false,
+	"EnergyDiscretizationStep":     0.01,
+	"MuDiscretizationStep":         1 / 50.,
+	"SourceIntegralRelativeMargin": 0.005,
 }
 
 var fieldsXor = map[string][]string{
@@ -522,6 +530,7 @@ var fieldsDerivable map[string][]string = map[string][]string{
 	"PressureGapLength":                       {"Pressure"},
 	"PressureCathodeFallLength":               {"CathodeFallLength"},
 	"CathodeCurrentDensityPerPressureSquared": {"CathodeCurrentDensity"},
+	"CathodeCurrentPerPressureSquared":        {"CathodeCurrentDensity"},
 }
 
 var calculableFields = map[string]func(
@@ -540,6 +549,14 @@ var calculableFields = map[string]func(
 	"CathodeCurrentDensityPerPressureSquared": func(mp *ModelParameters, definedFields []string) []string {
 		if slices.Contains(definedFields, "Pressure") {
 			mp.CathodeCurrentDensity = mp.CathodeCurrentDensityPerPressureSquared * (mp.Pressure * mp.Pressure)
+			return []string{"CathodeCurrentDensity"}
+		}
+		// fmt.Printf("field 'Pressure' not found: required by CathodeCurrentDensity calculation from CathodeCurrent\n")
+		return nil
+	},
+	"CathodeCurrentPerPressureSquared": func(mp *ModelParameters, definedFields []string) []string {
+		if slices.Contains(definedFields, "Pressure") {
+			mp.CathodeCurrentDensity = mp.CathodeCurrentPerPressureSquared * (mp.Pressure * mp.Pressure)
 			return []string{"CathodeCurrentDensity"}
 		}
 		// fmt.Printf("field 'Pressure' not found: required by CathodeCurrentDensity calculation from CathodeCurrent\n")
@@ -943,15 +960,14 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 		}
 	}
 
-	if modelConfig.CalculateCurrentDensity {
-		modelConfig.CalculationMode = CurrentCalculation
-	} else if modelConfig.CalculateSecondaryEmissionCoefficient {
-		modelConfig.CalculationMode = GammaCalculation
-	} else if modelConfig.CalculateVoltage {
-		modelConfig.CalculationMode = VoltageCalculation
-	} else {
-		modelConfig.CalculationMode = BasicCalculation
+	calculationMode := map[string]CalculationMode{
+		"Current": CurrentCalculation,
+		"Gamma":   GammaCalculation,
+		"Voltage": VoltageCalculation,
+		"Basic":   BasicCalculation,
 	}
+
+	modelConfig._calculationMode = calculationMode[modelConfig.CalculationMode]
 
 	return allGood
 }

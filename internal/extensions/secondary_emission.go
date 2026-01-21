@@ -7,7 +7,7 @@ import (
 )
 
 // not applicable for UniformField
-func gammaAnalyticPhelpsF(parameters config.ModelParameters) float64 {
+func gammaAnalyticPhelpsF(parameters *config.ModelParameters) float64 {
 	dc, j, Vc, N := parameters.CathodeFallLength, parameters.CathodeCurrentDensity, parameters.CathodeFallPotential, parameters.GasDensity
 	ionDriftVelocity := utils.IonDriftVelocity[parameters.GetSpeciesString()]
 	return j*dc*dc/(2.*Vc*ionDriftVelocity(Vc, dc, N)*constants.FreeSpacePermittivityE0) - 1. //-> 0
@@ -21,13 +21,13 @@ func EstimateCathodeFallLengthLimits(parameters config.ModelParameters) (from fl
 
 	from, _ = utils.BinarySearch(func(dc float64) bool {
 		parameters.CathodeFallLength = dc
-		g := gammaAnalyticF(parameters)
+		g := gammaAnalyticF(&parameters)
 		return 0. < g
 	}, lowerBound, upperBound, parameters.CathodeFallLengthPrecision*0.01)
 
 	_, to = utils.BinarySearch(func(dc float64) bool {
 		parameters.CathodeFallLength = dc
-		g := gammaAnalyticF(parameters)
+		g := gammaAnalyticF(&parameters)
 		return 1 < g // might be false everywhere in the gap, but as close as possible to true domain
 	}, lowerBound, upperBound, parameters.CathodeFallLengthPrecision*0.01)
 	return from, to

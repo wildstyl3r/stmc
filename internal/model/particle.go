@@ -20,6 +20,7 @@ type Particle struct {
 	// params
 	trajectory            TrajectoryConstants
 	ejectedFromIonization bool
+	producedIonization    bool
 
 	origin int
 }

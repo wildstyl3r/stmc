@@ -51,6 +51,7 @@ type Model struct {
 
 	TotalElectronsEmittedOnCathode int
 	ElectronsReturned              utils.Aggregation
+	IonizingCathodeElectrons       utils.Aggregation
 
 	MeanElectronEnergyAtAnode float64
 
@@ -59,17 +60,20 @@ type Model struct {
 
 func (m *Model) CoreResult() utils.CoreResult {
 	electronsReturned, electronsReturnedMargin := m.ElectronsReturned.MeanWithErrorMargin(0.95)
+	ionizingElectrons, ionizingElectronsMargin := m.IonizingCathodeElectrons.MeanWithErrorMargin(0.95)
 	return utils.CoreResult{
-		ModelName:                  m.Parameters.PrototypeName(),
-		ReducedFieldAtCathode:      m.ReducedFieldAtCathode(),
-		ReducedFieldAtSheathCenter: m.ReducedFieldMidSheath(),
-		CathodeFallLength:          m.Parameters.CathodeFallLength,
-		PressureCathodeFallLength:  m.Parameters.CathodeFallLength * m.Parameters.Pressure,
-		GlobalMeanFreePath:         m.GlobalMeanFreePath.Mean(),
-		Voltage:                    m.Parameters.CathodeFallPotential,
-		Pressure:                   m.Parameters.Pressure,
-		ElectronsReturned:          electronsReturned,
-		ElectronsReturnedMargin:    electronsReturnedMargin,
+		ModelName:                      m.Parameters.PrototypeName(),
+		ReducedFieldAtCathode:          m.ReducedFieldAtCathode(),
+		ReducedFieldAtSheathCenter:     m.ReducedFieldMidSheath(),
+		CathodeFallLength:              m.Parameters.CathodeFallLength,
+		PressureCathodeFallLength:      m.Parameters.CathodeFallLength * m.Parameters.Pressure,
+		GlobalMeanFreePath:             m.GlobalMeanFreePath.Mean(),
+		Voltage:                        m.Parameters.CathodeFallPotential,
+		Pressure:                       m.Parameters.Pressure,
+		ElectronsReturned:              electronsReturned,
+		ElectronsReturnedMargin:        electronsReturnedMargin,
+		IonizingCathodeElectrons:       ionizingElectrons,
+		IonizingCathodeElectronsMargin: ionizingElectronsMargin,
 	}
 }
 
@@ -93,9 +97,9 @@ func (m *Model) InitVars() {
 	m.motionK = -m.EFieldBb / m.EFieldA
 }
 
-func NewModel(parameters config.ModelParameters) *Model {
+func NewModel(parameters *config.ModelParameters) *Model {
 	m := Model{}
-	m.Parameters = parameters
+	m.Parameters = *parameters
 	m.InitVars()
 
 	meanFreePath := 1. / (m.Parameters.CrossSectionsData().SurplusCrossSection() * m.Parameters.GasDensity)
@@ -849,6 +853,7 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 		}
 
 		electronsReturned := make([]int, nElectrons)
+		ionizingElectrons := make([]int, nElectrons)
 
 		for origin := range nElectrons {
 			particle := m.newParticle(origin + m.TotalElectronsEmittedOnCathode)
@@ -893,7 +898,6 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 							break
 						}
 						if collision != nil {
-
 							energyLoss := collision.Threshold
 							cosChiScattered := m.Parameters.CrossSectionsData().SampleScatteringAngleCos(particlePtr.eKinetic, energyLoss, collision.Type, lxgata.IgnoreAtomicNumber, collision.Species)
 							phi := 2. * math.Pi * rand.Float64()
@@ -907,6 +911,7 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 							case lxgata.IONIZATION:
 								ejected := *particlePtr
 								ejected.ejectedFromIonization = true
+								particlePtr.producedIonization = true
 
 								availableEnergy := particlePtr.eKinetic
 
@@ -1000,6 +1005,9 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 							particlePtr.redirect(cosChiScattered, math.Cos(phi), m)
 						}
 					}
+					if !particlePtr.ejectedFromIonization && particlePtr.producedIonization {
+						ionizingElectrons[particlePtr.origin-m.TotalElectronsEmittedOnCathode]++
+					}
 					computeWg.Done()
 				}
 			}()
@@ -1045,6 +1053,7 @@ func (m *Model) Run(electronsToSimulate func(*Model) int) {
 
 		}
 		m.ElectronsReturned.Update(electronsReturned)
+		m.IonizingCathodeElectrons.Update(ionizingElectrons)
 		m.TotalElectronsEmittedOnCathode += nElectrons
 		nElectrons = electronsToSimulate(m)
 	}

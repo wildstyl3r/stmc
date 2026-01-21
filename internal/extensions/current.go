@@ -9,7 +9,7 @@ import (
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
-func CurrentDensityEquation(parameters config.ModelParameters) float64 {
+func CurrentDensityEquation(parameters *config.ModelParameters) float64 {
 	dc, secondaryEmissionCoefficient, Vc, N := parameters.CathodeFallLength, gammaAnalyticF(parameters), parameters.CathodeFallPotential, parameters.GasDensity
 	ionDriftVelocity := utils.IonDriftVelocity[parameters.GetSpeciesString()]
 	return (1 + secondaryEmissionCoefficient) * ionDriftVelocity(Vc, dc, N) * 2 * Vc / (dc * dc) * constants.FreeSpacePermittivityE0
@@ -19,16 +19,16 @@ func CurrentDensityRelativeError(sourceIntegral, sourceIntegralMargin, dc, dcMar
 	return sourceIntegralMargin/(sourceIntegral*(sourceIntegral+1)) + 2.5*dcMargin/dc
 }
 
-func CurrentDensityCalculation(parameters config.ModelParameters, outputDir, modelName string) (dataRow, altRow utils.ResultInterface, finalModel, altModel *model.Model) {
+func CurrentDensityCalculation(parameters *config.ModelParameters, outputDir, modelName string) (dataRow, altRow utils.ResultInterface, finalModel, altModel *model.Model) {
 	minDc := parameters.CathodeFallLengthPrecision
 	maxDc := parameters.SimulationLength()
 	numberOfSteps := int((maxDc - minDc) / parameters.CathodeFallLengthPrecision)
-	return GeneralizedCalculation(parameters, numberOfSteps, minDc, parameters.CathodeFallLengthPrecision,
+	return GeneralizedCalculation(*parameters, numberOfSteps, minDc, parameters.CathodeFallLengthPrecision,
 		func(dc float64, mp *config.ModelParameters) {
 			mp.CathodeFallLength = dc
 		},
 		func(optResult *OptimizationResult, variance float64, m *model.Model) utils.ResultInterface {
-			optResult.CathodeCurrentDensity = CurrentDensityEquation(m.Parameters)
+			optResult.CathodeCurrentDensity = CurrentDensityEquation(&m.Parameters)
 			optResult.CathodeCurrent = optResult.CathodeCurrentDensity * (math.Pi * parameters.CathodeRadius * parameters.CathodeRadius)
 			optResult.CathodeCurrentDensityPerPressureSquared = optResult.CathodeCurrentDensity / (optResult.Pressure * optResult.Pressure)
 			return &CurrentDensityDataRow{
@@ -50,7 +50,7 @@ func CurrentDensityCalculation2(parameters config.ModelParameters, outputDir, mo
 			mp.CathodeFallLength = dc
 		},
 		func(optResult *OptimizationResult, variance float64, m *model.Model) utils.ResultInterface {
-			optResult.CathodeCurrentDensity = CurrentDensityEquation(m.Parameters)
+			optResult.CathodeCurrentDensity = CurrentDensityEquation(&m.Parameters)
 			optResult.CathodeCurrentDensityPerPressureSquared = optResult.CathodeCurrentDensity / (optResult.Pressure * optResult.Pressure)
 			currentDensityMargin := optResult.CathodeCurrentDensity * CurrentDensityRelativeError(optResult.SourceIntegralMonteCarlo, math.Abs(optResult.SourceIntegralDifference)+optResult.SourceIntegralMargin, optResult.CathodeFallLength, optResult.CathodeFallLengthMargin)
 			return &CurrentDensityDataRow{
