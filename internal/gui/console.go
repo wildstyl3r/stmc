@@ -35,7 +35,9 @@ func ShowConsoleWindow(a fyne.App) {
 	// Wrap it in a scroll container in case output exceeds window size
 	scrollContainer := container.NewScroll(consoleOutput)
 
-	consoleWindow.SetContent(scrollContainer)
+	consoleWindow.SetContent(container.NewBorder(nil, widget.NewButton("Copy", func() {
+		a.Clipboard().SetContent(consoleOutput.Text())
+	}), nil, nil, scrollContainer))
 
 	writer := &widgetWriter{widget: consoleOutput, origStdout: os.Stdout}
 	// You could also use io.MultiWriter to still print to the actual console
@@ -53,7 +55,7 @@ func ShowConsoleWindow(a fyne.App) {
 		sc := bufio.NewScanner(r)
 		for sc.Scan() {
 			text := sc.Text()
-			fyne.Do(func() {
+			fyne.DoAndWait(func() {
 				writer.Write(text)
 			})
 

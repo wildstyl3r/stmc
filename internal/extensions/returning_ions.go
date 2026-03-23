@@ -8,11 +8,12 @@ import (
 	"github.com/aclements/go-moremath/fit"
 	"github.com/schollz/progressbar/v3"
 	"github.com/wildstyl3r/stmc/internal/config"
+	"github.com/wildstyl3r/stmc/internal/messages"
 	"github.com/wildstyl3r/stmc/internal/model"
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
-func sourceIntegralMonteCarloF(parameters *config.ModelParameters, requirePrecision bool) (sumMean, sumMargin float64, m *model.Model) {
+func sourceIntegralMonteCarloF(parameters *config.ModelParameters, requirePrecision bool, logger messages.Logger) (sumMean, sumMargin float64, m *model.Model) {
 	m = model.NewModel(parameters)
 	LoadExtensions(m.DataHub)
 	m.Run(func(m *model.Model) int {
@@ -26,7 +27,7 @@ func sourceIntegralMonteCarloF(parameters *config.ModelParameters, requirePrecis
 				return 0
 			}
 		}
-	})
+	}, logger)
 	if math.IsNaN(sumMean) {
 		fmt.Println("integral is NaN")
 	}
@@ -69,8 +70,8 @@ func gammaAnalyticF(parameters *config.ModelParameters) float64 {
 // 	return 0.5 * (initialDcL + initialDcR)
 // }
 
-func sourceIntegralCalculationStep(requirePrecision bool, parameters *config.ModelParameters, analyticSourceIntegral func(*config.ModelParameters) float64) (optResult OptimizationResult, effectiveSourceIntegralVariance float64, stepModel *model.Model) {
-	effectiveSourceIntegralMonteCarlo, effectiveSourceIntegralVariance, stepModel := sourceIntegralMonteCarloF(parameters, requirePrecision)
+func sourceIntegralCalculationStep(requirePrecision bool, parameters *config.ModelParameters, analyticSourceIntegral func(*config.ModelParameters) float64, logger messages.Logger) (optResult OptimizationResult, effectiveSourceIntegralVariance float64, stepModel *model.Model) {
+	effectiveSourceIntegralMonteCarlo, effectiveSourceIntegralVariance, stepModel := sourceIntegralMonteCarloF(parameters, requirePrecision, logger)
 	effectiveGammaMonteCarlo := 1. / effectiveSourceIntegralMonteCarlo
 	effectiveSourceIntegralAnalytic := analyticSourceIntegral(parameters) //sourceIntegralAnalyticF(stepModel.Parameters.CathodeFallLength, stepModel.Parameters.CathodeCurrentDensity, stepModel.Parameters.CathodeFallPotential, stepModel.Parameters.GasDensity, utils.IonDriftVelocity[stepModel.Parameters.Species])
 	effectiveGammaAnalytic := 1. / effectiveSourceIntegralAnalytic
@@ -104,7 +105,7 @@ type SourceIntegralDataRow struct {
 	SurfaceGammaMonteCarloMargin   float64 `csv:"surface $\\gamma$ Monte Carlo margin"`
 }
 
-func SourceIntegralCalculation(parameters *config.ModelParameters, outputDir, modelName string) (dataRow, altDataRow utils.ResultInterface, finalmodel, altModel *model.Model) {
+func SourceIntegralCalculation(parameters *config.ModelParameters, outputDir, modelName string, logger messages.Logger) (dataRow, altDataRow utils.ResultInterface, finalmodel, altModel *model.Model) {
 	_, maxDc := EstimateCathodeFallLengthLimits(*parameters)
 	minDc := parameters.CathodeFallLengthPrecision
 	numberOfSteps := int((maxDc - minDc) / parameters.CathodeFallLengthPrecision)
@@ -125,7 +126,7 @@ func SourceIntegralCalculation(parameters *config.ModelParameters, outputDir, mo
 			}
 		}, func(p *config.ModelParameters, optR *OptimizationResult) bool {
 			return (optR.EffectiveGammaAnalytic > 0 && optR.EffectiveGammaAnalytic > 2*optR.EffectiveGammaMonteCarlo)
-		}, true, outputDir, modelName)
+		}, true, outputDir, modelName, logger)
 }
 
 func GeneralizedCalculation(parameters config.ModelParameters,
@@ -135,6 +136,7 @@ func GeneralizedCalculation(parameters config.ModelParameters,
 	stopCondition func(p *config.ModelParameters, optResult *OptimizationResult) bool,
 	preferGreaterRoot bool,
 	outputDir, modelName string,
+	logger messages.Logger,
 ) (dataRow, altDataRow utils.ResultInterface, finalModel, altModel *model.Model) {
 	//imprecise monte-carlo data gathering
 	//regression fitting
@@ -153,7 +155,7 @@ func GeneralizedCalculation(parameters config.ModelParameters,
 			// fmt.Printf("step %d of %d\n", i+1, numberOfSteps)
 			arg := offset + float64(i)*stepSize
 			setUp(arg, &parameters)
-			optResult, variance, m := sourceIntegralCalculationStep(false, &parameters, sourceIntegralAnalyticF)
+			optResult, variance, m := sourceIntegralCalculationStep(false, &parameters, sourceIntegralAnalyticF, logger)
 			progress.Describe(fmt.Sprintf("[ analytic: %6f ; Monte Carlo: %6f +/- %.2f%% ]", optResult.SourceIntegralAnalytic, optResult.SourceIntegralMonteCarlo, optResult.SourceIntegralMargin/optResult.SourceIntegralMonteCarlo*100))
 			stepArg, stepSourceIntegralMC, stepVariance = append(stepArg, arg), append(stepSourceIntegralMC, optResult.SourceIntegralMonteCarlo), append(stepVariance, variance)
 			if parameters.DebugOutput {
@@ -249,14 +251,14 @@ func GeneralizedCalculation(parameters config.ModelParameters,
 		}
 	}
 	setUp(sourceDifferenceRoot, &parameters)
-	optResult, variance, m := sourceIntegralCalculationStep(true, &parameters, sourceIntegralAnalyticF)
+	optResult, variance, m := sourceIntegralCalculationStep(true, &parameters, sourceIntegralAnalyticF, logger)
 	fmt.Printf("[ analytic: %6f ; Monte Carlo: %6f +/- %.2f%% ]\n", optResult.SourceIntegralAnalytic, optResult.SourceIntegralMonteCarlo, optResult.SourceIntegralMargin/optResult.SourceIntegralMonteCarlo*100)
 	optResult.CathodeFallLengthMargin = math.Abs(optResult.SourceIntegralMargin / utils.PolynomialDerivative(optResult.CathodeFallLength, regression.Coefficients))
 	optResult.PressureCathodeFallLengthMargin = optResult.CathodeFallLengthMargin * optResult.Pressure
 	row := extractor(&optResult, variance, m)
 	if !math.IsInf(altSourceDifferenceRoot, -1) {
 		setUp(altSourceDifferenceRoot, &parameters)
-		altResult, altVariance, altM := sourceIntegralCalculationStep(true, &parameters, sourceIntegralAnalyticF)
+		altResult, altVariance, altM := sourceIntegralCalculationStep(true, &parameters, sourceIntegralAnalyticF, logger)
 		fmt.Printf("[ analytic: %6f ; Monte Carlo: %6f +/- %.2f%% ]\n", altResult.SourceIntegralAnalytic, altResult.SourceIntegralMonteCarlo, altResult.SourceIntegralMargin/altResult.SourceIntegralMonteCarlo*100)
 		altResult.CathodeFallLengthMargin = math.Abs(altResult.SourceIntegralMargin / utils.PolynomialDerivative(altResult.CathodeFallLength, regression.Coefficients))
 		altResult.PressureCathodeFallLengthMargin = altResult.CathodeFallLengthMargin * altResult.Pressure

@@ -33,8 +33,7 @@ func WriteAsCSV(header []string, rows []ResultInterface, path, filename string, 
 	clearName := GetFilename(filename)
 	file, err := OpenFile(path+"/"+clearName, TypeCSV)
 	if err != nil {
-		println("unable to save csv file: ", err.Error())
-		os.Exit(1)
+		panic(fmt.Sprintf("unable to save csv file: %v", err.Error()))
 	}
 	if sortRowsByIndex {
 		sort.Slice(rows, func(i, j int) bool {

@@ -5,13 +5,16 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"runtime/debug"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
 	"github.com/BurntSushi/toml"
 	"github.com/wildstyl3r/stmc/internal/config"
+	"github.com/wildstyl3r/stmc/internal/messages"
 	"github.com/wildstyl3r/stmc/internal/output"
 	"github.com/wildstyl3r/stmc/internal/router"
 )
@@ -23,6 +26,7 @@ type FormManager struct {
 	form           *widget.Form
 	confFlags      *config.Flags
 	dataFlags      *output.DataFlags
+	logger         messages.Logger
 }
 
 func (fm *FormManager) SetDataContext(data any) {
@@ -45,7 +49,6 @@ func (fm *FormManager) GetContent() fyne.CanvasObject {
 
 func (fm *FormManager) loadButton() fyne.CanvasObject {
 	return widget.NewButton("Load", func() {
-		fmt.Println("load")
 		dialog.ShowFileOpen(func(r fyne.URIReadCloser, err error) {
 			if err != nil || r == nil {
 				return
@@ -63,37 +66,162 @@ func (fm *FormManager) loadButton() fyne.CanvasObject {
 
 func (fm *FormManager) saveButton() fyne.CanvasObject {
 	return widget.NewButton("Save as", func() {
-		fmt.Println("save as")
-		dialog.ShowFileSave(func(writer fyne.URIWriteCloser, err error) {
+		saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
 			if err != nil || writer == nil {
 				return
 			}
+			uri := writer.URI()
+			targetExt := ".toml"
+
+			if uri.Extension() != targetExt {
+
+				writer.Close()
+				storage.Delete(uri)
+
+				newName := uri.Name() + targetExt
+				parent, _ := storage.Parent(uri)
+				newURI, _ := storage.Child(parent, newName)
+
+				exists, _ := storage.Exists(newURI)
+				if exists {
+					// Ask for confirmation before overwriting
+					dialog.ShowConfirm("Overwrite?",
+						"A file named "+newName+" already exists. Overwrite?",
+						func(confirm bool) {
+							if confirm {
+								// User said yes, proceed with writing
+								writer, err = storage.Writer(newURI)
+
+								if err != nil {
+									dialog.ShowError(err, fm.window)
+									return
+								}
+
+								defer writer.Close()
+
+								data, _ := toml.Marshal(fm.data)
+								writer.Write(data)
+								fm.configFilename.SetText(writer.URI().Path())
+								fm.confFlags.ConfigFileNamePointer = &fm.configFilename.Text
+							}
+						}, fm.window)
+					return
+				} else {
+					writer, err = storage.Writer(newURI)
+					if err != nil {
+						dialog.ShowError(err, fm.window)
+						return
+					}
+				}
+			}
+
 			defer writer.Close()
 
 			data, _ := toml.Marshal(fm.data)
 			writer.Write(data)
 			fm.configFilename.SetText(writer.URI().Path())
+			fm.confFlags.ConfigFileNamePointer = &fm.configFilename.Text
 		}, fm.window)
+		saveDialog.SetFilter(storage.NewExtensionFileFilter([]string{".toml"}))
+		saveDialog.Show()
 	})
 }
 
 func (fm *FormManager) runButton() fyne.CanvasObject {
 	return widget.NewButton("Save and run", func() {
-		fmt.Println("save&r0")
 		if fm.configFilename.Text == "" {
-			fmt.Println("save&r1")
-			dialog.ShowFileSave(func(writer fyne.URIWriteCloser, err error) {
+			saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
 				if err != nil || writer == nil {
 					return
 				}
+				uri := writer.URI()
+				targetExt := ".toml"
+
+				if uri.Extension() != targetExt {
+					writer.Close()
+					storage.Delete(uri)
+
+					newName := uri.Name() + targetExt
+					parent, _ := storage.Parent(uri)
+					newURI, _ := storage.Child(parent, newName)
+
+					exists, _ := storage.Exists(newURI)
+					if exists {
+						// Ask for confirmation before overwriting
+						dialog.ShowConfirm("Overwrite?",
+							"A file named "+newName+" already exists. Overwrite?",
+							func(confirm bool) {
+								if confirm {
+									// User said yes, proceed with writing
+									writer, err = storage.Writer(newURI)
+
+									if err != nil {
+										dialog.ShowError(err, fm.window)
+										return
+									}
+
+									defer writer.Close()
+
+									data, _ := toml.Marshal(fm.data)
+									writer.Write(data)
+									fm.configFilename.SetText(writer.URI().Path())
+									fm.confFlags.ConfigFileNamePointer = &fm.configFilename.Text
+
+									go func() {
+										defer func() {
+											if r := recover(); r != nil {
+												stackTrace := string(debug.Stack())
+
+												fyne.Do(func() {
+													dialog.ShowInformation("CRITICAL ERROR", fmt.Sprintf("%v", r), fm.window)
+												})
+
+												fmt.Fprintf(os.Stderr, "CRITICAL ERROR: %v\n%s", r, stackTrace)
+
+												// 3. Keep the UI alive to show the error
+												// showPanicDialog(r, stackTrace)
+											}
+										}()
+										router.RunConsole(fm.confFlags, fm.dataFlags, fm.logger)
+									}()
+								}
+							}, fm.window)
+						return
+					} else {
+						writer, err = storage.Writer(newURI)
+						if err != nil {
+							dialog.ShowError(err, fm.window)
+							return
+						}
+					}
+				}
+
 				defer writer.Close()
 
 				data, _ := toml.Marshal(fm.data)
 				writer.Write(data)
 				fm.configFilename.SetText(writer.URI().Path())
+				fm.confFlags.ConfigFileNamePointer = &fm.configFilename.Text
+
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							stackTrace := string(debug.Stack())
+
+							fyne.Do(func() {
+								dialog.ShowInformation("CRITICAL ERROR", fmt.Sprintf("%v", r), fm.window)
+							})
+
+							fmt.Fprintf(os.Stderr, "CRITICAL ERROR: %v\n%s", r, stackTrace)
+						}
+					}()
+					router.RunConsole(fm.confFlags, fm.dataFlags, fm.logger)
+				}()
 			}, fm.window)
+
+			saveDialog.SetFilter(storage.NewExtensionFileFilter([]string{".toml"}))
+			saveDialog.Show()
 		} else {
-			fmt.Println("save&r2")
 			f, err := os.Create(fm.configFilename.Text)
 			if err != nil {
 				fmt.Printf("failed to create file: %v", err)
@@ -110,14 +238,27 @@ func (fm *FormManager) runButton() fyne.CanvasObject {
 				fmt.Printf("failed to close file: %v", err)
 				return
 			}
+			fm.confFlags.ConfigFileNamePointer = &fm.configFilename.Text
+
+			defer func() {
+				if r := recover(); r != nil {
+					stackTrace := string(debug.Stack())
+
+					dialog.ShowInformation("CRITICAL ERROR", fmt.Sprintf("%v", r), fm.window)
+					fmt.Fprintf(os.Stderr, "CRITICAL ERROR: %v\n%s", r, stackTrace)
+
+					// 3. Keep the UI alive to show the error
+					// showPanicDialog(r, stackTrace)
+				}
+			}()
+			router.RunConsole(fm.confFlags, fm.dataFlags, fm.logger)
+			fmt.Fprintf(os.Stderr, "AFTER ERROR")
 		}
-		fmt.Println("passing config to the runner")
-		fm.confFlags.ConfigFileNamePointer = &fm.configFilename.Text
-		router.RunConsole(fm.confFlags, fm.dataFlags)
+
 	})
 }
 
-func NewFormManager(data any, filename string, w fyne.Window, cf *config.Flags, df *output.DataFlags) *FormManager {
+func NewFormManager(data any, filename string, w fyne.Window, cf *config.Flags, df *output.DataFlags, a fyne.App) *FormManager {
 	fm := &FormManager{
 		data:           data,
 		configFilename: widget.NewLabel(filename),
@@ -125,6 +266,7 @@ func NewFormManager(data any, filename string, w fyne.Window, cf *config.Flags, 
 		form:           widget.NewForm(),
 		confFlags:      cf,
 		dataFlags:      df,
+		logger:         messages.NewGUILogger(w, a),
 	}
 	fm.Refresh()
 	return fm

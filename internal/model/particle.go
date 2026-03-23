@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/rand"
 
+	"github.com/wildstyl3r/stmc/internal/config"
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
@@ -28,10 +29,16 @@ type Particle struct {
 func (m *Model) newParticle(origin int) Particle {
 	eKinetic := 4. + rand.Float64()
 	var mu float64
-	if m.Parameters.ForwardEmission {
+	switch m.Parameters.GetEmissionMode() {
+	case config.Cosine:
+		// mu = math.Cos(math.Asin(math.Sqrt(rand.Float64())))
+		mu = math.Sqrt(1 - rand.Float64())
+	case config.Forward:
 		mu = 1.
-	} else {
+	case config.ForwardIsotropic:
 		mu = rand.Float64()
+	default:
+		panic("unexpected config.EmissionMode")
 	}
 	p := Particle{
 		x:          0,

@@ -5,6 +5,7 @@ import (
 
 	"github.com/wildstyl3r/stmc/internal/config"
 	"github.com/wildstyl3r/stmc/internal/constants"
+	"github.com/wildstyl3r/stmc/internal/messages"
 	"github.com/wildstyl3r/stmc/internal/model"
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
@@ -19,7 +20,7 @@ func CurrentDensityRelativeError(sourceIntegral, sourceIntegralMargin, dc, dcMar
 	return sourceIntegralMargin/(sourceIntegral*(sourceIntegral+1)) + 2.5*dcMargin/dc
 }
 
-func CurrentDensityCalculation(parameters *config.ModelParameters, outputDir, modelName string) (dataRow, altRow utils.ResultInterface, finalModel, altModel *model.Model) {
+func CurrentDensityCalculation(parameters *config.ModelParameters, outputDir, modelName string, logger messages.Logger) (dataRow, altRow utils.ResultInterface, finalModel, altModel *model.Model) {
 	minDc := parameters.CathodeFallLengthPrecision
 	maxDc := parameters.SimulationLength()
 	numberOfSteps := int((maxDc - minDc) / parameters.CathodeFallLengthPrecision)
@@ -38,10 +39,10 @@ func CurrentDensityCalculation(parameters *config.ModelParameters, outputDir, mo
 			}
 		}, func(mp *config.ModelParameters, optR *OptimizationResult) bool {
 			return (optR.EffectiveGammaAnalytic > 0 && optR.EffectiveGammaAnalytic > 2*optR.EffectiveGammaMonteCarlo && optR.EffectiveGammaMonteCarlo < 1./30)
-		}, true, outputDir, modelName)
+		}, true, outputDir, modelName, logger)
 }
 
-func CurrentDensityCalculation2(parameters config.ModelParameters, outputDir, modelName string) (dataRow, altRow utils.ResultInterface, finalModel, altModel *model.Model) {
+func CurrentDensityCalculation2(parameters config.ModelParameters, outputDir, modelName string, logger messages.Logger) (dataRow, altRow utils.ResultInterface, finalModel, altModel *model.Model) {
 	minDc := parameters.CathodeFallLengthPrecision
 	maxDc := parameters.SimulationLength()
 	numberOfSteps := int((maxDc - minDc) / parameters.CathodeFallLengthPrecision)
@@ -61,7 +62,7 @@ func CurrentDensityCalculation2(parameters config.ModelParameters, outputDir, mo
 			}
 		}, func(mp *config.ModelParameters, optR *OptimizationResult) bool {
 			return (optR.EffectiveGammaAnalytic > 0 && optR.EffectiveGammaAnalytic > 2*optR.EffectiveGammaMonteCarlo && optR.EffectiveGammaMonteCarlo < 1./30)
-		}, true, outputDir, modelName)
+		}, true, outputDir, modelName, logger)
 }
 
 type CurrentDensityDataRow struct {

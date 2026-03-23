@@ -2,7 +2,9 @@ package router
 
 import (
 	"fmt"
+	"maps"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -10,14 +12,15 @@ import (
 	"github.com/wildstyl3r/lxgata"
 	"github.com/wildstyl3r/stmc/internal/config"
 	"github.com/wildstyl3r/stmc/internal/extensions"
+	"github.com/wildstyl3r/stmc/internal/messages"
 	"github.com/wildstyl3r/stmc/internal/model"
 	"github.com/wildstyl3r/stmc/internal/output"
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
-func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags) {
+func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags, logger messages.Logger) {
 	fmt.Printf("CONFIG: %s\n", *configFlags.ConfigFileNamePointer)
-	var c, meta = config.LoadConfig(*configFlags)
+	var c, meta = config.LoadConfig(*configFlags, logger)
 
 	speciesCrossSections := make(map[string]*lxgata.Collisions)
 
@@ -35,6 +38,7 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags)
 		groupNames = append(groupNames, gname)
 	}
 	natsort.Sort(groupNames)
+	modelStatus := make(map[string]string)
 	for _, gName := range groupNames {
 		modelNames := groups[gName]
 		natsort.Sort(modelNames)
@@ -49,8 +53,9 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags)
 
 			runtime.GC()
 			fmt.Println("\n" + modelNames[i])
-			if !parameters.CheckAndUnify(modelNames[i], &c, &meta) {
-				fmt.Printf("found a problem in the config for [%v], skipping\n", modelNames[i])
+			if !parameters.CheckAndUnify(modelNames[i], &c, &meta, logger) {
+				// fmt.Printf("found a problem in the config for [%v], skipping\n", modelNames[i])
+				modelStatus[modelNames[i]] = fmt.Sprintf("found a problem in the config for [%v], skipping\n", modelNames[i])
 				continue
 			}
 
@@ -70,7 +75,8 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags)
 				); err == nil {
 					speciesCrossSections[csID] = &crossSections
 				} else {
-					panic(fmt.Errorf("invalid cross section file: %w", err))
+					modelStatus[modelNames[i]] = fmt.Sprintf("invalid cross section file: %v\n", err)
+					continue
 				}
 			}
 			parameters.SetCrossSectionsData(speciesCrossSections[csID])
@@ -85,15 +91,15 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags)
 			calculationMode := parameters.GetCalculationMode()
 			switch calculationMode {
 			case config.BasicCalculation:
-				dataRow, altRow, m, altM = extensions.BasicCalculation(parameters, c.OutputDir, modelNames[i])
+				dataRow, altRow, m, altM = extensions.BasicCalculation(parameters, c.OutputDir, modelNames[i], logger)
 			case config.CurrentCalculation:
-				dataRow, altRow, m, altM = extensions.CurrentDensityCalculation(parameters, c.OutputDir, modelNames[i])
+				dataRow, altRow, m, altM = extensions.CurrentDensityCalculation(parameters, c.OutputDir, modelNames[i], logger)
 			case config.GammaCalculation:
-				dataRow, altRow, m, altM = extensions.SourceIntegralCalculation(parameters, c.OutputDir, modelNames[i])
+				dataRow, altRow, m, altM = extensions.SourceIntegralCalculation(parameters, c.OutputDir, modelNames[i], logger)
 			case config.VoltageCalculation:
-				dataRow, altRow, m, altM = extensions.VoltageCalculation2(parameters, c.OutputDir, modelNames[i])
+				dataRow, altRow, m, altM = extensions.VoltageCalculation2(parameters, c.OutputDir, modelNames[i], logger)
 			default:
-				panic(fmt.Sprintf("unexpected config.CalculationMode: %#v", parameters.CalculationMode))
+				logger.Failure("unexpected config.CalculationMode: %#v", parameters.CalculationMode)
 			}
 			// dataRow.(*utils.CoreResult).ModelName = m.Parameters.PrototypeName()
 			config.AnyToSIeV(dataRow, parameters.OutputUnits(), false)
@@ -111,6 +117,8 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags)
 			if altM != nil {
 				output.Save(modelNames[i]+"_ALT", altM, *dataExtractorFlags, c.OutputDir)
 			}
+
+			modelStatus[modelNames[i]] = "success\n"
 
 			fmt.Printf("Elapsed time: %v\n", time.Since(modelStartTime))
 		}
@@ -142,15 +150,16 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags)
 				}
 				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_V", true)
 			default:
-				panic(fmt.Sprintf("unexpected config.CalculationMode: %#v", mode))
+				logger.Failure("unexpected config.CalculationMode: %#v", mode)
 			}
 
 			if err != nil {
-				fmt.Printf("unable to write data for %s, error: %v", c.OutputDir+"/"+gName, err)
+				logger.Failure("unable to write data for %s, error: %v", c.OutputDir+"/"+gName, err)
 			}
 		}
 		for mode, list := range altDataRows {
 			var err error
+			fail := false
 			switch mode {
 			case config.BasicCalculation:
 				concreteList := make([]*utils.CoreResult, len(list))
@@ -177,12 +186,24 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags)
 				}
 				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_alt_V", true)
 			default:
-				panic(fmt.Sprintf("unexpected config.CalculationMode: %#v", mode))
+				fail = true
+				logger.Failure("unexpected config.CalculationMode: %#v", mode)
 			}
 
 			if err != nil {
-				fmt.Printf("unable to write data for %s, error: %v", c.OutputDir+"/"+gName, err)
+				logger.Info("unable to write data for %s, error: %v", c.OutputDir+"/"+gName, err)
+			} else if !fail {
+				logger.Info("Calculation completed")
 			}
 		}
+	}
+
+	allModelNames := slices.Sorted(maps.Keys(modelStatus))
+	status := ""
+	for _, mn := range allModelNames {
+		status += mn + ": " + modelStatus[mn] + "\n"
+	}
+	if status != "" {
+		logger.Info(status)
 	}
 }

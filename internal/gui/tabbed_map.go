@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"fmt"
 	"reflect"
 
 	"fyne.io/fyne/v2"
@@ -11,6 +12,7 @@ import (
 
 func buildMapAppTabs(fvMap reflect.Value, tabType string, w fyne.Window, meta FieldMeta) fyne.CanvasObject {
 	if fvMap.Kind() != reflect.Map || fvMap.Type().Key().Kind() != reflect.String {
+		fmt.Printf("Unsupported map type")
 		return widget.NewLabel("Unsupported map type")
 	}
 
@@ -28,9 +30,15 @@ func buildMapAppTabs(fvMap reflect.Value, tabType string, w fyne.Window, meta Fi
 			func(confirmed bool) {
 				if confirmed && entry.Text != "" {
 					newKey := entry.Text
-					newVal := reflect.New(fvMap.Type().Elem().Elem())
-					fvMap.SetMapIndex(reflect.ValueOf(newKey), newVal)
-					updateTabs(tabs, fvMap, w, meta)
+					if fvMap.Type().Elem().Kind() == reflect.Map {
+						fvMap.SetMapIndex(reflect.ValueOf(newKey), reflect.MakeMap(fvMap.Type().Elem()))
+						updateTabs(tabs, fvMap, w, FieldMeta{Sparse: true})
+					} else {
+						newVal := reflect.New(fvMap.Type().Elem().Elem())
+						fvMap.SetMapIndex(reflect.ValueOf(newKey), newVal)
+						updateTabs(tabs, fvMap, w, meta)
+					}
+
 				}
 			}, w)
 	})
@@ -55,6 +63,7 @@ func updateTabs(tabs *container.AppTabs, fvMap reflect.Value, w fyne.Window, met
 	tabs.Items = nil
 
 	keys := fvMap.MapKeys()
+
 	for _, key := range keys {
 		keyStr := key.String()
 		if keyStr == "" {
@@ -63,7 +72,11 @@ func updateTabs(tabs *container.AppTabs, fvMap reflect.Value, w fyne.Window, met
 
 		subForm := widget.NewForm()
 		subVal := fvMap.MapIndex(key)
-		buildNestedForm(subForm, subVal, w, meta)
+		if reflect.Indirect(subVal).Type().Kind() == reflect.Struct {
+			buildNestedForm(subForm, subVal, w, meta)
+		} else {
+			subForm.Append(keyStr, buildMapAppTabs(subVal, "Choice", w, FieldMeta{Sparse: true}))
+		}
 
 		tabs.Append(container.NewTabItem(keyStr, subForm))
 	}

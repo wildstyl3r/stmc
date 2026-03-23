@@ -8,6 +8,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -23,7 +24,8 @@ func buildNestedForm(parent *widget.Form, val reflect.Value, w fyne.Window, meta
 				return
 			}
 			fi := zeroFields[newFieldSelector.Selected]
-			tryMakeField(parent, fi, val, w, FieldMeta{Sparse: false}, false)
+			label, entry := tryMakeField(fi, val, w, FieldMeta{Sparse: false}, true)
+			parent.Append(label, entry)
 			delete(zeroFields, newFieldSelector.Selected)
 			newFieldSelector.SetOptions(slices.Sorted(maps.Keys(zeroFields)))
 			newFieldSelector.SetSelectedIndex(0)
@@ -31,11 +33,14 @@ func buildNestedForm(parent *widget.Form, val reflect.Value, w fyne.Window, meta
 		}), newFieldSelector))
 	}
 	for i := 0; i < typ.NumField(); i++ {
-		tryMakeField(parent, i, val, w, meta, false)
+		label, entry := tryMakeField(i, val, w, meta, false)
+		if entry != nil {
+			parent.Append(label, entry)
+		}
 	}
 }
 
-func tryMakeField(parent *widget.Form, fieldIndex int, val reflect.Value, w fyne.Window, meta FieldMeta, prepend bool) {
+func tryMakeField(fieldIndex int, val reflect.Value, w fyne.Window, meta FieldMeta, force bool) (string, fyne.CanvasObject) {
 	typ := val.Type()
 	sf := typ.Field(fieldIndex)
 	if sf.IsExported() {
@@ -43,7 +48,7 @@ func tryMakeField(parent *widget.Form, fieldIndex int, val reflect.Value, w fyne
 		tag := sf.Tag.Get("form")
 		fieldMeta := parseFormTag(tag)
 		if fieldMeta.Hidden {
-			return
+			return "", nil
 		}
 		label := fieldMeta.Label
 		if label == "" {
@@ -53,22 +58,41 @@ func tryMakeField(parent *widget.Form, fieldIndex int, val reflect.Value, w fyne
 		var entry fyne.CanvasObject
 		switch fv.Kind() {
 		case reflect.Struct:
-			entry = widget.NewForm()
-			buildNestedForm(entry.(*widget.Form), fv, w, fieldMeta)
+			if fieldMeta.Widget == "row" {
+				var rowElems []fyne.CanvasObject
+				v := reflect.Indirect(fv)
+				typ := v.Type()
+				// fmt.Printf("typ is %v, nf is %v\n", typ, typ.NumField())
+				for i := 0; i < typ.NumField(); i++ {
+					l, el := tryMakeField(i, v, w, meta, false)
+					if el != nil {
+						rowElems = append(rowElems, container.NewHBox(widget.NewLabel(l), el))
+					}
+
+				}
+				entry = container.New(layout.NewRowWrapLayout(), rowElems...)
+			} else {
+				entry = widget.NewForm()
+				buildNestedForm(entry.(*widget.Form), fv, w, fieldMeta)
+				entry = container.NewVBox(entry, widget.NewSeparator())
+			}
 		case reflect.Map:
 			if fv.IsNil() {
 				fv.Set(reflect.MakeMap(fv.Type()))
+			}
+			if meta.Sparse && fv.Len() == 0 && !force {
+				return "", nil
 			}
 			switch fieldMeta.Widget {
 			case "floatmap":
 				entry = buildEditableTable(fv, fieldMeta.Element, w)
 			default:
-				entry = buildMapAppTabs(fv, fieldMeta.Element, w, FieldMeta{Sparse: true})
+				entry = container.NewVBox(buildMapAppTabs(fv, fieldMeta.Element, w, FieldMeta{Sparse: true}), widget.NewSeparator())
 
 			}
 		default:
-			if meta.Sparse && meta.Widget == "" && fv.IsZero() {
-				return
+			if meta.Sparse && fv.IsZero() && !force {
+				return "", nil
 			}
 			switch fieldMeta.Widget {
 			case "checkbox":
@@ -152,11 +176,8 @@ func tryMakeField(parent *widget.Form, fieldIndex int, val reflect.Value, w fyne
 				}
 			}
 		}
-		if prepend {
-			parent.Items = append([]*widget.FormItem{{Text: label, Widget: entry}}, parent.Items...)
-		} else {
-			parent.Append(label, entry)
-		}
+		return label, entry
 
 	}
+	return "", nil
 }

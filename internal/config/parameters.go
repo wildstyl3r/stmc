@@ -13,6 +13,7 @@ import (
 	"github.com/gocarina/gocsv"
 	"github.com/wildstyl3r/lxgata"
 	"github.com/wildstyl3r/stmc/internal/constants"
+	"github.com/wildstyl3r/stmc/internal/messages"
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
@@ -67,14 +68,14 @@ func (uc *UnitConfig) GetForClass(class UnitClass) string {
 
 type Config struct {
 	OutputDir    string     `form:"label=Output path,widget=folder"`
-	InputUnits   UnitConfig `form:"orientation=horiz" toml:"IputUnits,omitzero,omitempty"`
-	OutputUnits  UnitConfig `form:"orientation=horiz" toml:"OutputUnits,omitzero,omitempty"`
+	InputUnits   UnitConfig `form:"widget=row" toml:"InputUnits,omitzero,omitempty"`
+	OutputUnits  UnitConfig `form:"widget=row" toml:"OutputUnits,omitzero,omitempty"`
 	AddPotential float64    `form:"label=Potential offset" toml:"AddPotential,omitzero,omitempty"`
 
 	ModelParameters `form:"label=Global defaults,sparse"`
 	ModelTable      string                                 `form:"label=Models from file,widget=file" toml:"ModelTable,omitzero,omitempty"`
 	Models          map[string]*ModelParameters            `form:"element=Model" toml:"Models,omitzero,omitempty"`
-	Options         map[string]map[string]*ModelParameters `toml:"Options,omitzero,omitempty"` //[]string
+	Options         map[string]map[string]*ModelParameters `form:"element=Option Group,widget=options" toml:"Options,omitzero,omitempty"` //[]string
 	isDefinedMap    map[string]struct{}
 }
 
@@ -96,52 +97,46 @@ func (c *Config) isDefined(path []string, meta *toml.MetaData) bool {
 	}
 }
 
-func LoadConfig(flags Flags) (Config, toml.MetaData) {
+func LoadConfig(flags Flags, logger messages.Logger) (Config, toml.MetaData) {
 	var config Config
 	config.isDefinedMap = map[string]struct{}{}
 	meta, err := toml.DecodeFile(strings.TrimSuffix(*flags.ConfigFileNamePointer, ".toml")+".toml", &config)
 	if err != nil {
-		fmt.Println(err)
-		fmt.Fprintln(os.Stdout, err)
-		// os.Exit(1)
+		// fmt.Println(err)
+		// fmt.Fprintln(os.Stdout, err)
+		panic(err)
 	}
 
 	var unknownUnits []string
 	config.InputUnits, unknownUnits = checkUnits(config.InputUnits)
 	if len(unknownUnits) > 0 {
-		fmt.Printf("found input unit conflict: %v\n", unknownUnits)
-		os.Exit(0)
+		logger.Failure("found input unit conflict: %v\n", unknownUnits)
 	}
 	config.OutputUnits = mergeEmpty(config.InputUnits, config.OutputUnits)
 	config.OutputUnits, unknownUnits = checkUnits(config.OutputUnits)
 	if len(unknownUnits) > 0 {
-		fmt.Printf("found output unit conflict: %v\n", unknownUnits)
-		os.Exit(0)
+		logger.Failure("found input unit conflict: %v\n", unknownUnits)
 	}
 
 	if len(config.ModelTable) > 0 {
 		if len(config.Models) > 0 {
-			fmt.Printf("Simultaneous table model listing and direct model specification not supported\n")
-			os.Exit(0)
+			logger.Failure("Simultaneous table model listing and direct model specification not supported\n")
 		}
 		file, err := os.Open(config.ModelTable)
 		if err != nil {
-			fmt.Printf("Model table opening error: %v\n", err)
-			os.Exit(0)
+			logger.Failure("Model table opening error: %v\n", err)
 		}
 		defer file.Close()
 
 		models := []*ModelParameters{}
 		if err := gocsv.UnmarshalFile(file, &models); err != nil {
-			fmt.Printf("Model table reading error: %v\n", err)
-			os.Exit(0)
+			logger.Failure("Model table reading error: %v\n", err)
 		}
 
 		modelFieldNames, aliases := utils.GetStructFieldNamesAndAliases(*models[0])
 		header, err := utils.GetHeader(config.ModelTable)
 		if err != nil {
-			fmt.Printf("Model table error: %v\n", err)
-			os.Exit(0)
+			logger.Failure("Model table error: %v\n", err)
 		}
 		for i := range header {
 			name, _, _ := strings.Cut(header[i], "(")
@@ -169,8 +164,7 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 		}
 	} else {
 		if len(config.Models) == 0 {
-			fmt.Println("No models provided")
-			os.Exit(0)
+			logger.Failure("No models provided")
 		}
 	}
 
@@ -196,8 +190,7 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 		slices.Reverse(groups)
 		for g := range groups {
 			if len(config.Options[groups[g]]) == 0 {
-				fmt.Printf("No options provided for parameter group: [%s]\n", groups[g])
-				os.Exit(0)
+				logger.Failure("No options provided for parameter group: [%s]\n", groups[g])
 			}
 			draft := config.Models
 			config.Models = make(map[string]*ModelParameters, len(draft)*len(config.Options[groups[g]]))
@@ -206,16 +199,15 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 					modelName := groups[g] + "-" + choice + "_" + draftName
 					mp := *draft[draftName]
 					choiceParameters := config.Options[groups[g]][choice]
-					choiceReflect := reflect.TypeOf(choiceParameters)
+					choiceReflect := reflect.TypeOf(*choiceParameters)
 					for i := 0; i < choiceReflect.NumField(); i++ {
 						parameter := choiceReflect.Field(i).Name
 						if meta.IsDefined("Options", groups[g], choice, parameter) {
 							modelField := reflect.ValueOf(&mp).Elem().FieldByName(parameter)
 							if !modelField.IsValid() {
-								fmt.Printf("Unknown parameter in optional specification: [%s]\n", parameter)
-								os.Exit(0)
+								logger.Failure("Unknown parameter in optional specification: [%s]\n", parameter)
 							}
-							dummyField := reflect.ValueOf(&choiceParameters).Elem().FieldByName(parameter)
+							dummyField := reflect.ValueOf(choiceParameters).Elem().FieldByName(parameter)
 							modelField.Set(dummyField)
 							config.isDefinedMap[strings.Join([]string{"Models", modelName, parameter}, "#")] = struct{}{}
 						}
@@ -240,8 +232,7 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 							descr[1] = modelName
 							_, exist := config.isDefinedMap[strings.Join(descr, "#")]
 							if exist {
-								fmt.Printf("Redefinition of %s for %s, was in %s\n", descr[2], modelName, draftName)
-								os.Exit(0)
+								logger.Failure("Redefinition of %s for %s, was in %s\n", descr[2], modelName, draftName)
 							}
 							config.isDefinedMap[strings.Join(descr, "#")] = struct{}{}
 						}
@@ -257,13 +248,12 @@ func LoadConfig(flags Flags) (Config, toml.MetaData) {
 		fmt.Printf("OUTPUT DIR: %s\n", config.OutputDir)
 		os.MkdirAll(config.OutputDir, 0750)
 	} else {
-		panic(fmt.Errorf("output path not specified"))
+		logger.Failure("output path not specified")
 	}
 
 	undecoded := meta.Undecoded()
 	if len(undecoded) > 0 {
-		fmt.Println("Found unknown fields: [", undecoded, "]. Aborting.")
-		os.Exit(0)
+		logger.Failure("Found unknown fields: [", undecoded, "]. Aborting.")
 	}
 
 	config._verbose = *flags.Verbose
@@ -288,6 +278,14 @@ const (
 	CurrentCalculation
 )
 
+type EmissionMode int
+
+const (
+	Cosine EmissionMode = iota
+	ForwardIsotropic
+	Forward
+)
+
 type ModelParameters struct {
 	CrossSections                           string             `form:"label=Cross section file,widget=file" toml:"CrossSections,omitzero,omitempty"`
 	ElasticScatteringMode                   string             `form:"label=Elastic scattering model,options=BornBethe|ScreenedCoulomb|Isotropic" toml:"ElasticScatteringMode,omitzero,omitempty"`
@@ -295,38 +293,36 @@ type ModelParameters struct {
 	IonizationEnergySharing                 string             `form:"label=Ionization energy sharing,options=Opal|UniformRandom|Equal" toml:"IonizationEnergySharing,omitzero,omitempty"`
 	IonizationScatteringMode                string             `form:"label=Ionization scattering model,options=Boeuf|Isotropic|ScreenedCoulomb|Born" toml:"IonizationScatteringMode,omitzero,omitempty"`
 	Species                                 map[string]float64 `form:"label=Species,widget=floatmap,element=Species" toml:"Species,omitzero,omitempty"`
-	ThresholdType                           string             `toml:"ThresholdType,omitzero,omitempty"`
-	LowerThresholdValue                     float64            `toml:"LowerThresholdValue,omitzero,omitempty"`
+	ThresholdType                           string             `form:"label=Lower energy cutoff by threshold of type" toml:"ThresholdType,omitzero,omitempty"`
+	LowerThresholdValue                     float64            `form:"label=Cutoff energy" toml:"LowerThresholdValue,omitzero,omitempty"`
 	RequireCollisionRelativeMargin          map[string]float64 `form:"label=Precision for collisions of interest,widget=floatmap,element=Process Wildcard" toml:"RequireCollisionRelativeMargin,omitzero,omitempty"`
-	GapLength                               float64            `csv:"L" units:"Length:1" toml:"GapLength,omitzero,omitempty"`
-	PressureGapLength                       float64            `csv:"pL" units:"Pressure:1,Length:1" toml:"PressureGapLength,omitzero,omitempty"`
-	CathodeFallLength                       float64            `csv:"d" units:"Length:1" toml:"CathodeFallLength,omitzero,omitempty"`
-	PressureCathodeFallLength               float64            `csv:"pd" units:"Pressure:1,Length:1" toml:"PressureCathodeFallLength,omitzero,omitempty"`
-	CathodeFallPotential                    float64            `csv:"Voltage" toml:"CathodeFallPotential,omitzero,omitempty"`
-	CathodeCurrentDensity                   float64            `csv:"j" units:"Current:1,Length:-2" toml:"CathodeCurrentDensity,omitzero,omitempty"`
-	CathodeCurrentDensityPerPressureSquared float64            `csv:"j/p2" units:"Current:1,Length:-2,Pressure:-2" toml:"CathodeCurrentDensityPerPressureSquared,omitzero,omitempty"`
-	CathodeCurrentPerPressureSquared        float64            `csv:"I/p2" units:"Current:1,Pressure:-2" toml:"CathodeCurrentPerPressureSquared,omitzero,omitempty"`
-	CathodeCurrent                          float64            `csv:"I" units:"Current:1" toml:"CathodeCurrent,omitzero,omitempty"`
-	SecondaryEmissionCoefficient            float64            `toml:"SecondaryEmissionCoefficient,omitzero,omitempty"`
+	GapLength                               float64            `form:"label=Gap length" csv:"L" units:"Length:1" toml:"GapLength,omitzero,omitempty"`
+	PressureGapLength                       float64            `form:"label=Barometric gap length" csv:"pL" units:"Pressure:1,Length:1" toml:"PressureGapLength,omitzero,omitempty"`
+	CathodeFallLength                       float64            `form:"label=Sheath thickness" csv:"d" units:"Length:1" toml:"CathodeFallLength,omitzero,omitempty"`
+	PressureCathodeFallLength               float64            `form:"label=Barometric sheath thickness" csv:"pd" units:"Pressure:1,Length:1" toml:"PressureCathodeFallLength,omitzero,omitempty"`
+	CathodeFallPotential                    float64            `form:"label=Cathode fall voltage" csv:"Voltage" toml:"CathodeFallPotential,omitzero,omitempty"`
+	CathodeCurrentDensity                   float64            `form:"label=Cathode j" csv:"j" units:"Current:1,Length:-2" toml:"CathodeCurrentDensity,omitzero,omitempty"`
+	CathodeCurrentDensityPerPressureSquared float64            `form:"label=Cathode j/p^2" csv:"j/p2" units:"Current:1,Length:-2,Pressure:-2" toml:"CathodeCurrentDensityPerPressureSquared,omitzero,omitempty"`
+	CathodeCurrentPerPressureSquared        float64            `form:"label=Cathode I/p^2" csv:"I/p2" units:"Current:1,Pressure:-2" toml:"CathodeCurrentPerPressureSquared,omitzero,omitempty"`
+	CathodeCurrent                          float64            `form:"label=Cathode I" csv:"I" units:"Current:1" toml:"CathodeCurrent,omitzero,omitempty"`
+	SecondaryEmissionCoefficient            float64            `form:"label=Prescribed gamma" toml:"SecondaryEmissionCoefficient,omitzero,omitempty"`
 	UseDonkosSEC                            bool               `toml:"UseDonkosSEC,omitzero,omitempty"`
 	UniformField                            bool               `toml:"UniformField,omitzero,omitempty"`
-	ConstEField                             float64            `units:"Voltage:1,Length:-1" toml:"ConstEField,omitzero,omitempty"`
+	ConstEField                             float64            `form:"label=Const electric field in nglow" units:"Voltage:1,Length:-1" toml:"ConstEField,omitzero,omitempty"`
 	Temperature                             float64            `toml:"Temperature,omitzero,omitempty"`
 	Pressure                                float64            `toml:"Pressure,omitzero,omitempty" csv:"p" units:"Pressure:1"`
 	CathodeRadius                           float64            `toml:"CathodeRadius,omitzero,omitempty" units:"Length:1"`
 	TubeRadius                              float64            `toml:"TubeRadius,omitzero,omitempty" units:"Length:1"`
 
-	SourceIntegralRelativeMargin float64 `toml:"SourceIntegralRelativeMargin,omitzero,omitempty"`
+	SourceIntegralRelativeMargin float64 `form:"label=Relative margin for gamma and int[S(x)]" toml:"SourceIntegralRelativeMargin,omitzero,omitempty"`
 
 	// AmbipolarDiffusionCoefficient float64
-	SlowElectronTemperature float64 `toml:"SlowElectronTemperature,omitzero,omitempty"`
+	SlowElectronTemperature float64 `form:"label=Slow electron temperature" toml:"SlowElectronTemperature,omitzero,omitempty"`
 
-	EnergyStep                            float64 `toml:"EnergyStep,omitzero,omitempty"` // [eV]
-	AngleStep                             float64 `toml:"AngleStep,omitzero,omitempty"`
-	EnergyDiscretizationStep              float64 `toml:"EnergyDiscretizationStep,omitzero,omitempty"`
-	MuDiscretizationStep                  float64 `toml:"MuDiscretizationStep,omitzero,omitempty"`
-	NElectrons                            int     `toml:"NElectrons,omitzero,omitempty"`
-	AddByNElectrons                       int     `toml:"AddByNElectrons,omitzero,omitempty"`
+	EnergyStep                            float64 `form:"label=Energy step" toml:"EnergyStep,omitzero,omitempty"` // [eV]
+	MuDiscretizationStep                  float64 `form:"hide" toml:"MuDiscretizationStep,omitzero,omitempty"`
+	NElectrons                            int     `form:"label=Starting electron number" toml:"NElectrons,omitzero,omitempty"`
+	AddByNElectrons                       int     `form:"label=Additional electron number" toml:"AddByNElectrons,omitzero,omitempty"`
 	ParallelPlaneHollowCathode            bool    `toml:"ParallelPlaneHollowCathode,omitzero,omitempty"`
 	Volumetric                            bool    `toml:"Volumetric,omitzero,omitempty"`
 	AnodeBackscatteringCoefficient0       float64 `toml:"AnodeBackscatteringCoefficient0,omitzero,omitempty"`
@@ -337,7 +333,7 @@ type ModelParameters struct {
 	TubeBackscatteringCoefficientB       float64 `toml:"TubeBackscatteringCoefficientB,omitzero,omitempty"`
 	TubeBackscatteringEnergyLossFraction float64 `toml:"TubeBackscatteringEnergyLossFraction,omitzero,omitempty"`
 
-	ReturningElectrons bool `toml:"ReturningElectrons,omitzero,omitempty"`
+	ReturningElectrons bool `form:"label=Cutoff by cathode return-ability" toml:"ReturningElectrons,omitzero,omitempty"`
 
 	// CalculateSecondaryEmissionCoefficient bool
 	// CalculateCurrentDensity               bool
@@ -347,13 +343,14 @@ type ModelParameters struct {
 	SimplifiedDiffusionScale   bool    `toml:"SimplifiedDiffusionScale,omitzero,omitempty"`
 	CathodeFallLengthPrecision float64 `toml:"CathodeFallLengthPrecision,omitzero,omitempty"`
 
-	ForwardEmission bool `toml:"ForwardEmission,omitzero,omitempty"`
+	EmissionType string `form:"label=Emission type,options=Cosine,ForwardIsotropic,Forward" toml:"EmissionType,omitzero,omitempty"`
 
-	CalculateDistribution bool `toml:"CalculateDistribution,omitzero,omitempty"`
-	DebugOutput           bool `toml:"DebugOutput,omitzero,omitempty"`
-	CellTimeWeighting     bool `toml:"CellTimeWeighting,omitzero,omitempty"`
-	EnergyDeposition      bool `toml:"EnergyDeposition,omitzero,omitempty"`
-	MeanFreePath          bool `toml:"MeanFreePath,omitzero,omitempty"`
+	CalculateDistribution        bool `toml:"CalculateDistribution,omitzero,omitempty"`
+	DebugOutput                  bool `toml:"DebugOutput,omitzero,omitempty"`
+	CellTimeWeighting            bool `form:"hide" toml:"CellTimeWeighting,omitzero,omitempty"`
+	TrajectoryAveragedIonization bool `form:"label=Trajectory averaged ionization rate" toml:"TrajectoryAveragedIonization,omitzero,omitempty"`
+	EnergyDeposition             bool `toml:"EnergyDeposition,omitzero,omitempty"`
+	MeanFreePath                 bool `toml:"MeanFreePath,omitzero,omitempty"`
 
 	SupressSpinner bool `form:"hide" toml:"-"`
 
@@ -372,6 +369,7 @@ type ModelParameters struct {
 	_ionizationEnergySharing IonizationEnergySharing
 	_ionizationScattering    IonizationScattering
 	_calculationMode         CalculationMode
+	_emissionMode            EmissionMode
 }
 
 func (p *ModelParameters) CrossSectionsData() *lxgata.Collisions {
@@ -390,6 +388,10 @@ func (p *ModelParameters) SetCrossSectionsData(cd *lxgata.Collisions) {
 
 func (p *ModelParameters) GetCalculationMode() CalculationMode {
 	return p._calculationMode
+}
+
+func (p *ModelParameters) GetEmissionMode() EmissionMode {
+	return p._emissionMode
 }
 
 func (p *ModelParameters) HasSuperelastics() bool {
@@ -488,21 +490,20 @@ func (p *ModelParameters) ReducedFieldMidSheath() float64 {
 var defaultValues = map[string]any{ // in SI-eV
 	"ThresholdType":              "Ionization",
 	"IonizationEnergySharing":    "UniformRandom",
+	"EmissionType":               "Cosine",
 	"IonizationScatteringMode":   "Boeuf",
 	"Pressure":                   101325. / 760., //[Pa]
 	"UniformField":               false,
 	"ConstEField":                -100., //[V/m]
 	"Temperature":                300.,  //[K]
 	"CathodeFallLengthPrecision": 1e-4,  //[m]
-	"EnergyStep":                 0.05,  //[eV]
-	"AngleStep":                  45.,
+	"EnergyStep":                 0.01,  //[eV]
 	"NElectrons":                 1000,
 	"ParallelPlaneHollowCathode": false,
 	"CalculationMode":            "Basic",
 	// "CalculateSecondaryEmissionCoefficient": false,
 	// "CalculateCurrentDensity":               false,
 	"Volumetric":                   false,
-	"EnergyDiscretizationStep":     0.01,
 	"MuDiscretizationStep":         1 / 50.,
 	"SourceIntegralRelativeMargin": 0.005,
 }
@@ -655,55 +656,6 @@ func embeddedNames(target reflect.Value, units UnitConfig) (names []string) {
 
 func MakeHeader(target any, units UnitConfig) (header []string) {
 	return embeddedNames(reflect.ValueOf(target), units)
-	targetReflect := reflect.Indirect(reflect.ValueOf(target))
-	targetType := targetReflect.Type()
-	for i := 0; i < targetReflect.NumField(); i++ {
-		field := targetType.Field(i)
-		value := targetReflect.Field(i)
-		if field.Anonymous && field.Type.Kind() == reflect.Struct {
-			embeddedValue := value
-			embeddedType := embeddedValue.Type()
-			for j := 0; j < embeddedValue.NumField(); j++ {
-				embeddedField := embeddedType.Field(j)
-				tag := embeddedField.Tag.Get("csv")
-				if tag == "-" {
-					break
-				}
-				var csvFieldName string
-				if tag != "" {
-					csvFieldName = tag
-				} else {
-					csvFieldName = embeddedField.Name
-				}
-				unitElements := GetUnitElements(embeddedField.Tag.Get("units"))
-				if len(unitElements) != 0 {
-					header = append(header, csvFieldName+" "+unitElements.String(units))
-				} else {
-					header = append(header, csvFieldName)
-				}
-			}
-		} else {
-			tag := field.Tag.Get("csv")
-			if tag == "-" {
-				break
-			}
-			var csvFieldName string
-			if tag != "" {
-				csvFieldName = tag
-			} else {
-				csvFieldName = field.Name
-			}
-			fieldUnits := field.Tag.Get("units")
-			unitElements := GetUnitElements(fieldUnits)
-			if len(unitElements) != 0 {
-				header = append(header, csvFieldName+" "+unitElements.String(units))
-			} else {
-				header = append(header, csvFieldName)
-			}
-		}
-	}
-
-	return header
 }
 
 func (modelConfig *ModelParameters) checkFieldProblems(path []string, meta *toml.MetaData, globalConfig *Config) (ambiguities [][]string, missingDeps []string) {
@@ -759,15 +711,15 @@ field value priority:
 5. default
 */
 
-func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Config, meta *toml.MetaData) bool {
+func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Config, meta *toml.MetaData, logger messages.Logger) bool {
 	globalAmbiguities, globalMissingDeps := config.checkFieldProblems([]string{}, meta, config)
 	localAmbiguities, localMissingDeps := modelConfig.checkFieldProblems([]string{"Models", modelName}, meta, config)
 	if len(globalAmbiguities) > 0 {
-		fmt.Printf("unable to load config: found global ambiguities \n%v\n", globalAmbiguities)
+		logger.Info("unable to load config: found global ambiguities \n%v\n", globalAmbiguities)
 		return false
 	}
 	if len(localAmbiguities) > 0 {
-		fmt.Printf("unable to load config: found model ambiguities \n%v\n", localAmbiguities)
+		logger.Info("unable to load config: found model ambiguities \n%v\n", localAmbiguities)
 		return false
 	}
 	var missingIntersection []string
@@ -779,7 +731,7 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 		}
 	}
 	if len(missingIntersection) > 0 {
-		fmt.Printf("unable to load config: required dependent fields not found \n%v\n", missingIntersection)
+		logger.Info("unable to load config: required dependent fields not found \n%v\n", missingIntersection)
 		return false
 	}
 
@@ -829,9 +781,21 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 
 	AnyToSIeV(modelConfig, config.InputUnits, true)
 
+	it := 0
 	for fieldName := range defaultValues {
+		it++
 		if _, x := excludeFromLoadingDefaultOrOuter[fieldName]; !x && !slices.Contains(discoveredParameters, fieldName) {
-			modelConfigReflect.Elem().FieldByName(fieldName).Set(reflect.ValueOf(defaultValues[fieldName]))
+			fv := modelConfigReflect.Elem().FieldByName(fieldName)
+			if fv.IsValid() {
+				if fv.CanSet() {
+					fv.Set(reflect.ValueOf(defaultValues[fieldName]))
+				} else {
+					logger.Failure("cannot set %v\n", fv)
+				}
+			} else {
+				logger.Failure("fv %s of %#v is invalid: %v, again: %v\n", fieldName, modelConfigReflect.Elem(), fv, modelConfigReflect.Elem().FieldByName(fieldName))
+			}
+
 			discoveredParameters = append(discoveredParameters, fieldName)
 		}
 	}
@@ -860,24 +824,26 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 			}
 		}
 	}
+	allGood := true
+	status := ""
+
 	for initialFieldName := range calculableFields {
 		if slices.Contains(enabledParameters, initialFieldName) {
-			return false
+			allGood = false
+			status += fmt.Sprintf("field conflict: calculable field %v in enabled fields %v\n", initialFieldName, enabledParameters)
 		}
 	}
-
-	allGood := true
 
 	for i := range enabledParameters {
 		for requirement := range fieldsAnd[enabledParameters[i]] {
 			if !slices.Contains(enabledParameters, fieldsAnd[enabledParameters[i]][requirement]) {
-				fmt.Printf("for parameter %s requirement %s not found\n", enabledParameters[i], fieldsAnd[enabledParameters[i]][requirement])
+				status += fmt.Sprintf("for parameter %s requirement %s not found\n", enabledParameters[i], fieldsAnd[enabledParameters[i]][requirement])
 				allGood = false
 			}
 		}
 		for conflict := range fieldsXor[enabledParameters[i]] {
 			if slices.Contains(enabledParameters, fieldsXor[enabledParameters[i]][conflict]) {
-				fmt.Printf("for parameter %s found conflicting parameter: %s\n", enabledParameters[i], fieldsXor[enabledParameters[i]][conflict])
+				status += fmt.Sprintf("for parameter %s found conflicting parameter: %s\n", enabledParameters[i], fieldsXor[enabledParameters[i]][conflict])
 				allGood = false
 			}
 		}
@@ -888,7 +854,7 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 	var conflict []string
 	units, conflict := checkUnits(config.OutputUnits)
 	if len(conflict) > 0 {
-		fmt.Printf("found output unit conflict: %v\n Data will be saved in input units", conflict)
+		status += fmt.Sprintf("found output unit conflict: %v\n Data will be saved in input units\n", conflict)
 		modelConfig._outputUnits = config.InputUnits
 	} else {
 		modelConfig._outputUnits = units
@@ -904,13 +870,13 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 		"Isotropic":       lxgata.Isotropic,
 	}
 	if elsm, ok := scatteringMode[modelConfig.ElasticScatteringMode]; !ok {
-		fmt.Printf("Wrong elastic scattering mode: %v\n", modelConfig.ElasticScatteringMode)
+		status += fmt.Sprintf("Wrong elastic scattering mode: %v\n", modelConfig.ElasticScatteringMode)
 		allGood = false
 	} else {
 		modelConfig._elasticScatteringMode = elsm
 	}
 	if insm, ok := scatteringMode[modelConfig.InelasticScatteringMode]; !ok {
-		fmt.Printf("Wrong inelastic scattering mode: %v\n", modelConfig.InelasticScatteringMode)
+		status += fmt.Sprintf("Wrong inelastic scattering mode: %v\n", modelConfig.InelasticScatteringMode)
 		allGood = false
 	} else {
 		modelConfig._inelasticScatteringMode = insm
@@ -926,7 +892,7 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 		"MixedFL":         MixedFullLoss,
 	}
 	if izsm, ok := ionizationScatteringMode[modelConfig.IonizationScatteringMode]; !ok {
-		fmt.Printf("Wrong ionization scattering mode: %v\n", modelConfig.IonizationScatteringMode)
+		status += fmt.Sprintf("Wrong ionization scattering mode: %v\n", modelConfig.IonizationScatteringMode)
 		allGood = false
 	} else {
 		modelConfig._ionizationScattering = izsm
@@ -939,7 +905,7 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 		"Opal":          Opal,
 	}
 	if esm, ok := energySharingMode[modelConfig.IonizationEnergySharing]; !ok {
-		fmt.Printf("Wrong energy sharing mode: %v\n", modelConfig.IonizationEnergySharing)
+		status += fmt.Sprintf("Wrong energy sharing mode: %v\n", modelConfig.IonizationEnergySharing)
 		allGood = false
 	} else {
 		modelConfig._ionizationEnergySharing = esm
@@ -959,6 +925,10 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 			UParameter:   lxgata.Hartree,
 		}
 	}
+	if mixtureTotalWeight == 0 {
+		allGood = false
+		status += "Gas mixture malformed: no species provided with non-zero weights\n"
+	}
 
 	calculationMode := map[string]CalculationMode{
 		"Current": CurrentCalculation,
@@ -968,6 +938,18 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 	}
 
 	modelConfig._calculationMode = calculationMode[modelConfig.CalculationMode]
+
+	emissionMode := map[string]EmissionMode{
+		"Cosine":           Cosine,
+		"Forward":          Forward,
+		"ForwardIsotropic": ForwardIsotropic,
+	}
+
+	modelConfig._emissionMode = emissionMode[modelConfig.EmissionType]
+
+	if status != "" {
+		logger.Info(status)
+	}
 
 	return allGood
 }

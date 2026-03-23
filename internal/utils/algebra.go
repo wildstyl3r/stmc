@@ -71,6 +71,12 @@ func (l Mat2D) MulVec(r Vec2D) Vec2D {
 		l.c*r.X + l.d*r.Y}
 }
 
+func GetLinearCoefficients(x1, y1, x2, y2 float64) (a, b float64) {
+	a = (y2 - y1) / (x2 - x1)
+	b = y1 - x1*a
+	return a, b
+}
+
 // type Mat3D struct {
 // 	a, b, c float64
 // 	d, e, f float64

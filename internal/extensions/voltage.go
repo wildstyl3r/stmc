@@ -5,6 +5,7 @@ import (
 
 	"github.com/wildstyl3r/stmc/internal/config"
 	"github.com/wildstyl3r/stmc/internal/constants"
+	"github.com/wildstyl3r/stmc/internal/messages"
 	"github.com/wildstyl3r/stmc/internal/model"
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
@@ -52,7 +53,7 @@ func VoltageRelativeError(sourceIntegral, sourceIntegralMargin, dc, dcMargin flo
 	return sourceIntegralMargin/(sourceIntegral*(sourceIntegral+1)) + 2.5*(dcMargin/dc)
 }
 
-func VoltageCalculation(parameters config.ModelParameters, outputDir, modelName string) (dataRow, altRow utils.ResultInterface, finalModel, altModel *model.Model) {
+func VoltageCalculation(parameters config.ModelParameters, outputDir, modelName string, logger messages.Logger) (dataRow, altRow utils.ResultInterface, finalModel, altModel *model.Model) {
 	minV, maxV := max(100., VoltageFromDc(parameters, parameters.CathodeFallLengthPrecision)), min(1500., VoltageFromDc(parameters, parameters.SimulationLength()-parameters.CathodeFallLengthPrecision))
 	stepSize := 10.
 	numberOfSteps := int((maxV - minV) / stepSize)
@@ -68,11 +69,11 @@ func VoltageCalculation(parameters config.ModelParameters, outputDir, modelName 
 			}
 		}, func(mp *config.ModelParameters, optR *OptimizationResult) bool {
 			return mp.GapLength-mp.CathodeFallLength < mp.CathodeFallLengthPrecision || (optR.EffectiveGammaAnalytic > 0 && optR.EffectiveGammaAnalytic > 3*optR.EffectiveGammaMonteCarlo)
-		}, false, outputDir, modelName)
+		}, false, outputDir, modelName, logger)
 
 }
 
-func VoltageCalculation2(parameters *config.ModelParameters, outputDir, modelName string) (dataRow, altRow utils.ResultInterface, finalModel, altModel *model.Model) {
+func VoltageCalculation2(parameters *config.ModelParameters, outputDir, modelName string, logger messages.Logger) (dataRow, altRow utils.ResultInterface, finalModel, altModel *model.Model) {
 	minDc, maxDc := DcFromVoltage(*parameters, 80), DcFromVoltage(*parameters, 1500)
 	numberOfSteps := int((maxDc - minDc) / parameters.CathodeFallLengthPrecision)
 	return GeneralizedCalculation(*parameters, numberOfSteps, minDc, parameters.CathodeFallLengthPrecision,
@@ -87,7 +88,7 @@ func VoltageCalculation2(parameters *config.ModelParameters, outputDir, modelNam
 			}
 		}, func(mp *config.ModelParameters, optR *OptimizationResult) bool {
 			return mp.GapLength-mp.CathodeFallLength < mp.CathodeFallLengthPrecision || (optR.EffectiveGammaAnalytic > 0 && optR.EffectiveGammaAnalytic > 3*optR.EffectiveGammaMonteCarlo)
-		}, false, outputDir, modelName)
+		}, false, outputDir, modelName, logger)
 
 }
 
