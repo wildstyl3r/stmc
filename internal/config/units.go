@@ -123,7 +123,7 @@ var defaultUnits = UnitConfig{
 	P: "Torr",
 	T: "s",
 	E: "eV",
-} // []string{"mkA", "cm", "Torr", "s", "eV", "V"}
+}
 
 func mergeEmpty(target, source UnitConfig) (result UnitConfig) {
 	if target.L == "" {
@@ -139,7 +139,7 @@ func mergeEmpty(target, source UnitConfig) (result UnitConfig) {
 		target.E = source.E
 	}
 	if target.T == "" {
-		target.T = source.E
+		target.T = source.T
 	}
 	return target
 }
@@ -153,8 +153,8 @@ func checkUnits(units UnitConfig) (extended UnitConfig, unknowns []string) {
 	if _, known := classesOfUnits[units.I]; !known {
 		unknowns = append(unknowns, units.I)
 	}
-	if _, known := classesOfUnits[units.I]; !known {
-		unknowns = append(unknowns, units.I)
+	if _, known := classesOfUnits[units.E]; !known {
+		unknowns = append(unknowns, units.E)
 	}
 	if _, known := classesOfUnits[units.T]; !known {
 		unknowns = append(unknowns, units.T)
