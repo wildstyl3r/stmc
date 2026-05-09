@@ -34,7 +34,7 @@ func EstimateCathodeFallLengthLimits(parameters config.ModelParameters) (from fl
 }
 
 type OptimizationResult struct {
-	utils.CoreResult
+	utils.SheathResult
 	CathodeFallLengthMargin                 float64 `csv:"Sheath length margin" units:"Length:1"`
 	PressureCathodeFallLengthMargin         float64 `csv:"pd margin" units:"Length:1"`
 	SourceIntegralDifference                float64 `csv:"Source integral loss"`

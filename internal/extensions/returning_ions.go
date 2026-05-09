@@ -80,7 +80,7 @@ func sourceIntegralCalculationStep(requirePrecision bool, parameters *config.Mod
 	// ionizingElectrons := stepModel.IonizingCathodeElectrons.Mean()
 	difference := effectiveSourceIntegralAnalytic - effectiveSourceIntegralMonteCarlo
 	return OptimizationResult{
-			CoreResult:                              stepModel.CoreResult(),
+			SheathResult:                            stepModel.SheathResult(),
 			SourceIntegralDifference:                difference,
 			SourceIntegralAnalytic:                  effectiveSourceIntegralAnalytic,
 			SourceIntegralMonteCarlo:                effectiveSourceIntegralMonteCarlo,
