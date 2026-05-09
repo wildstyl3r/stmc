@@ -81,7 +81,7 @@ func NewDataFlags() DataFlags {
 		all: flag.Bool("all", false, "save every available metric"),
 		Sequentials: map[string]sequentialDataItem{
 			MeanFreePath: {DataItem: DataItem{
-				SaveFlag: flag.Bool("mfp", true, "save mean free path"),
+				SaveFlag: flag.Bool("mfp", false, "save mean free path"),
 				shortID:  "mfp",
 			},
 				values: func(m *model.Model) []DataFile {
@@ -155,11 +155,11 @@ func NewDataFlags() DataFlags {
 						valueName:   fmt.Sprintf("E (V/%s)", model.Parameters.OutputUnit(config.Length)),
 					}
 					for i := range 100 {
-						v := -((model.Vs)*float64(100-i)/100. - model.VLSkip)
+						v := -(model.Vs)*float64(100-i)/100. + model.SheathPotentialCorrection
 						dataFile.data = append(dataFile.data, Row{index: v, value: model.EFieldFromPotential(v)})
 					}
 					for i := range 100 {
-						v := model.VLSkip * float64(100-i) / 100.
+						v := model.SheathPotentialCorrection * float64(100-i) / 100.
 						dataFile.data = append(dataFile.data, Row{index: v, value: model.EFieldFromPotential(v)})
 					}
 					return []DataFile{dataFile}
@@ -179,11 +179,11 @@ func NewDataFlags() DataFlags {
 						valueName:   fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
 					}
 					for i := range 100 {
-						v := -((model.Vs)*float64(100-i)/100. - model.VLSkip)
+						v := (model.Vs)*float64(100-i)/100. + model.SheathPotentialCorrection
 						dataFile.data = append(dataFile.data, Row{index: v, value: model.LfromV(v)})
 					}
 					for i := range 100 {
-						v := model.VLSkip * float64(100-i) / 100.
+						v := model.SheathPotentialCorrection * float64(100-i) / 100.
 						dataFile.data = append(dataFile.data, Row{index: v, value: model.LfromV(v)})
 					}
 					return []DataFile{dataFile}
@@ -199,7 +199,7 @@ func NewDataFlags() DataFlags {
 				values: func(model *model.Model) (files []DataFile) {
 					collisions := model.GetMetrics(extensions.SingleElectronCollisionRateKey).(map[lxgata.CollisionType]utils.GriddedInterval)
 					collisionsMargin := model.GetMetrics(extensions.SingleElectronCollisionRateMarginKey).(map[lxgata.CollisionType]utils.GriddedInterval)
-					for label := range collisions {
+					for _, label := range model.Parameters.CountCollisions {
 						dataFile := DataFile{
 							metricsName:   NormalizedCollisionCounters + "/" + string(label),
 							indexName:     fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
@@ -221,7 +221,7 @@ func NewDataFlags() DataFlags {
 			},
 			NormalizedCollisionCountersTA: {
 				DataItem: DataItem{
-					SaveFlag: flag.Bool("ncta", true, "save single-electron collision counters divided by pressure from trajectory averages"),
+					SaveFlag: flag.Bool("ncta", false, "save single-electron collision counters divided by pressure from trajectory averages"),
 					shortID:  "ncta",
 				},
 				values: func(model *model.Model) (files []DataFile) {
@@ -233,7 +233,7 @@ func NewDataFlags() DataFlags {
 					}
 					for x := range model.NumCells {
 						dataFile.data[x].index = model.XStep * float64(x)
-						dataFile.data[x].value = model.TrajAveragedIonization[x].Val() / model.Parameters.Pressure / float64(model.TotalElectronsEmittedOnCathode)
+						dataFile.data[x].value = model.TrajAveragedIonization[x].Val() / (model.XStep * model.Parameters.Pressure * float64(model.TotalElectronsEmittedOnCathode))
 					}
 					return []DataFile{dataFile}
 					// collisions := model.GetMetrics(extensions.SingleElectronCollisionRateKey).(map[lxgata.CollisionType]utils.GriddedInterval)
@@ -317,7 +317,7 @@ func NewDataFlags() DataFlags {
 			},
 			DetailedCollisionCounters: {
 				DataItem: DataItem{
-					SaveFlag: flag.Bool("dcc", true, "save detailed collision counters"),
+					SaveFlag: flag.Bool("dcc", false, "save detailed collision counters"),
 					shortID:  "dcc",
 				},
 				values: func(model *model.Model) (files []DataFile) {
@@ -442,7 +442,7 @@ func NewDataFlags() DataFlags {
 			// },
 			PlasmaDensity: {
 				DataItem: DataItem{
-					SaveFlag: flag.Bool("n", true, "save plasma density"),
+					SaveFlag: flag.Bool("n", false, "save plasma density"),
 					shortID:  "n",
 				},
 				values: func(model *model.Model) []DataFile {
@@ -552,93 +552,158 @@ func NewDataFlags() DataFlags {
 				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
 				yUnit: []config.UnitElement{{Class: config.Energy, Power: 1}},
 			},
-			// NormalizedIonizationD: {
-			// 	DataItem: DataItem{
-			// 		SaveFlag: flag.Bool("nicd", true, "save normalized source term calculated from EEDF"),
-			// 		shortID:  "nicd",
-			// 	},
-			// 	values: func(model *model.Model) []DataFile {
-			// 		dataFile := DataFile{
-			// 			metricsName: NormalizedIonizationD,
-			// 			indexName:   fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
-			// 			valueName:   fmt.Sprintf("S (%s^-1 %s^-1)", model.Parameters.OutputUnit(config.Length), model.Parameters.OutputUnit(config.Pressure)),
-			// 			data:        make([]Row, model.NumCells),
-			// 		}
+			NormalizedIonizationD: {
+				DataItem: DataItem{
+					SaveFlag: flag.Bool("nicd", false, "save normalized source term calculated from EEDF"),
+					shortID:  "nicd",
+				},
+				values: func(model *model.Model) []DataFile {
+					dataFile := DataFile{
+						metricsName: NormalizedIonizationD,
+						indexName:   fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
+						valueName:   fmt.Sprintf("S (%s^-1 %s^-1)", model.Parameters.OutputUnit(config.Length), model.Parameters.OutputUnit(config.Pressure)),
+						data:        make([]Row, model.NumCells),
+					}
 
-			// 		// ionSource := make([]float64, model.NumCells)
+					// ionSource := make([]float64, model.NumCells)
 
-			// 		var lookUpVelocity []float64 = make([]float64, model.NumCellsE+1)
+					var lookUpVelocity []float64 = make([]float64, model.NumCellsE+1)
 
-			// 		// var energyRoot2Velocity float64 = math.Sqrt(2. * constants.ElectronChargeToMassRatio)
-			// 		for eIndex := range lookUpVelocity {
-			// 			energy := model.Parameters.EnergyStep * (float64(eIndex) + 0.5)
-			// 			lookUpVelocity[eIndex] = utils.EV2electronVelocity(energy)
-			// 		}
+					// var energyRoot2Velocity float64 = math.Sqrt(2. * constants.ElectronChargeToMassRatio)
+					for eIndex := range lookUpVelocity {
+						energy := model.Parameters.EnergyStep * (float64(eIndex) + 0.5)
+						lookUpVelocity[eIndex] = utils.EV2electronVelocity(energy)
+					}
 
-			// 		var ionizationCS *lxgata.Collision
-			// 		for p := range model.Parameters.CrossSectionsData().Processes {
-			// 			if model.Parameters.CrossSectionsData().Processes[p].Type == lxgata.IONIZATION {
-			// 				ionizationCS = &model.Parameters.CrossSectionsData().Processes[p]
-			// 				break
-			// 			}
-			// 		}
-			// 		if ionizationCS == nil {
-			// 			panic("no ionization cs found")
-			// 		}
+					var ionizationCS *lxgata.Collision
+					for p := range model.Parameters.CrossSectionsData().Processes {
+						if model.Parameters.CrossSectionsData().Processes[p].Type == lxgata.IONIZATION {
+							ionizationCS = &model.Parameters.CrossSectionsData().Processes[p]
+							break
+						}
+					}
+					if ionizationCS == nil {
+						panic("no ionization cs found")
+					}
 
-			// 		for x := range model.DistributionXEMu {
-			// 			norm, normCompensation := 0., 0.
-			// 			ionSourceX, ionSourceXCompensation := 0., 0.
+					electronDensity := make([]float64, model.NumCells)
+					rateIntegral := make([]float64, model.NumCells)
+					meanEnergy := make([]float64, model.NumCells)
 
-			// 			for e := range model.DistributionXEMu[x] {
-			// 				currentEnergy := model.Parameters.EnergyStep * (float64(e) + 0.5)
-			// 				fXE, fXECompensation := 0., 0.
-			// 				for mu := range model.DistributionXEMu[x][e] {
-			// 					utils.KahanSum(&fXE, &model.DistributionXEMu[x][e][mu], &fXECompensation)
-			// 				}
-			// 				fXE *= model.Parameters.MuDiscretizationStep
-			// 				normIntegrable := math.Sqrt(currentEnergy) * fXE * model.Parameters.EnergyStep
-			// 				utils.KahanSum(&norm, &normIntegrable, &normCompensation)
-			// 				sourceIntegrable := utils.EV2electronVelocity(currentEnergy) * ionizationCS.CrossSectionAt(currentEnergy) * normIntegrable
-			// 				utils.KahanSum(&ionSourceX, &sourceIntegrable, &ionSourceXCompensation)
+					psiFIncrement := 1. / (float64(model.TotalElectronsEmittedOnCathode) * model.Parameters.EnergyStep * model.Parameters.MuDiscretizationStep)
 
-			// 				//norm /= float64(model.TotalElectronsEmittedOnCathode)
-			// 			}
-			// 			dataFile.data[x].index = model.XStep * (float64(x) + 0.5)
-			// 			dataFile.data[x].value = ionSourceX / norm / model.Parameters.Pressure
-			// 		}
+					for xIndex := 0; xIndex < model.NumCells; xIndex++ {
+						for eIndex := 0; eIndex < model.NumCellsE; eIndex++ {
+							currentEnergy := model.Parameters.EnergyStep * (float64(eIndex) + 0.5)
+							fXE := 0.
+							fXE_mu := 0.
+							v_x_fXE := 0.
+							v_fXE := 0.
+							v_r_fXE := 0.
+							for muIndex := 0; muIndex < model.NumCellsMu; muIndex++ {
+								currentMu := model.Parameters.MuDiscretizationStep*float64(muIndex) - 1.
 
-			// 		// for xIndex := 0; xIndex < model.NumCells; xIndex++ {
-			// 		// 	ionSourceXCompensation := 0.
-			// 		// 	for eIndex := int(ionizationCS.Threshold / model.Parameters.EnergyStep); eIndex < model.NumCellsE; eIndex++ {
-			// 		// 		currentEnergy := model.Parameters.EnergyStep * (float64(eIndex) + 0.5)
-			// 		// 		fXE := 0.
-			// 		// 		fXECompensation := 0.
-			// 		// 		for muIndex := 0; muIndex < model.NumCellsMu; muIndex++ {
-			// 		// 			currentMu := max(-1, min(model.Parameters.MuDiscretizationStep*(float64(muIndex)+0.5)-1., 1))
+								f := 0.
+								if math.Abs(currentMu) > 0.0001 {
+									f = psiFIncrement / (lookUpVelocity[eIndex] * math.Abs(currentMu)) * float64(model.DistributionXEMu[xIndex][eIndex][muIndex])
+								}
+								fXE_mu += f * currentMu
+								fXE += f
 
-			// 		// 			f := 0.
-			// 		// 			if math.Abs(currentMu) > 0.00001 {
-			// 		// 				f = 1. / (lookUpVelocity[eIndex] * math.Abs(currentMu) * float64(model.TotalElectronsEmittedOnCathode) * model.Parameters.MuDiscretizationStep * model.Parameters.EnergyStep) * float64(model.DistributionXEMu[xIndex][eIndex][muIndex])
-			// 		// 			}
-			// 		// 			y := f - fXECompensation
-			// 		// 			temp := fXE + y
-			// 		// 			fXECompensation = (temp - fXE) - y
-			// 		// 			fXE = temp
-			// 		// 		}
-			// 		// 		y := fXE*currentEnergy*ionizationCS.CrossSectionAt(currentEnergy) - ionSourceXCompensation
-			// 		// 		temp := ionSource[xIndex] + y
-			// 		// 		ionSourceXCompensation = (temp - ionSource[xIndex]) - y
-			// 		// 		ionSource[xIndex] = temp
-			// 		// 	}
-			// 		// 	dataFile.data[xIndex].index = model.XStep * (float64(xIndex) + 0.5)
-			// 		// 	dataFile.data[xIndex].value = ionSource[xIndex] * energyRoot2Velocity / model.Parameters.Pressure
-			// 		// }
-			// 		return []DataFile{dataFile}
-			// 	},
-			// 	xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
-			// 	yUnit: []config.UnitElement{{Class: config.Length, Power: -1}, {Class: config.Pressure, Power: -1}},
-			// },
+								v_x_fXE += f * lookUpVelocity[eIndex] * currentMu
+								v_fXE += f * lookUpVelocity[eIndex]
+								v_r_fXE += f * lookUpVelocity[eIndex] * math.Sqrt(1-currentMu*currentMu)
+							}
+							fXE_mu *= model.Parameters.MuDiscretizationStep
+							fXE *= model.Parameters.MuDiscretizationStep
+							v_x_fXE *= model.Parameters.MuDiscretizationStep
+							v_fXE *= model.Parameters.MuDiscretizationStep
+							v_r_fXE *= model.Parameters.MuDiscretizationStep
+
+							electronDensity[xIndex] += fXE
+
+							meanEnergy[xIndex] += fXE * currentEnergy
+							// de.driftVelocity[xIndex] += fXE * lookUpVelocity[eIndex]
+							// de.flux[xIndex] += v_x_fXE
+							// de.velocity[xIndex] += v_fXE
+							// de.radialVelocity[xIndex] += v_r_fXE
+							rateIntegral[xIndex] += ionizationCS.CrossSectionAt(currentEnergy) * lookUpVelocity[eIndex] * fXE
+						}
+						electronDensity[xIndex] *= model.Parameters.EnergyStep
+
+						meanEnergy[xIndex] *= model.Parameters.EnergyStep
+						meanEnergy[xIndex] /= electronDensity[xIndex]
+
+						// de.driftVelocity[xIndex] *= model.Parameters.EnergyStep
+						// de.driftVelocity[xIndex] /= de.electronDensity[xIndex]
+
+						// de.flux[xIndex] *= model.Parameters.EnergyStep
+						// de.velocity[xIndex] *= model.Parameters.EnergyStep
+						// de.velocity[xIndex] /= de.electronDensity[xIndex]
+						// de.radialVelocity[xIndex] *= model.Parameters.EnergyStep
+						// de.radialVelocity[xIndex] /= de.electronDensity[xIndex]
+
+						rateIntegral[xIndex] *= model.Parameters.EnergyStep
+						rateIntegral[xIndex] /= electronDensity[xIndex]
+
+						// de.sourceTerm[xIndex] = model.gasDensity * de.electronDensity[xIndex] * de.rateIntegral[xIndex] // dn/dt = N * n(x) * <sigma_i(x,e) * v(x,e)>
+						dataFile.data[xIndex].index = model.XStep * (float64(xIndex) + 0.5)
+						dataFile.data[xIndex].value = model.Parameters.GasDensity * electronDensity[xIndex] * rateIntegral[xIndex] / model.Parameters.Pressure // dn/dt = N * n(x) * <sigma_i(x,e) * v(x,e)>
+					}
+
+					// for x := range model.DistributionXEMu {
+					// 	norm, normCompensation := 0., 0.
+					// 	ionSourceX, ionSourceXCompensation := 0., 0.
+
+					// 	for e := range model.DistributionXEMu[x] {
+					// 		currentEnergy := model.Parameters.EnergyStep * (float64(e) + 0.5)
+					// 		fXE, fXECompensation := 0., 0.
+					// 		for mu := range model.DistributionXEMu[x][e] {
+					// 			utils.KahanSum(&fXE, &model.DistributionXEMu[x][e][mu], &fXECompensation)
+					// 		}
+					// 		fXE *= model.Parameters.MuDiscretizationStep
+					// 		normIntegrable := math.Sqrt(currentEnergy) * fXE * model.Parameters.EnergyStep
+					// 		utils.KahanSum(&norm, &normIntegrable, &normCompensation)
+					// 		sourceIntegrable := utils.EV2electronVelocity(currentEnergy) * ionizationCS.CrossSectionAt(currentEnergy) * normIntegrable
+					// 		utils.KahanSum(&ionSourceX, &sourceIntegrable, &ionSourceXCompensation)
+
+					// 		//norm /= float64(model.TotalElectronsEmittedOnCathode)
+					// 	}
+					// 	dataFile.data[x].index = model.XStep * (float64(x) + 0.5)
+					// 	dataFile.data[x].value = ionSourceX / norm / model.Parameters.Pressure
+					// }
+
+					// for xIndex := 0; xIndex < model.NumCells; xIndex++ {
+					// 	ionSourceXCompensation := 0.
+					// 	for eIndex := int(ionizationCS.Threshold / model.Parameters.EnergyStep); eIndex < model.NumCellsE; eIndex++ {
+					// 		currentEnergy := model.Parameters.EnergyStep * (float64(eIndex) + 0.5)
+					// 		fXE := 0.
+					// 		fXECompensation := 0.
+					// 		for muIndex := 0; muIndex < model.NumCellsMu; muIndex++ {
+					// 			currentMu := max(-1, min(model.Parameters.MuDiscretizationStep*(float64(muIndex)+0.5)-1., 1))
+
+					// 			f := 0.
+					// 			if math.Abs(currentMu) > 0.00001 {
+					// 				f = 1. / (lookUpVelocity[eIndex] * math.Abs(currentMu) * float64(model.TotalElectronsEmittedOnCathode) * model.Parameters.MuDiscretizationStep * model.Parameters.EnergyStep) * float64(model.DistributionXEMu[xIndex][eIndex][muIndex])
+					// 			}
+					// 			y := f - fXECompensation
+					// 			temp := fXE + y
+					// 			fXECompensation = (temp - fXE) - y
+					// 			fXE = temp
+					// 		}
+					// 		y := fXE*currentEnergy*ionizationCS.CrossSectionAt(currentEnergy) - ionSourceXCompensation
+					// 		temp := ionSource[xIndex] + y
+					// 		ionSourceXCompensation = (temp - ionSource[xIndex]) - y
+					// 		ionSource[xIndex] = temp
+					// 	}
+					// 	dataFile.data[xIndex].index = model.XStep * (float64(xIndex) + 0.5)
+					// 	dataFile.data[xIndex].value = ionSource[xIndex] * energyRoot2Velocity / model.Parameters.Pressure
+					// }
+					return []DataFile{dataFile}
+				},
+				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
+				yUnit: []config.UnitElement{{Class: config.Length, Power: -1}, {Class: config.Pressure, Power: -1}},
+			},
 			MeanVelocityX: {
 				DataItem: DataItem{
 					SaveFlag: flag.Bool("vx", false, "save drift velocity"),
@@ -718,8 +783,13 @@ func Save(modelName string, model *model.Model, df DataFlags, outputPath string)
 		fmt.Printf("failed to create file: %v\n", err)
 		return
 	}
-
-	if err := toml.NewEncoder(f).Encode(model.Parameters); err != nil {
+	var parametersCopy config.ModelParameters = model.Parameters
+	config.AnyToSIeV(&parametersCopy, model.Parameters.OutputUnits(), false)
+	cf := config.Config{
+		OutputUnits: parametersCopy.OutputUnits(),
+		Models:      map[string]*config.ModelParameters{modelName: &parametersCopy},
+	}
+	if err := toml.NewEncoder(f).Encode(cf); err != nil {
 		f.Close()
 		fmt.Printf("failed to encode to TOML: %v\n", err)
 		return

@@ -3,7 +3,7 @@ package utils
 import (
 	"fmt"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 )
 
 func StochasticApproximation(lowerBound, upperBound,

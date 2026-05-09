@@ -178,3 +178,13 @@ func DiameterOfSet(s []float64) (d float64) {
 	}
 	return
 }
+
+func ExcludeView[T any](i int, s []T) []T {
+	if i >= len(s) {
+		return s
+	}
+	newSlice := make([]T, len(s)-1)
+	copy(newSlice, s[:i])
+	copy(newSlice[i:], s[i+1:])
+	return newSlice
+}

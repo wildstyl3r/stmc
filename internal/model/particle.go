@@ -3,25 +3,37 @@ package model
 import (
 	"fmt"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 
 	"github.com/wildstyl3r/stmc/internal/config"
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
+type ParticleType int8
+
+const (
+	Electron ParticleType = iota
+	Ion
+)
+
 type Particle struct {
-	x, y, z        float64 //  [m]
+	potential      float64
 	eKinetic       float64 // [eV]
 	mu             float64
 	cosEta, sinEta float64
 
-	prevAxialEnergy float64
-	prevX           float64
-	prevMuSign      float64
-	// params
+	prevAxialEnergy       float64
+	prevMuSign            float64
 	trajectory            TrajectoryConstants
 	ejectedFromIonization bool
 	producedIonization    bool
+
+	timeToWall float64
+	weight     int
+
+	generation int
+
+	ptype ParticleType
 
 	origin int
 }
@@ -41,14 +53,16 @@ func (m *Model) newParticle(origin int) Particle {
 		panic("unexpected config.EmissionMode")
 	}
 	p := Particle{
-		x:          0,
+		// x:          0,
+		potential:  m.VfromL(0),
 		eKinetic:   eKinetic,
 		mu:         mu,
 		prevMuSign: mu,
 		origin:     origin,
+		weight:     1,
 	}
 	if m.Parameters.Volumetric {
-		p.y, p.z = utils.UniformOnDisk(m.Parameters.CathodeRadius)
+		// p.y, p.z = utils.UniformOnDisk(m.Parameters.CathodeRadius)
 
 		eta := rand.Float64() * 2. * math.Pi
 		p.sinEta, p.cosEta = math.Sin(eta), math.Cos(eta)
@@ -69,15 +83,15 @@ func (p *Particle) axialVelocityNow() (v float64) {
 	return utils.EV2electronVelocity(p.getAxialEnergy())
 }
 
-func (p *Particle) setEnergy(eKinetic float64, s *Model, zeroChangeAcceptable bool, setX bool) {
+func (p *Particle) setEnergy(eKinetic float64, s *Model, zeroChangeAcceptable bool) {
 	// p.MoveRadial(eKinetic, s, zeroChangeAcceptable)
 	// r2 := p.y*p.y + p.z*p.z
 	if eKinetic < p.trajectory.radialEnergy {
 		fmt.Printf("stopPoint = %f\np: %v; %p\n", p.trajectory.getTurnaroundX(s), p, p)
 		panic("eKinetic < p.eStar")
 	}
-	if math.Abs(p.eKinetic-eKinetic) < 1e-16 && !zeroChangeAcceptable {
-		fmt.Printf("need to be at cell: %f coord by V is %f, coord real is %f\n", s.LfromV(-p.getPotentialEnergy())/s.XStep, s.LfromV(-p.getPotentialEnergy()), p.x)
+	if !zeroChangeAcceptable && math.Abs(p.eKinetic-eKinetic) < 1e-16 {
+		fmt.Printf("need to be at cell: %f coord by V is %f\n", s.LfromV(-p.getPotentialEnergy())/s.XStep, s.LfromV(-p.getPotentialEnergy()))
 		panic("no change in energy")
 	}
 
@@ -91,9 +105,7 @@ func (p *Particle) setEnergy(eKinetic float64, s *Model, zeroChangeAcceptable bo
 		panic("eKinetic is NaN")
 	}
 	p.mu = math.Copysign(math.Sqrt(p.getAxialEnergy()/eKinetic), p.mu)
-	if setX {
-		p.x = s.LfromV(-p.getPotentialEnergy())
-	}
+	p.potential = -p.getPotentialEnergy()
 	if s.Parameters.Volumetric {
 		p.updateExtraDims(s)
 	}
@@ -108,7 +120,7 @@ func (p *Particle) recalcParams(s *Model) {
 	}
 	p.trajectory.radialEnergy = p.eKinetic * (1 - p.mu*p.mu)
 	// r2 := p.y*p.y + p.z*p.z
-	p.trajectory.totEnergy = p.eKinetic + -s.VfromL(p.x)
+	p.trajectory.totEnergy = p.eKinetic - p.potential //s.VfromL(p.x)
 	if p.trajectory.totEnergy < 0. {
 		panic("total energy below 0")
 	}
@@ -118,7 +130,6 @@ func (p *Particle) recalcParams(s *Model) {
 
 	if s.Parameters.Volumetric {
 		p.prevAxialEnergy = p.getAxialEnergy()
-		p.prevX = p.x
 		p.prevMuSign = p.mu
 	}
 }
@@ -154,20 +165,5 @@ func (p *Particle) redirect(cosChi, cosPhi float64, m *Model) {
 }
 
 func (p *Particle) updateExtraDims(m *Model) {
-	/// updates particle's y and z, and sets new prev_bt value
-	var timeIntervalsToSum []float64
-	if math.Signbit(p.prevMuSign) != math.Signbit(p.mu) { //reversal occured
-		// xRev := m.LfromV(p.getStopPotential())
 
-		// timeIntervalsToSum = p.getTimeIntervalsBetweenPositionsNoReversal(p.prevX, xRev, p.prevAxialEnergy, 0, m)
-		// timeIntervalsToSum = append(timeIntervalsToSum, p.getTimeIntervalsBetweenPositionsNoReversal(xRev, p.x, 0, p.getAxialEnergy(), m)...)
-
-	} else {
-		// timeIntervalsToSum = p.getTimeIntervalsBetweenPositionsNoReversal(p.prevX, p.x, p.prevAxialEnergy, p.getAxialEnergy(), m)
-	}
-
-	timeBetweenCollisions := utils.SumFloat64Slice(timeIntervalsToSum, true)
-
-	p.y = p.sinEta * utils.EV2electronVelocity(p.trajectory.radialEnergy) * timeBetweenCollisions
-	p.z = p.cosEta * utils.EV2electronVelocity(p.trajectory.radialEnergy) * timeBetweenCollisions
 }

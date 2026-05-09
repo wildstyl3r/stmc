@@ -473,6 +473,48 @@ func LinearRegressionMSEWithVariance(x, y, yVariance []float64) (b1, b0, b1Varia
 	return
 }
 
+func LinearRegressionMSEInferVariance(x, y []float64) (b1, b0, b1Variance, b0Variance float64) { // y ~ b_1*x + b_0 + N(0,?)
+	meanX, meanY := Mean(x), Mean(y)
+	n := min(len(x), len(y))
+	numeratorTerms, denominatorTerms := make([]float64, n), make([]float64, n)
+	for i := range n {
+		deltaX := x[i] - meanX
+		numeratorTerms[i] = deltaX * (y[i] - meanY)
+		denominatorTerms[i] = deltaX * deltaX
+	}
+	denominator := SumFloat64Slice(denominatorTerms, true)
+	b1 = SumFloat64Slice(numeratorTerms, true) / denominator
+	b0 = meanY - b1*meanX
+	residualSquares := make([]float64, n)
+	xSquares := make([]float64, n)
+	for i := range n {
+		ri := (y[i] - b0 - b1*x[i])
+		residualSquares[i] = ri * ri
+		xSquares[i] = x[i] * x[i]
+	}
+	rss := SumFloat64Slice(residualSquares, true)
+	xss := SumFloat64Slice(xSquares, true)
+	b1Variance = rss / (float64(n-2) * denominator)
+	b0Variance = b1Variance * xss / float64(n)
+	return
+}
+
 // func QuadraticRegressionMSE(x, y []float64) (b2, b1, b0 float64) { //y ~ b_2*x + b_1*x + b_0 + N(0,?)
 
 // }
+
+func JackknifeRatioCenterAndVariance(a, b []float64) (center, variance float64) {
+	sumA := SumFloat64Slice(a, false)
+	sumB := SumFloat64Slice(b, false)
+	jackknifeSamples := make([]float64, len(a))
+	for i := range len(jackknifeSamples) {
+		jackknifeSamples[i] = (sumA - a[i]) / (sumB - b[i])
+	}
+	jackMean := Mean(jackknifeSamples)
+	varEst := 0.
+	for i := range len(jackknifeSamples) {
+		varEst += (jackknifeSamples[i] - jackMean) * (jackknifeSamples[i] - jackMean)
+	}
+	varEst *= float64(len(jackknifeSamples)-1) / float64(len(jackknifeSamples))
+	return float64(len(a))*(sumA/sumB) - float64(len(a)-1)*jackMean, varEst
+}

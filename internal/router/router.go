@@ -90,7 +90,7 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags,
 			var dataRow, altRow utils.ResultInterface
 			calculationMode := parameters.GetCalculationMode()
 			switch calculationMode {
-			case config.BasicCalculation:
+			case config.BasicSheathCalculation:
 				dataRow, altRow, m, altM = extensions.BasicCalculation(parameters, c.OutputDir, modelNames[i], logger)
 			case config.CurrentCalculation:
 				dataRow, altRow, m, altM = extensions.CurrentDensityCalculation(parameters, c.OutputDir, modelNames[i], logger)
@@ -98,6 +98,8 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags,
 				dataRow, altRow, m, altM = extensions.SourceIntegralCalculation(parameters, c.OutputDir, modelNames[i], logger)
 			case config.VoltageCalculation:
 				dataRow, altRow, m, altM = extensions.VoltageCalculation2(parameters, c.OutputDir, modelNames[i], logger)
+			case config.TownsendAlpha:
+				dataRow, altRow, m, altM = extensions.AlphaCalculationR(parameters, c.OutputDir, modelNames[i], logger)
 			default:
 				logger.Failure("unexpected config.CalculationMode: %#v", parameters.CalculationMode)
 			}
@@ -125,30 +127,36 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags,
 		for mode, list := range dataRows {
 			var err error
 			switch mode {
-			case config.BasicCalculation:
-				concreteList := make([]*utils.CoreResult, len(list))
+			case config.BasicSheathCalculation:
+				specificList := make([]*utils.SheathResult, len(list))
 				for i, elem := range list {
-					concreteList[i] = elem.(*utils.CoreResult)
+					specificList[i] = elem.(*utils.SheathResult)
 				}
-				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result", true)
+				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result", true)
 			case config.CurrentCalculation:
-				concreteList := make([]*extensions.CurrentDensityDataRow, len(list))
+				specificList := make([]*extensions.CurrentDensityDataRow, len(list))
 				for i, elem := range list {
-					concreteList[i] = elem.(*extensions.CurrentDensityDataRow)
+					specificList[i] = elem.(*extensions.CurrentDensityDataRow)
 				}
-				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_j", true)
+				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_j", true)
 			case config.GammaCalculation:
-				concreteList := make([]*extensions.SourceIntegralDataRow, len(list))
+				specificList := make([]*extensions.SourceIntegralDataRow, len(list))
 				for i, elem := range list {
-					concreteList[i] = elem.(*extensions.SourceIntegralDataRow)
+					specificList[i] = elem.(*extensions.SourceIntegralDataRow)
 				}
-				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_gamma", true)
+				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_gamma", true)
 			case config.VoltageCalculation:
-				concreteList := make([]*extensions.VoltageDataRow, len(list))
+				specificList := make([]*extensions.VoltageDataRow, len(list))
 				for i, elem := range list {
-					concreteList[i] = elem.(*extensions.VoltageDataRow)
+					specificList[i] = elem.(*extensions.VoltageDataRow)
 				}
-				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_V", true)
+				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_V", true)
+			case config.TownsendAlpha:
+				specificList := make([]*extensions.AlphaResult, len(list))
+				for i, elem := range list {
+					specificList[i] = elem.(*extensions.AlphaResult)
+				}
+				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_alpha", true)
 			default:
 				logger.Failure("unexpected config.CalculationMode: %#v", mode)
 			}
@@ -161,30 +169,36 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags,
 			var err error
 			fail := false
 			switch mode {
-			case config.BasicCalculation:
-				concreteList := make([]*utils.CoreResult, len(list))
+			case config.BasicSheathCalculation:
+				specificList := make([]*utils.SheathResult, len(list))
 				for i, elem := range list {
-					concreteList[i] = elem.(*utils.CoreResult)
+					specificList[i] = elem.(*utils.SheathResult)
 				}
-				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result", true)
+				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result", true)
 			case config.CurrentCalculation:
-				concreteList := make([]*extensions.CurrentDensityDataRow, len(list))
+				specificList := make([]*extensions.CurrentDensityDataRow, len(list))
 				for i, elem := range list {
-					concreteList[i] = elem.(*extensions.CurrentDensityDataRow)
+					specificList[i] = elem.(*extensions.CurrentDensityDataRow)
 				}
-				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_alt_j", true)
+				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_alt_j", true)
 			case config.GammaCalculation:
-				concreteList := make([]*extensions.SourceIntegralDataRow, len(list))
+				specificList := make([]*extensions.SourceIntegralDataRow, len(list))
 				for i, elem := range list {
-					concreteList[i] = elem.(*extensions.SourceIntegralDataRow)
+					specificList[i] = elem.(*extensions.SourceIntegralDataRow)
 				}
-				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_alt_gamma", true)
+				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_alt_gamma", true)
 			case config.VoltageCalculation:
-				concreteList := make([]*extensions.VoltageDataRow, len(list))
+				specificList := make([]*extensions.VoltageDataRow, len(list))
 				for i, elem := range list {
-					concreteList[i] = elem.(*extensions.VoltageDataRow)
+					specificList[i] = elem.(*extensions.VoltageDataRow)
 				}
-				err = utils.WriteAsCSV(config.MakeHeader(concreteList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_alt_V", true)
+				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_alt_V", true)
+			case config.TownsendAlpha:
+				specificList := make([]*extensions.AlphaResult, len(list))
+				for i, elem := range list {
+					specificList[i] = elem.(*extensions.AlphaResult)
+				}
+				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_altpha", true)
 			default:
 				fail = true
 				logger.Failure("unexpected config.CalculationMode: %#v", mode)

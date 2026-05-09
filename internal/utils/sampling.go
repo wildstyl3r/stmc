@@ -2,7 +2,7 @@ package utils
 
 import (
 	"math"
-	"math/rand"
+	"math/rand/v2"
 )
 
 func R() float64 {

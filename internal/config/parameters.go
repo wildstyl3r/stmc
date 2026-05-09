@@ -39,6 +39,13 @@ const (
 	MixedFullLoss
 )
 
+const (
+	Collisionless float64 = 1. / 3.
+	ConstMobility float64 = 1. / 2.
+	StrongField   float64 = 2. / 3.
+	Linear        float64 = 1
+)
+
 type UnitConfig struct {
 	L string `form:"label=Length,options=mm|cm|m" toml:"L,omitzero,omitempty"`
 	T string `form:"hide" toml:"T,omitzero,omitempty"`
@@ -67,7 +74,7 @@ func (uc *UnitConfig) GetForClass(class UnitClass) string {
 }
 
 type Config struct {
-	OutputDir    string     `form:"label=Output path,widget=folder"`
+	OutputDir    string     `form:"label=Output path,widget=folder" toml:"OutputDir,omitzero,omitempty"`
 	InputUnits   UnitConfig `form:"widget=row" toml:"InputUnits,omitzero,omitempty"`
 	OutputUnits  UnitConfig `form:"widget=row" toml:"OutputUnits,omitzero,omitempty"`
 	AddPotential float64    `form:"label=Potential offset" toml:"AddPotential,omitzero,omitempty"`
@@ -272,7 +279,8 @@ type CalculationMode int
 
 const (
 	Unspecified CalculationMode = iota
-	BasicCalculation
+	BasicSheathCalculation
+	TownsendAlpha
 	GammaCalculation
 	VoltageCalculation
 	CurrentCalculation
@@ -287,7 +295,9 @@ const (
 )
 
 type ModelParameters struct {
+	SheathFieldModel                        string             `form:"label=Sheath field model,options=Linear|ConstMobility|Collisionless|StrongField" toml:"SheathFieldModel,omitzero,omitempty"`
 	CrossSections                           string             `form:"label=Cross section file,widget=file" toml:"CrossSections,omitzero,omitempty"`
+	CrossSectionsDStep                      float64            `form:"label=Cross section discretization step" toml:"CrossSectionsDStep,omitzero,omitempty"`
 	ElasticScatteringMode                   string             `form:"label=Elastic scattering model,options=BornBethe|ScreenedCoulomb|Isotropic" toml:"ElasticScatteringMode,omitzero,omitempty"`
 	InelasticScatteringMode                 string             `form:"label=Inelastic scattering model,options=BornBethe|ScreenedCoulomb|Isotropic" toml:"InelasticScatteringMode,omitzero,omitempty"`
 	IonizationEnergySharing                 string             `form:"label=Ionization energy sharing,options=Opal|UniformRandom|Equal" toml:"IonizationEnergySharing,omitzero,omitempty"`
@@ -295,6 +305,7 @@ type ModelParameters struct {
 	Species                                 map[string]float64 `form:"label=Species,widget=floatmap,element=Species" toml:"Species,omitzero,omitempty"`
 	ThresholdType                           string             `form:"label=Lower energy cutoff by threshold of type" toml:"ThresholdType,omitzero,omitempty"`
 	LowerThresholdValue                     float64            `form:"label=Cutoff energy" toml:"LowerThresholdValue,omitzero,omitempty"`
+	NoCutoff                                bool               `form:"label=Do not use lower energy cutoff" toml:"NoCutoff,omitzero,omitempty"`
 	RequireCollisionRelativeMargin          map[string]float64 `form:"label=Precision for collisions of interest,widget=floatmap,element=Process Wildcard" toml:"RequireCollisionRelativeMargin,omitzero,omitempty"`
 	GapLength                               float64            `form:"label=Gap length" csv:"L" units:"Length:1" toml:"GapLength,omitzero,omitempty"`
 	PressureGapLength                       float64            `form:"label=Barometric gap length" csv:"pL" units:"Pressure:1,Length:1" toml:"PressureGapLength,omitzero,omitempty"`
@@ -308,6 +319,7 @@ type ModelParameters struct {
 	SecondaryEmissionCoefficient            float64            `form:"label=Prescribed gamma" toml:"SecondaryEmissionCoefficient,omitzero,omitempty"`
 	UseDonkosSEC                            bool               `toml:"UseDonkosSEC,omitzero,omitempty"`
 	UniformField                            bool               `toml:"UniformField,omitzero,omitempty"`
+	RandomizedWallLoss                      bool               `toml:"RandomizedWallLoss,omitzero,omitempty"`
 	ConstEField                             float64            `form:"label=Const electric field in nglow" units:"Voltage:1,Length:-1" toml:"ConstEField,omitzero,omitempty"`
 	Temperature                             float64            `toml:"Temperature,omitzero,omitempty"`
 	Pressure                                float64            `toml:"Pressure,omitzero,omitempty" csv:"p" units:"Pressure:1"`
@@ -343,14 +355,16 @@ type ModelParameters struct {
 	SimplifiedDiffusionScale   bool    `toml:"SimplifiedDiffusionScale,omitzero,omitempty"`
 	CathodeFallLengthPrecision float64 `toml:"CathodeFallLengthPrecision,omitzero,omitempty"`
 
+	CountCollisions []string `toml:"StoreCollisions,omitzero,omitempty"`
+
 	EmissionType string `form:"label=Emission type,options=Cosine,ForwardIsotropic,Forward" toml:"EmissionType,omitzero,omitempty"`
 
-	CalculateDistribution        bool `toml:"CalculateDistribution,omitzero,omitempty"`
-	DebugOutput                  bool `toml:"DebugOutput,omitzero,omitempty"`
-	CellTimeWeighting            bool `form:"hide" toml:"CellTimeWeighting,omitzero,omitempty"`
-	TrajectoryAveragedIonization bool `form:"label=Trajectory averaged ionization rate" toml:"TrajectoryAveragedIonization,omitzero,omitempty"`
-	EnergyDeposition             bool `toml:"EnergyDeposition,omitzero,omitempty"`
-	MeanFreePath                 bool `toml:"MeanFreePath,omitzero,omitempty"`
+	CalculateDistribution   bool `toml:"CalculateDistribution,omitzero,omitempty"`
+	DebugOutput             bool `toml:"DebugOutput,omitzero,omitempty"`
+	TrajectoryAveragedRates bool `form:"hide" toml:"TrajectoryAveragedRates,omitzero,omitempty"`
+	EnergyDeposition        bool `toml:"EnergyDeposition,omitzero,omitempty"`
+	MeanFreePath            bool `toml:"MeanFreePath,omitzero,omitempty"`
+	DarkDischarge           bool `toml:"DarkDischarge,omitzero,omitempty"`
 
 	SupressSpinner bool `form:"hide" toml:"-"`
 
@@ -370,6 +384,8 @@ type ModelParameters struct {
 	_ionizationScattering    IonizationScattering
 	_calculationMode         CalculationMode
 	_emissionMode            EmissionMode
+	_sheathFieldModel        float64
+	_countCollisions         map[lxgata.CollisionType]struct{}
 }
 
 func (p *ModelParameters) CrossSectionsData() *lxgata.Collisions {
@@ -422,6 +438,10 @@ func (p *ModelParameters) Threads() int {
 	return p._threads
 }
 
+func (p *ModelParameters) GetSheathFieldPower() float64 {
+	return p._sheathFieldModel
+}
+
 func (p *ModelParameters) GetMixtureParameters() map[string]lxgata.Species {
 	return p._mixtureParameters
 }
@@ -447,6 +467,10 @@ func (p *ModelParameters) GetIonizationScatteringMode() IonizationScattering {
 	return p._ionizationScattering
 }
 
+func (p *ModelParameters) GetCollisionTypesToStore() map[lxgata.CollisionType]struct{} {
+	return p._countCollisions
+}
+
 func (p *ModelParameters) SimulationLength() float64 {
 	if p.ParallelPlaneHollowCathode {
 		return p.GapLength / 2
@@ -456,6 +480,9 @@ func (p *ModelParameters) SimulationLength() float64 {
 }
 
 func (p *ModelParameters) LowerEnergyThreshold() float64 {
+	if p.NoCutoff {
+		return 0
+	}
 	if p._lowerEnergyThreshold == 0 {
 		if p.LowerThresholdValue != 0 {
 			p._lowerEnergyThreshold = p.LowerThresholdValue
@@ -488,6 +515,9 @@ func (p *ModelParameters) ReducedFieldMidSheath() float64 {
 }
 
 var defaultValues = map[string]any{ // in SI-eV
+	"CountCollisions":            []string{"IONIZATION"},
+	"CrossSectionsDStep":         0.001,
+	"SheathFieldModel":           "Linear",
 	"ThresholdType":              "Ionization",
 	"IonizationEnergySharing":    "UniformRandom",
 	"EmissionType":               "Cosine",
@@ -506,6 +536,7 @@ var defaultValues = map[string]any{ // in SI-eV
 	"Volumetric":                   false,
 	"MuDiscretizationStep":         1 / 50.,
 	"SourceIntegralRelativeMargin": 0.005,
+	"LowerGenerationThreshold":     4,
 }
 
 var fieldsXor = map[string][]string{
@@ -712,6 +743,7 @@ field value priority:
 */
 
 func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Config, meta *toml.MetaData, logger messages.Logger) bool {
+
 	globalAmbiguities, globalMissingDeps := config.checkFieldProblems([]string{}, meta, config)
 	localAmbiguities, localMissingDeps := modelConfig.checkFieldProblems([]string{"Models", modelName}, meta, config)
 	if len(globalAmbiguities) > 0 {
@@ -934,9 +966,9 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 		"Current": CurrentCalculation,
 		"Gamma":   GammaCalculation,
 		"Voltage": VoltageCalculation,
-		"Basic":   BasicCalculation,
+		"Basic":   BasicSheathCalculation,
+		"Alpha":   TownsendAlpha,
 	}
-
 	modelConfig._calculationMode = calculationMode[modelConfig.CalculationMode]
 
 	emissionMode := map[string]EmissionMode{
@@ -944,11 +976,28 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 		"Forward":          Forward,
 		"ForwardIsotropic": ForwardIsotropic,
 	}
-
 	modelConfig._emissionMode = emissionMode[modelConfig.EmissionType]
+
+	sheathFieldModel := map[string]float64{
+		"Linear":        Linear,
+		"Collisionless": Collisionless,
+		"ConstMobility": ConstMobility,
+		"StrongField":   StrongField,
+	}
+	modelConfig._sheathFieldModel = sheathFieldModel[modelConfig.SheathFieldModel]
+
+	modelConfig._countCollisions = make(map[lxgata.CollisionType]struct{})
+	for _, t := range modelConfig.CountCollisions {
+		modelConfig._countCollisions[lxgata.CollisionType(t)] = struct{}{}
+	}
 
 	if status != "" {
 		logger.Info(status)
+	}
+
+	if modelConfig.GetCalculationMode() == TownsendAlpha {
+		// modelConfig.NoCutoff = true
+		modelConfig.DarkDischarge = true
 	}
 
 	return allGood
