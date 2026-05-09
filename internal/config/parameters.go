@@ -536,7 +536,6 @@ var defaultValues = map[string]any{ // in SI-eV
 	"Volumetric":                   false,
 	"MuDiscretizationStep":         1 / 50.,
 	"SourceIntegralRelativeMargin": 0.005,
-	"LowerGenerationThreshold":     4,
 }
 
 var fieldsXor = map[string][]string{

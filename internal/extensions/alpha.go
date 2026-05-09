@@ -64,17 +64,17 @@ func AlphaCalculationR(parameters *config.ModelParameters, outputDir, modelName 
 
 	totalIonizations := utils.SumIntSlice(ionizations)
 	totalAttachments := utils.SumIntSlice(attachments)
-	totalRatio := float64(totalIonizations) / float64(totalAttachments)
-	globeta := effectiveAlpha / (totalRatio - 1)
-	globalpha := globeta * totalRatio
+	totalRatio := float64(totalAttachments) / float64(totalIonizations)
+	globalpha := effectiveAlpha / (1 - totalRatio)
+	globeta := globalpha * totalRatio
 
 	jackAlphas := make([]float64, n)
 	jackEtas := make([]float64, n)
 	for i := range jackRatios {
-		jackRatios[i] = float64(totalIonizations-ionizations[i]) / float64(totalAttachments-attachments[i])
+		jackRatios[i] = float64(totalAttachments-attachments[i]) / float64(totalIonizations-ionizations[i])
 		jackEffectiveAlpha, _ := utils.LinearRegressionMSE(utils.ExcludeView(i, gaps), utils.ExcludeView(i, l1ps))
-		jackEtas[i] = jackEffectiveAlpha / (jackRatios[i] - 1)
-		jackAlphas[i] = jackEtas[i] * jackRatios[i]
+		jackAlphas[i] = jackEffectiveAlpha / (1 - jackRatios[i])
+		jackEtas[i] = jackAlphas[i] * jackRatios[i]
 	}
 	jackmeanAlpha := utils.Mean(jackAlphas)
 	jackmeanEta := utils.Mean(jackEtas)
