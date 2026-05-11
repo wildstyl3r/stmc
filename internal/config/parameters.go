@@ -1004,8 +1004,25 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 
 func StringifyMixture(mixture map[string]lxgata.Species) (s string) {
 	s = "{"
+	components := make([]struct {
+		key string
+		val float64
+	}, 0, len(mixture))
 	for key, val := range mixture {
-		s = s + key + ": " + strconv.FormatFloat(val.ShareOfUnity, 'e', 6, 64) + "_"
+		components = append(components, struct {
+			key string
+			val float64
+		}{key, val.ShareOfUnity})
+
+	}
+	slices.SortFunc(components, func(a, b struct {
+		key string
+		val float64
+	}) int {
+		return strings.Compare(a.key, b.key)
+	})
+	for _, component := range components {
+		s = s + component.key + ": " + strconv.FormatFloat(component.val, 'e', 6, 64) + "_"
 	}
 	s = s[:len(s)-1] + "}"
 	return s
