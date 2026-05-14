@@ -119,6 +119,9 @@ func (p *Particle) recalcParams(s *Model) {
 		return
 	}
 	p.trajectory.radialEnergy = p.eKinetic * (1 - p.mu*p.mu)
+	if p.trajectory.radialEnergy < 0 {
+		panic("radial energy < 0")
+	}
 	// r2 := p.y*p.y + p.z*p.z
 	p.trajectory.totEnergy = p.eKinetic - p.potential //s.VfromL(p.x)
 	if p.trajectory.totEnergy < 0. {
