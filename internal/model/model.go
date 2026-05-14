@@ -755,27 +755,34 @@ func (m *Model) Run(electronsToSimulate func(*Model) int, logger messages.Logger
 
 		electronsReturned := make([]int, nElectrons)
 		erFlow := make(chan CathodeArrival)
+		stateWg.Add(1)
 		go func() {
 			for cathodeReturn := range erFlow {
 				electronsReturned[cathodeReturn.origin-m.TotalElectronsEmittedOnCathode] += cathodeReturn.weight
 			}
+			stateWg.Done()
 		}()
 		ionizingElectrons := make([]int, nElectrons)
 		izFlow := make(chan IonizingElectron)
+		stateWg.Add(1)
 		go func() {
 			for ie := range izFlow {
 				ionizingElectrons[ie.origin-m.TotalElectronsEmittedOnCathode] += ie.weight
 			}
+			stateWg.Done()
 		}()
 
 		anodeFlow := make(chan AnodeArrival)
+		stateWg.Add(1)
 		go func() {
 			for anodeArrival := range anodeFlow {
 				m.AnodeElectronCounter += anodeArrival.weight
 			}
+			stateWg.Done()
 		}()
 
 		countFlow := make(chan CountEvent)
+		stateWg.Add(1)
 		go func() {
 			for event := range countFlow {
 				if event.isAttachment {
@@ -784,6 +791,7 @@ func (m *Model) Run(electronsToSimulate func(*Model) int, logger messages.Logger
 					ionizationCounters[event.origin-m.TotalElectronsEmittedOnCathode] += event.weight
 				}
 			}
+			stateWg.Done()
 		}()
 
 		for origin := range nElectrons {
@@ -828,6 +836,7 @@ func (m *Model) Run(electronsToSimulate func(*Model) int, logger messages.Logger
 				go func() {
 					for particlePtr := range computeFlow {
 						lowerEnergyThreshold := m.Parameters.LowerEnergyThreshold()
+						attachmentLoss := false
 						for (lowerEnergyThreshold < particlePtr.trajectory.totEnergy || m.Parameters.CalculateDistribution) &&
 							(!m.Parameters.ReturningElectrons || particlePtr.trajectory.totEnergy+m.VfromL(0) > 0) {
 							if len(computeFlow)*10/(cap(computeFlow)*8) >= 1 || reweightRequest {
@@ -975,13 +984,14 @@ func (m *Model) Run(electronsToSimulate func(*Model) int, logger messages.Logger
 								// }
 
 								if collision.Type == lxgata.ATTACHMENT {
+									attachmentLoss = true
 									break
 								}
 								particlePtr.redirect(cosChiScattered, math.Cos(phi), m)
 							}
 						}
 
-						if particlePtr.trajectory.totEnergy < lowerEnergyThreshold {
+						if particlePtr.trajectory.totEnergy < lowerEnergyThreshold && !attachmentLoss {
 							anodeFlow <- AnodeArrival{weight: particlePtr.weight}
 						}
 
