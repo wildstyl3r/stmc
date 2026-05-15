@@ -898,8 +898,13 @@ func (m *Model) Run(particlesToLaunch func(*Model) int, electrons bool, logger m
 									case config.Equal:
 										ejected.eKinetic = 0.5 * particlePtr.eKinetic
 									case config.Opal:
-										w := utils.OpalIonizationShapeParameters[collision.Species]
-										ejected.eKinetic = w * math.Tan(rand.Float64()*math.Atan(particlePtr.eKinetic/(2.*w)))
+
+										if w, known := utils.OpalIonizationShapeParameters[collision.Species]; known {
+											ejected.eKinetic = w * math.Tan(rand.Float64()*math.Atan(particlePtr.eKinetic/(2.*w)))
+										} else {
+											panic("no Opal coefficient known for species: " + collision.Species)
+											// ejected.eKinetic = 0.5 * particlePtr.eKinetic
+										}
 									case config.UniformRandom:
 										ejected.eKinetic = particlePtr.eKinetic * rand.Float64()
 									case config.Zero:
