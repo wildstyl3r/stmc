@@ -18,7 +18,7 @@ func sourceIntegralMonteCarloF(parameters *config.ModelParameters, requirePrecis
 	LoadExtensions(m.DataHub)
 	m.Run(func(m *model.Model) int {
 		if m.TotalElectronsEmittedOnCathode == 0 {
-			return m.Parameters.NElectrons
+			return m.Parameters.NParticles
 		} else {
 			sumMean, sumMargin = m.GetMetrics(SourceIntegralPerCathodeElectronFluxKey).(float64), m.GetMetrics(SourceIntegralPerCathodeElectronFluxMarginKey).(float64)
 			if parameters.SourceIntegralRelativeMargin < sumMargin/sumMean && parameters.SourceIntegralRelativeMargin != 0 && requirePrecision {
@@ -27,7 +27,7 @@ func sourceIntegralMonteCarloF(parameters *config.ModelParameters, requirePrecis
 				return 0
 			}
 		}
-	}, logger)
+	}, true, logger)
 	if math.IsNaN(sumMean) {
 		fmt.Println("integral is NaN")
 	}
@@ -60,15 +60,6 @@ func gammaAnalyticF(parameters *config.ModelParameters) float64 {
 	}
 	return 0
 }
-
-// func getApproximateCathodeFallLengthForSourceIntegral(sourceIntegral, minDc, maxDc float64, parameters config.ModelParameters) float64 {
-// 	initialDcL, initialDcR := utils.BinarySearch(func(dc float64) bool {
-// 		parameters.CathodeFallLength = dc
-// 		si := sourceIntegralAnalyticPhelpsF(parameters)
-// 		return sourceIntegral > si
-// 	}, minDc, maxDc, parameters.CathodeFallLengthPrecision*0.001)
-// 	return 0.5 * (initialDcL + initialDcR)
-// }
 
 func sourceIntegralCalculationStep(requirePrecision bool, parameters *config.ModelParameters, analyticSourceIntegral func(*config.ModelParameters) float64, logger messages.Logger) (optResult OptimizationResult, effectiveSourceIntegralVariance float64, stepModel *model.Model) {
 	effectiveSourceIntegralMonteCarlo, effectiveSourceIntegralVariance, stepModel := sourceIntegralMonteCarloF(parameters, requirePrecision, logger)

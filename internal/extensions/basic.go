@@ -17,7 +17,7 @@ func BasicCalculation(parameters *config.ModelParameters, outputDir, modelName s
 	// additionStep := 0
 	m.Run(func(m *model.Model) int {
 		if m.TotalElectronsEmittedOnCathode == 0 {
-			return m.Parameters.NElectrons
+			return m.Parameters.NParticles
 		} else {
 			collisions := m.GetMetrics(SingleElectronDetailedCollisionRateKey).(map[string]utils.GriddedInterval)
 			for substring := range m.Parameters.RequireCollisionRelativeMargin {
@@ -34,7 +34,7 @@ func BasicCalculation(parameters *config.ModelParameters, outputDir, modelName s
 			}
 			return 0
 		}
-	}, logger)
+	}, true, logger)
 	cr := m.SheathResult()
 	return &cr, nil, m, nil
 }

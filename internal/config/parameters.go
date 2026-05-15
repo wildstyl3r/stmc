@@ -284,6 +284,7 @@ const (
 	GammaCalculation
 	VoltageCalculation
 	CurrentCalculation
+	IonMobilityCalculation
 )
 
 type EmissionMode int
@@ -333,7 +334,7 @@ type ModelParameters struct {
 
 	EnergyStep                            float64 `form:"label=Energy step" toml:"EnergyStep,omitzero,omitempty"` // [eV]
 	MuDiscretizationStep                  float64 `form:"hide" toml:"MuDiscretizationStep,omitzero,omitempty"`
-	NElectrons                            int     `form:"label=Starting electron number" toml:"NElectrons,omitzero,omitempty"`
+	NParticles                            int     `form:"label=Starting electron number" toml:"NParticles,omitzero,omitempty"`
 	AddByNElectrons                       int     `form:"label=Additional electron number" toml:"AddByNElectrons,omitzero,omitempty"`
 	ParallelPlaneHollowCathode            bool    `toml:"ParallelPlaneHollowCathode,omitzero,omitempty"`
 	Volumetric                            bool    `toml:"Volumetric,omitzero,omitempty"`
@@ -528,7 +529,7 @@ var defaultValues = map[string]any{ // in SI-eV
 	"Temperature":                300.,  //[K]
 	"CathodeFallLengthPrecision": 1e-4,  //[m]
 	"EnergyStep":                 0.01,  //[eV]
-	"NElectrons":                 1000,
+	"NParticles":                 1000,
 	"ParallelPlaneHollowCathode": false,
 	"CalculationMode":            "Basic",
 	// "CalculateSecondaryEmissionCoefficient": false,

@@ -28,6 +28,11 @@ type Particle struct {
 	ejectedFromIonization bool
 	producedIonization    bool
 
+	meanEnergyBuffer    []float64
+	bufferPosition      int
+	driftStartPotential float64
+	driftTime           utils.KahanSummable
+
 	timeToWall float64
 	weight     int
 

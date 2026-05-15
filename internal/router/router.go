@@ -72,6 +72,7 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags,
 					lxgata.Hartree,
 					lxgata.IgnoreAtomicNumber,
 					parameters.GetMixtureParameters(),
+					"electron",
 				); err == nil {
 					speciesCrossSections[csID] = &crossSections
 				} else {

@@ -582,7 +582,7 @@ type CountEvent struct { //ionization or attachment
 	weight       int
 }
 
-func (m *Model) Run(electronsToSimulate func(*Model) int, logger messages.Logger) {
+func (m *Model) Run(particlesToLaunch func(*Model) int, electrons bool, logger messages.Logger) {
 	CollisionAtCellPerAvalanche := make(map[lxgata.CollisionType][][]int)
 	for process := range m.CollisionAtCell {
 		CollisionAtCellPerAvalanche[process] = make([][]int, m.NumCells+1)
@@ -595,22 +595,25 @@ func (m *Model) Run(electronsToSimulate func(*Model) int, logger messages.Logger
 	var energyDeposition float64
 	var numberOfEDEvents int
 
-	nElectrons := electronsToSimulate(m)
-	for nElectrons > 0 {
+	nParticles := particlesToLaunch(m)
+	for nParticles > 0 {
 		m.PurgeMetrics()
-
-		ionizationCounters := make([]int, nElectrons)
-		attachmentCounters := make([]int, nElectrons)
-
-		cfCap := nElectrons * 1000
+		cfCap := nParticles * 1000
 		computeFlow := make(chan *Particle, cfCap)
 		var computeWg, stateWg sync.WaitGroup
 
-		collFlow := make(chan CollisionEvent, 1000*m.Parameters.NElectrons)
+		if electrons {
+
+		}
+
+		ionizationCounters := make([]int, nParticles)
+		attachmentCounters := make([]int, nParticles)
+
+		collFlow := make(chan CollisionEvent, 1000*m.Parameters.NParticles)
 		stateWg.Add(1)
 		go func() {
 			for collision := range collFlow {
-				if collision.x < m.NumCells {
+				if 0 < collision.x && collision.x < m.NumCells {
 					CollisionAtCellPerAvalanche[collision.collType][collision.x][collision.origin-m.TotalElectronsEmittedOnCathode] += collision.weight
 					collName := string(collision.collType) + collision.outcome
 					if _, exist := DetailedCollisionAtCell[collName]; exist {
@@ -734,7 +737,7 @@ func (m *Model) Run(electronsToSimulate func(*Model) int, logger messages.Logger
 
 		for _, process := range m.Parameters.CrossSectionsData().GetTypes() {
 			for x := range CollisionAtCellPerAvalanche[process] {
-				CollisionAtCellPerAvalanche[process][x] = make([]int, nElectrons)
+				CollisionAtCellPerAvalanche[process][x] = make([]int, nParticles)
 			}
 		}
 
@@ -753,7 +756,7 @@ func (m *Model) Run(electronsToSimulate func(*Model) int, logger messages.Logger
 			}()
 		}
 
-		electronsReturned := make([]int, nElectrons)
+		electronsReturned := make([]int, nParticles)
 		erFlow := make(chan CathodeArrival)
 		stateWg.Add(1)
 		go func() {
@@ -762,7 +765,7 @@ func (m *Model) Run(electronsToSimulate func(*Model) int, logger messages.Logger
 			}
 			stateWg.Done()
 		}()
-		ionizingElectrons := make([]int, nElectrons)
+		ionizingElectrons := make([]int, nParticles)
 		izFlow := make(chan IonizingElectron)
 		stateWg.Add(1)
 		go func() {
@@ -794,7 +797,7 @@ func (m *Model) Run(electronsToSimulate func(*Model) int, logger messages.Logger
 			stateWg.Done()
 		}()
 
-		for origin := range nElectrons {
+		for origin := range nParticles {
 			particle := m.newParticle(origin + m.TotalElectronsEmittedOnCathode)
 			if m.Parameters.CalculateDistribution {
 				m.DistributionXEMu[0][int(particle.eKinetic/m.Parameters.EnergyStep)][int((particle.mu+1)/m.Parameters.MuDiscretizationStep)]++
@@ -1041,9 +1044,9 @@ func (m *Model) Run(electronsToSimulate func(*Model) int, logger messages.Logger
 			}
 		}
 
-		PerAvalancheCollisionSumsUpToCell := make([]int, nElectrons)
+		PerAvalancheCollisionSumsUpToCell := make([]int, nParticles)
 		for x := range m.IonizationsSumUpToCell {
-			for electron := range nElectrons {
+			for electron := range nParticles {
 				PerAvalancheCollisionSumsUpToCell[electron] += CollisionAtCellPerAvalanche[lxgata.IONIZATION][x][electron]
 			}
 			m.IonizationsSumUpToCell[x].Update(PerAvalancheCollisionSumsUpToCell)
@@ -1052,10 +1055,10 @@ func (m *Model) Run(electronsToSimulate func(*Model) int, logger messages.Logger
 		m.CathodeElectronCounter += utils.SumIntSlice(electronsReturned)
 		m.ElectronsReturned.Update(electronsReturned)
 		m.IonizingCathodeElectrons.Update(ionizingElectrons)
-		m.TotalElectronsEmittedOnCathode += nElectrons
+		m.TotalElectronsEmittedOnCathode += nParticles
 		m.IonizationCounters = append(m.IonizationCounters, ionizationCounters...)
 		m.AttachmentCounters = append(m.AttachmentCounters, attachmentCounters...)
-		nElectrons = electronsToSimulate(m)
+		nParticles = particlesToLaunch(m)
 		closeCallback()
 	}
 
