@@ -179,6 +179,22 @@ func DiameterOfSet(s []float64) (d float64) {
 	return
 }
 
+func NonInfIndicies(s []float64) (ixs []int) {
+	for i, v := range s {
+		if !math.IsInf(v, 0) {
+			ixs = append(ixs, i)
+		}
+	}
+	return
+}
+
+func Select[T any](s []T, ixs []int) (t []T) {
+	for _, i := range ixs {
+		t = append(t, s[i])
+	}
+	return
+}
+
 func ExcludeView[T any](i int, s []T) []T {
 	if i >= len(s) {
 		return s

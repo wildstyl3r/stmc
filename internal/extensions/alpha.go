@@ -33,14 +33,13 @@ type AlphaResult struct {
 }
 
 func AlphaCalculationR(parameters *config.ModelParameters, outputDir, modelName string, logger messages.Logger) (dataRow, _ *AlphaResult, finalModel, _ *model.Model) {
-	n := 7
+	voltages := []float64{50, 75, 100, 150, 200, 250, 300, 350}
+	n := len(voltages)
 	progress := progressbar.Default(int64(n))
-	voltages := []float64{50, 100, 150, 200, 250, 300, 350}
 	l1ps := make([]float64, n)
 	gaps := make([]float64, n)
 	ionizations := make([]int, n)
 	attachments := make([]int, n)
-	jackRatios := make([]float64, n)
 	parameters.SupressSpinner = true
 	k := 1.
 	parameters.Pressure *= k
@@ -53,11 +52,11 @@ func AlphaCalculationR(parameters *config.ModelParameters, outputDir, modelName 
 		LoadExtensions(finalModel.DataHub)
 		finalModel.Run(func(m *model.Model) int {
 			if m.TotalElectronsEmittedOnCathode == 0 {
-				return m.Parameters.NElectrons
+				return m.Parameters.NParticles
 			} else {
 				return 0
 			}
-		}, logger)
+		}, true, logger)
 		l1ps[i] = math.Log1p(float64(finalModel.AnodeElectronCounter-finalModel.TotalElectronsEmittedOnCathode) / (float64(finalModel.TotalElectronsEmittedOnCathode)))
 		ionizations[i] = utils.SumIntSlice(finalModel.IonizationCounters)
 		attachments[i] = utils.SumIntSlice(finalModel.AttachmentCounters)
@@ -66,6 +65,13 @@ func AlphaCalculationR(parameters *config.ModelParameters, outputDir, modelName 
 			config.FieldToSIeV(l1ps[i]/gaps[i]/k, []config.UnitElement{{Class: config.Length, Power: -1}}, finalModel.Parameters.OutputUnits(), false)))
 		progress.Add(1)
 	}
+
+	nonNanIxs := utils.NonInfIndicies(l1ps)
+	l1ps = utils.Select(l1ps, nonNanIxs)
+	gaps = utils.Select(gaps, nonNanIxs)
+	ionizations = utils.Select(ionizations, nonNanIxs)
+	attachments = utils.Select(attachments, nonNanIxs)
+	n = len(nonNanIxs)
 
 	effectiveAlpha, _, effectiveAlphaVar, _ := utils.LinearRegressionMSEInferVariance(gaps, l1ps)
 
@@ -86,6 +92,7 @@ func AlphaCalculationR(parameters *config.ModelParameters, outputDir, modelName 
 
 		jackAlphas := make([]float64, n)
 		jackEtas := make([]float64, n)
+		jackRatios := make([]float64, n)
 		for i := range jackRatios {
 			jackRatios[i] = float64(totalAttachments-attachments[i]) / float64(totalIonizations-ionizations[i])
 			jackEffectiveAlpha, _ := utils.LinearRegressionMSE(utils.ExcludeView(i, gaps), utils.ExcludeView(i, l1ps))
