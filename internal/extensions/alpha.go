@@ -32,7 +32,7 @@ type AlphaResult struct {
 	DriftVelocity                  float64 `csv:"DriftVelocity" units:"Length:1,Time:-1"`
 }
 
-func AlphaCalculationR(parameters *config.ModelParameters, outputDir, modelName string, logger messages.Logger) (dataRow, _ *AlphaResult, finalModel, _ *model.Model) {
+func AlphaCalculation(parameters *config.ModelParameters, outputDir, modelName string, logger messages.Logger) (dataRow, _ utils.ResultInterface, finalModel, _ *model.Model) {
 	voltages := []float64{50, 75, 100, 150, 200, 250, 300, 350}
 	n := len(voltages)
 	progress := progressbar.Default(int64(n))

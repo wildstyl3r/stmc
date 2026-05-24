@@ -10,7 +10,7 @@ import (
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
-func BasicCalculation(parameters *config.ModelParameters, outputDir, modelName string, logger messages.Logger) (dataRow, _ *utils.SheathResult, finalModel, _ *model.Model) {
+func BasicCalculation(parameters *config.ModelParameters, outputDir, modelName string, logger messages.Logger) (dataRow, _ utils.ResultInterface, finalModel, _ *model.Model) {
 	m := model.NewModel(parameters)
 
 	LoadExtensions(m.DataHub)

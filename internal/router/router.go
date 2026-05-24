@@ -18,6 +18,38 @@ import (
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
+type ModeParameterSet struct {
+	f              func(parameters *config.ModelParameters, outputDir, modelName string, logger messages.Logger) (utils.ResultInterface, utils.ResultInterface, *model.Model, *model.Model)
+	resultFilename string
+}
+
+var calculationModeParameters = map[config.CalculationMode]ModeParameterSet{
+	config.BasicSheathCalculation: ModeParameterSet{
+		extensions.BasicCalculation,
+		"result",
+	},
+	config.CurrentCalculation: ModeParameterSet{
+		extensions.CurrentDensityCalculation,
+		"result_j",
+	},
+	config.GammaCalculation: ModeParameterSet{
+		extensions.SourceIntegralCalculation,
+		"result_gamma",
+	},
+	config.VoltageCalculation: ModeParameterSet{
+		extensions.VoltageCalculation2,
+		"result_V",
+	},
+	config.TownsendAlpha: ModeParameterSet{
+		extensions.AlphaCalculation,
+		"result_alpha",
+	},
+	config.IonMobilityCalculation: ModeParameterSet{
+		extensions.IonMobilityCalculation,
+		"result_im",
+	},
+}
+
 func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags, logger messages.Logger) {
 	fmt.Printf("CONFIG: %s\n", *configFlags.ConfigFileNamePointer)
 	var c, meta = config.LoadConfig(*configFlags, logger)
@@ -90,20 +122,12 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags,
 
 			var dataRow, altRow utils.ResultInterface
 			calculationMode := parameters.GetCalculationMode()
-			switch calculationMode {
-			case config.BasicSheathCalculation:
-				dataRow, altRow, m, altM = extensions.BasicCalculation(parameters, c.OutputDir, modelNames[i], logger)
-			case config.CurrentCalculation:
-				dataRow, altRow, m, altM = extensions.CurrentDensityCalculation(parameters, c.OutputDir, modelNames[i], logger)
-			case config.GammaCalculation:
-				dataRow, altRow, m, altM = extensions.SourceIntegralCalculation(parameters, c.OutputDir, modelNames[i], logger)
-			case config.VoltageCalculation:
-				dataRow, altRow, m, altM = extensions.VoltageCalculation2(parameters, c.OutputDir, modelNames[i], logger)
-			case config.TownsendAlpha:
-				dataRow, altRow, m, altM = extensions.AlphaCalculationR(parameters, c.OutputDir, modelNames[i], logger)
-			default:
-				logger.Failure("unexpected config.CalculationMode: %#v", parameters.CalculationMode)
+			if param, known := calculationModeParameters[calculationMode]; known {
+				dataRow, altRow, m, altM = param.f(parameters, c.OutputDir, modelNames[i], logger)
+			} else {
+				logger.Failure("unexpected config.CalculationMode: %#v", calculationMode)
 			}
+
 			// dataRow.(*utils.CoreResult).ModelName = m.Parameters.PrototypeName()
 			config.AnyToSIeV(dataRow, parameters.OutputUnits(), false)
 			dataRows[calculationMode] = append(dataRows[calculationMode], dataRow)
@@ -127,44 +151,9 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags,
 		}
 		for mode, list := range dataRows {
 			var err error
-			switch mode {
-			case config.BasicSheathCalculation:
-				specificList := make([]*utils.SheathResult, len(list))
-				for i, elem := range list {
-					specificList[i] = elem.(*utils.SheathResult)
-				}
-				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result", true)
-			case config.CurrentCalculation:
-				specificList := make([]*extensions.CurrentDensityDataRow, len(list))
-				for i, elem := range list {
-					specificList[i] = elem.(*extensions.CurrentDensityDataRow)
-				}
-				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_j", true)
-			case config.GammaCalculation:
-				specificList := make([]*extensions.SourceIntegralDataRow, len(list))
-				for i, elem := range list {
-					specificList[i] = elem.(*extensions.SourceIntegralDataRow)
-				}
-				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_gamma", true)
-			case config.VoltageCalculation:
-				specificList := make([]*extensions.VoltageDataRow, len(list))
-				for i, elem := range list {
-					specificList[i] = elem.(*extensions.VoltageDataRow)
-				}
-				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_V", true)
-			case config.TownsendAlpha:
-				specificList := make([]*extensions.AlphaResult, len(list))
-				for i, elem := range list {
-					specificList[i] = elem.(*extensions.AlphaResult)
-				}
-				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_alpha", true)
-			case config.IonMobilityCalculation:
-				specificList := make([]*extensions.AlphaResult, len(list))
-				for i, elem := range list {
-					specificList[i] = elem.(*extensions.AlphaResult)
-				}
-				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_im", true)
-			default:
+			if param, known := calculationModeParameters[mode]; known {
+				err = utils.WriteAsCSV(config.MakeHeader(list[0], c.OutputUnits), list, c.OutputDir+"/"+gName, param.resultFilename, true)
+			} else {
 				logger.Failure("unexpected config.CalculationMode: %#v", mode)
 			}
 
@@ -175,39 +164,9 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags,
 		for mode, list := range altDataRows {
 			var err error
 			fail := false
-			switch mode {
-			case config.BasicSheathCalculation:
-				specificList := make([]*utils.SheathResult, len(list))
-				for i, elem := range list {
-					specificList[i] = elem.(*utils.SheathResult)
-				}
-				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result", true)
-			case config.CurrentCalculation:
-				specificList := make([]*extensions.CurrentDensityDataRow, len(list))
-				for i, elem := range list {
-					specificList[i] = elem.(*extensions.CurrentDensityDataRow)
-				}
-				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_alt_j", true)
-			case config.GammaCalculation:
-				specificList := make([]*extensions.SourceIntegralDataRow, len(list))
-				for i, elem := range list {
-					specificList[i] = elem.(*extensions.SourceIntegralDataRow)
-				}
-				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_alt_gamma", true)
-			case config.VoltageCalculation:
-				specificList := make([]*extensions.VoltageDataRow, len(list))
-				for i, elem := range list {
-					specificList[i] = elem.(*extensions.VoltageDataRow)
-				}
-				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_alt_V", true)
-			case config.TownsendAlpha:
-				specificList := make([]*extensions.AlphaResult, len(list))
-				for i, elem := range list {
-					specificList[i] = elem.(*extensions.AlphaResult)
-				}
-				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_altpha", true)
-			default:
-				fail = true
+			if param, known := calculationModeParameters[mode]; known {
+				err = utils.WriteAsCSV(config.MakeHeader(list[0], c.OutputUnits), list, c.OutputDir+"/"+gName, param.resultFilename, true)
+			} else {
 				logger.Failure("unexpected config.CalculationMode: %#v", mode)
 			}
 

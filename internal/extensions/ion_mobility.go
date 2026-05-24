@@ -12,7 +12,7 @@ type IonMobilityResult struct {
 	IonMobility float64 `csv:"IonMobility" units:"Length:2,Voltage:-1,Time:-1"`
 }
 
-func IonMobilityCalculation(parameters *config.ModelParameters, outputDir, modelName string, logger messages.Logger) (dataRow, _ *IonMobilityResult, finalModel, _ *model.Model) {
+func IonMobilityCalculation(parameters *config.ModelParameters, outputDir, modelName string, logger messages.Logger) (dataRow, _ utils.ResultInterface, finalModel, _ *model.Model) {
 	m := model.NewModel(parameters)
 
 	LoadExtensions(m.DataHub)
