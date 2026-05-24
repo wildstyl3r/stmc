@@ -17,7 +17,7 @@ func sourceIntegralMonteCarloF(parameters *config.ModelParameters, requirePrecis
 	m = model.NewModel(parameters)
 	LoadExtensions(m.DataHub)
 	m.Run(func(m *model.Model) int {
-		if m.TotalElectronsEmittedOnCathode == 0 {
+		if m.TotalParticlesEmitted == 0 {
 			return m.Parameters.NParticles
 		} else {
 			sumMean, sumMargin = m.GetMetrics(SourceIntegralPerCathodeElectronFluxKey).(float64), m.GetMetrics(SourceIntegralPerCathodeElectronFluxMarginKey).(float64)
@@ -75,7 +75,7 @@ func sourceIntegralCalculationStep(requirePrecision bool, parameters *config.Mod
 			SourceIntegralDifference:                difference,
 			SourceIntegralAnalytic:                  effectiveSourceIntegralAnalytic,
 			SourceIntegralMonteCarlo:                effectiveSourceIntegralMonteCarlo,
-			SourceIntegralMargin:                    utils.EstimateMargin(0.95, effectiveSourceIntegralVariance, float64(stepModel.TotalElectronsEmittedOnCathode)),
+			SourceIntegralMargin:                    utils.EstimateMargin(0.95, effectiveSourceIntegralVariance, float64(stepModel.TotalParticlesEmitted)),
 			EffectiveGammaMonteCarlo:                effectiveGammaMonteCarlo,
 			EffectiveGammaAnalytic:                  effectiveGammaAnalytic,
 			SurfaceGammaAnalytic:                    effectiveGammaAnalytic / escapeFactor,

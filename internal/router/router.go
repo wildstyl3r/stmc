@@ -158,6 +158,12 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags,
 					specificList[i] = elem.(*extensions.AlphaResult)
 				}
 				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_alpha", true)
+			case config.IonMobilityCalculation:
+				specificList := make([]*extensions.AlphaResult, len(list))
+				for i, elem := range list {
+					specificList[i] = elem.(*extensions.AlphaResult)
+				}
+				err = utils.WriteAsCSV(config.MakeHeader(specificList[0], c.OutputUnits), list, c.OutputDir+"/"+gName, "result_im", true)
 			default:
 				logger.Failure("unexpected config.CalculationMode: %#v", mode)
 			}

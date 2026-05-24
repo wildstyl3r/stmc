@@ -16,7 +16,7 @@ func BasicCalculation(parameters *config.ModelParameters, outputDir, modelName s
 	LoadExtensions(m.DataHub)
 	// additionStep := 0
 	m.Run(func(m *model.Model) int {
-		if m.TotalElectronsEmittedOnCathode == 0 {
+		if m.TotalParticlesEmitted == 0 {
 			return m.Parameters.NParticles
 		} else {
 			collisions := m.GetMetrics(SingleElectronDetailedCollisionRateKey).(map[string]utils.GriddedInterval)

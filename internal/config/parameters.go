@@ -367,6 +367,9 @@ type ModelParameters struct {
 	MeanFreePath            bool `toml:"MeanFreePath,omitzero,omitempty"`
 	DarkDischarge           bool `toml:"DarkDischarge,omitzero,omitempty"`
 
+	IonMobilityCollisionLimit  int    `toml:"IonMobilityCollisionLimit,omitzero,omitempty"`
+	IonMobilityTrackingSpecies string `toml:"IonSpecies,omitzero,omitempty"`
+
 	SupressSpinner bool `form:"hide" toml:"-"`
 
 	GasDensity            float64 `form:"hide" toml:"-"`
@@ -537,6 +540,7 @@ var defaultValues = map[string]any{ // in SI-eV
 	"Volumetric":                   false,
 	"MuDiscretizationStep":         1 / 50.,
 	"SourceIntegralRelativeMargin": 0.005,
+	"IonMobilityCollisionLimit":    10000,
 }
 
 var fieldsXor = map[string][]string{

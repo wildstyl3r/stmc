@@ -6,6 +6,7 @@ import (
 	"math/rand/v2"
 
 	"github.com/wildstyl3r/stmc/internal/config"
+	"github.com/wildstyl3r/stmc/internal/constants"
 	"github.com/wildstyl3r/stmc/internal/utils"
 )
 
@@ -29,21 +30,26 @@ type Particle struct {
 	producedIonization    bool
 
 	meanEnergyBuffer    []float64
+	meanEnergyPrev      float64
+	bufferFull          bool
 	bufferPosition      int
+	driftCollisions     int
 	driftStartPotential float64
-	driftTime           utils.KahanSummable
+	driftStatisticsOn   bool
+	driftTimeTimesE     utils.KahanSummable
 
 	timeToWall float64
 	weight     int
 
 	generation int
 
-	ptype ParticleType
+	ptype   ParticleType
+	species string
 
 	origin int
 }
 
-func (m *Model) newParticle(origin int) Particle {
+func (m *Model) newElectron(origin int) Particle {
 	eKinetic := 4. + rand.Float64()
 	var mu float64
 	switch m.Parameters.GetEmissionMode() {
@@ -65,6 +71,40 @@ func (m *Model) newParticle(origin int) Particle {
 		prevMuSign: mu,
 		origin:     origin,
 		weight:     1,
+	}
+	if m.Parameters.Volumetric {
+		// p.y, p.z = utils.UniformOnDisk(m.Parameters.CathodeRadius)
+
+		eta := rand.Float64() * 2. * math.Pi
+		p.sinEta, p.cosEta = math.Sin(eta), math.Cos(eta)
+	}
+	p.recalcParams(m)
+	return p
+}
+
+func (m *Model) newIon(origin int, species string) Particle {
+	var mu float64
+	switch m.Parameters.GetEmissionMode() {
+	case config.Cosine:
+		// mu = math.Cos(math.Asin(math.Sqrt(rand.Float64())))
+		mu = math.Sqrt(1 - rand.Float64())
+	case config.Forward:
+		mu = 1.
+	case config.ForwardIsotropic:
+		mu = rand.Float64()
+	default:
+		panic("unexpected config.EmissionMode")
+	}
+	p := Particle{
+		// x:          0,
+		potential:  m.VfromL(0),
+		eKinetic:   1.5 * constants.KBolzmannEv * m.Parameters.Temperature,
+		mu:         mu,
+		prevMuSign: mu,
+		origin:     origin,
+		weight:     1,
+		ptype:      Ion,
+		species:    species,
 	}
 	if m.Parameters.Volumetric {
 		// p.y, p.z = utils.UniformOnDisk(m.Parameters.CathodeRadius)

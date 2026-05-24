@@ -67,3 +67,27 @@ func ElectronVelocity2eV(v float64) (energy float64) {
 	energy = 0.5 * v * v * constants.ElectronMassToChargeRatio
 	return
 }
+
+func EV2ionVelocity(energy, massDalton float64) (v float64) {
+	v = math.Sqrt(constants.ElementaryCharge * 2. * energy / (massDalton * constants.Dalton))
+	if math.IsNaN(v) {
+		println("v is nan")
+	}
+	return
+}
+
+func IonVelocity2eV(v, massDalton float64) (energy float64) {
+	energy = 0.5 * v * v * (massDalton * constants.Dalton) / constants.ElementaryCharge
+	return
+}
+
+func MassCenterVelocity(vs []Vec3D, masses []float64) (comv Vec3D) {
+	totalMass := 0.
+	for i := range vs {
+		vm := vs[i].Scale(masses[i])
+		comv = comv.Add(&vm)
+		totalMass += masses[i]
+	}
+	comv = comv.Scale(1 / totalMass)
+	return comv
+}

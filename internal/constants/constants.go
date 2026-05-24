@@ -2,6 +2,7 @@ package constants
 
 const KBolzmann float64 = 1.380649e-23
 const KBolzmannEv float64 = 8.617333262e-5
+const Dalton float64 = 1.66053906892e-27                        // [kg]
 const ElementaryCharge = 1.602176634e-19                        // C
 const ElectornMass float64 = 9.1093837139e-31                   // [kg]
 const ElectronChargeToMassRatio float64 = 1.75882000838e11      // [C / kg]

@@ -1,6 +1,9 @@
 package utils
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 type Vec2D struct {
 	X, Y float64
@@ -75,6 +78,104 @@ func GetLinearCoefficients(x1, y1, x2, y2 float64) (a, b float64) {
 	a = (y2 - y1) / (x2 - x1)
 	b = y1 - x1*a
 	return a, b
+}
+
+type Vec3D struct {
+	X, Y, Z float64
+}
+
+func (a *Vec3D) Add(b *Vec3D) Vec3D {
+	return Vec3D{
+		a.X + b.X,
+		a.Y + b.Y,
+		a.Z + b.Z,
+	}
+}
+
+func (a *Vec3D) Sub(b *Vec3D) Vec3D {
+	return Vec3D{
+		a.X - b.X,
+		a.Y - b.Y,
+		a.Z - b.Z,
+	}
+}
+
+func (a *Vec3D) Neg() Vec3D {
+	return Vec3D{
+		-a.X,
+		-a.Y,
+		-a.Z,
+	}
+}
+
+func (a *Vec3D) Dot(b *Vec3D) float64 {
+	return a.X*b.X + a.Y*b.Y + a.Z*b.Z
+}
+
+func (a *Vec3D) Norm() float64 {
+	return math.Sqrt(a.Dot(a))
+}
+
+func (a *Vec3D) Norm2() float64 {
+	return a.Dot(a)
+}
+
+func (a *Vec3D) Scale(scale float64) Vec3D {
+	return Vec3D{
+		a.X * scale,
+		a.Y * scale,
+		a.Z * scale,
+	}
+}
+
+func (a *Vec3D) Unit() Vec3D {
+	n := a.Norm()
+	return Vec3D{
+		a.X / n,
+		a.Y / n,
+		a.Z / n,
+	}
+}
+
+func (a *Vec3D) Cross(b *Vec3D) Vec3D {
+	return Vec3D{
+		a.Y*b.Z - a.Z*b.Y,
+		a.Z*b.X - a.X*b.Z,
+		a.X*b.Y - a.Y*b.X,
+	}
+}
+
+// http://jcgt.org/published/0006/01/01/
+func (v *Vec3D) ModifiedFrisvadBasis() (b1 Vec3D, b2 Vec3D) {
+	s := math.Copysign(1, v.Z)
+	a := -1. / (s + v.Z)
+	b := v.X * v.Y * a
+	b1 = Vec3D{
+		1 + s*v.X*v.X*a,
+		s * b,
+		-s * v.X,
+	}
+	b2 = Vec3D{
+		b,
+		s + v.Y*v.Y*a,
+		-v.Y,
+	}
+	return
+}
+
+func RodriguesRotation(v, axis *Vec3D, angle float64) (result Vec3D) {
+	k := axis.Unit()
+	sin, cos := math.Sincos(angle)
+
+	vrej := k.Cross(v)
+	vrej = vrej.Scale(sin)
+
+	vproj := k.Scale(k.Dot(v) * (1 - cos))
+
+	vscaled := v.Scale(cos)
+	result = vscaled.Add(&vrej)
+	result = result.Add(&vproj)
+	return result
 }
 
 // type Mat3D struct {

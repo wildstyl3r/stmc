@@ -51,17 +51,17 @@ func AlphaCalculationR(parameters *config.ModelParameters, outputDir, modelName 
 		finalModel = model.NewModel(&parametersCopy)
 		LoadExtensions(finalModel.DataHub)
 		finalModel.Run(func(m *model.Model) int {
-			if m.TotalElectronsEmittedOnCathode == 0 {
+			if m.TotalParticlesEmitted == 0 {
 				return m.Parameters.NParticles
 			} else {
 				return 0
 			}
 		}, true, logger)
-		l1ps[i] = math.Log1p(float64(finalModel.AnodeElectronCounter-finalModel.TotalElectronsEmittedOnCathode) / (float64(finalModel.TotalElectronsEmittedOnCathode)))
+		l1ps[i] = math.Log1p(float64(finalModel.AnodeElectronCounter-finalModel.TotalParticlesEmitted) / (float64(finalModel.TotalParticlesEmitted)))
 		ionizations[i] = utils.SumIntSlice(finalModel.IonizationCounters)
 		attachments[i] = utils.SumIntSlice(finalModel.AttachmentCounters)
 		progress.Describe(fmt.Sprintf("[ emitted: %d; @ anode: %d ; @ cathode: %d ; iz: %d; att: %d; eff alpha estim: %f]",
-			finalModel.TotalElectronsEmittedOnCathode, finalModel.AnodeElectronCounter, finalModel.CathodeElectronCounter, ionizations[i], attachments[i],
+			finalModel.TotalParticlesEmitted, finalModel.AnodeElectronCounter, finalModel.CathodeElectronCounter, ionizations[i], attachments[i],
 			config.FieldToSIeV(l1ps[i]/gaps[i]/k, []config.UnitElement{{Class: config.Length, Power: -1}}, finalModel.Parameters.OutputUnits(), false)))
 		progress.Add(1)
 	}

@@ -233,7 +233,7 @@ func NewDataFlags() DataFlags {
 					}
 					for x := range model.NumCells {
 						dataFile.data[x].index = model.XStep * float64(x)
-						dataFile.data[x].value = model.TrajAveragedIonization[x].Val() / (model.XStep * model.Parameters.Pressure * float64(model.TotalElectronsEmittedOnCathode))
+						dataFile.data[x].value = model.TrajAveragedIonization[x].Val() / (model.XStep * model.Parameters.Pressure * float64(model.TotalParticlesEmitted))
 					}
 					return []DataFile{dataFile}
 					// collisions := model.GetMetrics(extensions.SingleElectronCollisionRateKey).(map[lxgata.CollisionType]utils.GriddedInterval)
@@ -487,7 +487,7 @@ func NewDataFlags() DataFlags {
 						lookUpVelocity[eIndex] = math.Sqrt(utils.EV2J(model.Parameters.EnergyStep*(float64(eIndex)+0.5))) * energyRoot2Velocity
 					}
 
-					psiFIncrement := 1. / (float64(model.TotalElectronsEmittedOnCathode) * model.Parameters.EnergyStep * model.Parameters.MuDiscretizationStep)
+					psiFIncrement := 1. / (float64(model.TotalParticlesEmitted) * model.Parameters.EnergyStep * model.Parameters.MuDiscretizationStep)
 
 					for xIndex := 0; xIndex < model.NumCells; xIndex++ {
 						for eIndex := 0; eIndex < model.NumCellsE; eIndex++ {
@@ -590,7 +590,7 @@ func NewDataFlags() DataFlags {
 					rateIntegral := make([]float64, model.NumCells)
 					meanEnergy := make([]float64, model.NumCells)
 
-					psiFIncrement := 1. / (float64(model.TotalElectronsEmittedOnCathode) * model.Parameters.EnergyStep * model.Parameters.MuDiscretizationStep)
+					psiFIncrement := 1. / (float64(model.TotalParticlesEmitted) * model.Parameters.EnergyStep * model.Parameters.MuDiscretizationStep)
 
 					for xIndex := 0; xIndex < model.NumCells; xIndex++ {
 						for eIndex := 0; eIndex < model.NumCellsE; eIndex++ {

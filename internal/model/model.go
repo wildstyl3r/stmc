@@ -59,9 +59,11 @@ type Model struct {
 	AnodeElectronCounter   int
 	CathodeElectronCounter int
 
-	TotalElectronsEmittedOnCathode int
-	ElectronsReturned              utils.Aggregation
-	IonizingCathodeElectrons       utils.Aggregation
+	IonMobility utils.AggregationF
+
+	TotalParticlesEmitted    int
+	ElectronsReturned        utils.Aggregation
+	IonizingCathodeElectrons utils.Aggregation
 
 	MeanElectronEnergyAtAnode float64
 
@@ -236,8 +238,6 @@ type PathRate struct {
 }
 
 func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collisionDescription *lxgata.Collision, reversal bool, throwOut BoundaryConditionType, freePath utils.KahanSummable) {
-	// timeToWall := m.randomDistanceToWall() / utils.EV2electronVelocity(p.trajectory.radialEnergy)
-	R := utils.NewKahanSummable(rand.ExpFloat64()) //-math.Log(1. - rand.Float64()))
 
 	if -p.getPotentialEnergy() < -m.Vs+m.SheathPotentialCorrection {
 		throwOut = ArrivalAtCathode
@@ -247,6 +247,9 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 		throwOut = ArrivalAtSimEnd
 		return
 	}
+	// timeToWall := m.randomDistanceToWall() / utils.EV2electronVelocity(p.trajectory.radialEnergy)
+	R := utils.NewKahanSummable(utils.R()) //-math.Log(1. - rand.Float64()))
+	eStart := p.eKinetic
 
 	var currentCellIndex int
 	var cachedVelocity float64
@@ -539,6 +542,13 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 			}
 		}
 	}
+	if p.driftStatisticsOn {
+		if reversal {
+			p.driftTimeTimesE.Add((utils.EV2electronVelocity(segmentEndEnergy) + utils.EV2electronVelocity(eStart)) * constants.ElectronMassToChargeRatio)
+		} else {
+			p.driftTimeTimesE.Add(math.Abs(utils.EV2electronVelocity(segmentEndEnergy)-utils.EV2electronVelocity(eStart)) * constants.ElectronMassToChargeRatio)
+		}
+	}
 	return
 }
 
@@ -602,467 +612,684 @@ func (m *Model) Run(particlesToLaunch func(*Model) int, electrons bool, logger m
 		computeFlow := make(chan *Particle, cfCap)
 		var computeWg, stateWg sync.WaitGroup
 
-		if electrons {
-
-		}
-
-		ionizationCounters := make([]int, nParticles)
-		attachmentCounters := make([]int, nParticles)
-
-		collFlow := make(chan CollisionEvent, 1000*m.Parameters.NParticles)
-		stateWg.Add(1)
-		go func() {
-			for collision := range collFlow {
-				if 0 < collision.x && collision.x < m.NumCells {
-					CollisionAtCellPerAvalanche[collision.collType][collision.x][collision.origin-m.TotalElectronsEmittedOnCathode] += collision.weight
-					collName := string(collision.collType) + collision.outcome
-					if _, exist := DetailedCollisionAtCell[collName]; exist {
-						DetailedCollisionAtCell[collName][collision.x][collision.origin-m.TotalElectronsEmittedOnCathode] += collision.weight
-					}
-				}
-			}
-			stateWg.Done()
-		}()
-
-		var trajFlow chan TrajectoryUpdate
-		if m.Parameters.TrajectoryAveragedRates || m.Parameters.CalculateDistribution {
-			// for x := range TimeAtCellPerAvalanche {
-			// 	TimeAtCellPerAvalanche[x] = make([]utils.KahanSummable, nElectrons)
-			// }
-
-			trajFlow = make(chan TrajectoryUpdate, 100000)
-			stateWg.Add(1)
-			go func() {
-				// if m.Parameters.TrajectoryAveragedIonization {
-				// 	for tUpdate := range trajFlow {
-				// 		es, ee := min(tUpdate.startEnergy, tUpdate.endEnergy), max(tUpdate.startEnergy, tUpdate.endEnergy)
-				// 		m.RateIncrement(es, float64(int(math.Ceil(es/m.Parameters.EnergyStep)))*m.Parameters.EnergyStep, tUpdate.trajectory.totEnergy, m.TrajAveragedIonization)
-				// 		topEi := int(math.Floor(ee / m.Parameters.EnergyStep))
-				// 		for i := int(math.Ceil(es / m.Parameters.EnergyStep)); i < topEi; i++ {
-				// 			m.RateIncrement(float64(i)*m.Parameters.EnergyStep, float64(i+1)*m.Parameters.EnergyStep, tUpdate.trajectory.totEnergy, m.TrajAveragedIonization)
-				// 		}
-				// 	}
-				// }
-				if m.Parameters.TrajectoryAveragedRates || m.Parameters.CalculateDistribution {
-					for tUpdate := range trajFlow {
-						startEnergy, endEnergy := min(tUpdate.startEnergy, tUpdate.endEnergy), max(tUpdate.startEnergy, tUpdate.endEnergy)
-						if m.Parameters.TrajectoryAveragedRates && endEnergy > m.Parameters.LowerEnergyThreshold() {
-							eCell := int(math.Ceil(max(m.Parameters.LowerEnergyThreshold(), startEnergy) / m.Parameters.EnergyStep))
-							endCellIndex := int(math.Floor(endEnergy/m.Parameters.EnergyStep)) - 1
-							for ; eCell < endCellIndex; eCell++ {
-								eMid := m.Parameters.EnergyStep * (float64(eCell) + 0.5)
-								invMu := math.Sqrt(eMid / (eMid - tUpdate.trajectory.radialEnergy))
-								potentialMid := eMid - tUpdate.trajectory.totEnergy
-								field := m.EFieldFromPotential(potentialMid)
-								ncs := m.IonizationCSmulGasDensityLookupECell[eCell]
-								for range tUpdate.weight {
-									m.TrajAveragedIonization[int(m.LfromV(potentialMid)/m.XStep)].Add(ncs * m.Parameters.EnergyStep * invMu / -field)
-								}
-							}
-							{
-								//interval boundaries
-								ingressCellEnergy := math.Ceil(startEnergy/m.Parameters.EnergyStep) * m.Parameters.EnergyStep
-								egressCellEnergy := math.Floor(endEnergy/m.Parameters.EnergyStep) * m.Parameters.EnergyStep
-								if ingressCellEnergy <= endEnergy {
-									startStep := ingressCellEnergy - startEnergy
-									eMid := 0.5 * (startEnergy + ingressCellEnergy)
-									invMu := math.Sqrt(eMid / (eMid - tUpdate.trajectory.radialEnergy))
-									potentialMid := eMid - tUpdate.trajectory.totEnergy
-									x := m.LfromV(potentialMid)
-									if x > m.Parameters.CathodeFallLength {
-										invMu = math.Pi * 0.5
-									}
-									field := m.EFieldFromPotential(potentialMid)
-									ncs := m.IonizationCSmulGasDensityLookupECell[eCell]
-									for range tUpdate.weight {
-										m.TrajAveragedIonization[int(m.LfromV(potentialMid)/m.XStep)].Add(ncs * startStep * invMu / -field)
-									}
-								}
-								if egressCellEnergy >= startEnergy {
-									endStep := endEnergy - egressCellEnergy
-									eMid := 0.5 * (egressCellEnergy + endEnergy)
-									invMu := math.Sqrt(eMid / (eMid - tUpdate.trajectory.radialEnergy))
-									potentialMid := eMid - tUpdate.trajectory.totEnergy
-									x := m.LfromV(potentialMid)
-									if x > m.Parameters.CathodeFallLength {
-										invMu = math.Pi * 0.5
-									}
-									field := m.EFieldFromPotential(potentialMid)
-									ncs := m.IonizationCSmulGasDensityLookupECell[eCell]
-									for range tUpdate.weight {
-										m.TrajAveragedIonization[int(m.LfromV(potentialMid)/m.XStep)].Add(ncs * endStep * invMu / -field)
-									}
-								}
-								if ingressCellEnergy > endEnergy && egressCellEnergy < startEnergy {
-									interCellStep := endEnergy - startEnergy
-									eMid := 0.5 * (startEnergy + endEnergy)
-									invMu := math.Sqrt(eMid / (eMid - tUpdate.trajectory.radialEnergy))
-									potentialMid := eMid - tUpdate.trajectory.totEnergy
-									x := m.LfromV(potentialMid)
-									if x > m.Parameters.CathodeFallLength {
-										invMu = math.Pi * 0.5
-									}
-									field := m.EFieldFromPotential(potentialMid)
-									ncs := m.IonizationCSmulGasDensityLookupECell[eCell]
-									for range tUpdate.weight {
-										m.TrajAveragedIonization[int(x/m.XStep)].Add(ncs * interCellStep * invMu / -field)
-									}
-								}
-							}
-						}
-						if m.Parameters.CalculateDistribution {
-							xStart := m.LfromV(tUpdate.startEnergy - tUpdate.trajectory.totEnergy)
-							xEnd := m.LfromV(tUpdate.endEnergy - tUpdate.trajectory.totEnergy)
-							xStart, xEnd = min(xStart, xEnd), max(xStart, xEnd)
-							xStartIndex := int(math.Ceil(xStart / m.XStep))
-							xEndIndex := int(math.Floor(xEnd / m.XStep))
-							for xIndex := xStartIndex; xIndex <= xEndIndex; xIndex++ {
-								energy := tUpdate.trajectory.totEnergy + m.lookUpPotentialAtCellNode[xIndex]
-								eIndex := int(energy / m.Parameters.EnergyStep)
-								mu := math.Copysign(math.Sqrt((energy-tUpdate.trajectory.radialEnergy)/energy), tUpdate.endEnergy-tUpdate.startEnergy)
-								muIndex := int((mu + 1 + 0.5*m.Parameters.MuDiscretizationStep) / m.Parameters.MuDiscretizationStep)
-								if xIndex < m.NumCells && eIndex < m.NumCellsE && muIndex < m.NumCellsMu {
-									for range tUpdate.weight {
-										m.MeanEnergy[xIndex].AppendF(energy)
-									}
-									m.DistributionXEMu[xIndex][eIndex][muIndex] += float64(tUpdate.weight)
-								}
-							}
-						}
-					}
-				}
-				stateWg.Done()
-			}()
-		}
-
-		for _, process := range m.Parameters.CrossSectionsData().GetTypes() {
-			for x := range CollisionAtCellPerAvalanche[process] {
-				CollisionAtCellPerAvalanche[process][x] = make([]int, nParticles)
-			}
-		}
-
-		var freePathFlow chan MeanFreePathUpdate
-		if m.Parameters.MeanFreePath {
-			freePathFlow = make(chan MeanFreePathUpdate)
-			stateWg.Add(1)
-			go func() {
-				for fpu := range freePathFlow {
-					for i := fpu.fillStartIndex; i <= fpu.fillEndIndex && i < m.NumCells; i++ {
-						m.MeanFreePath[i].Append(fpu.freePath)
-					}
-					m.GlobalMeanFreePath.Append(fpu.freePath)
-				}
-				stateWg.Done()
-			}()
-		}
-
-		electronsReturned := make([]int, nParticles)
-		erFlow := make(chan CathodeArrival)
-		stateWg.Add(1)
-		go func() {
-			for cathodeReturn := range erFlow {
-				electronsReturned[cathodeReturn.origin-m.TotalElectronsEmittedOnCathode] += cathodeReturn.weight
-			}
-			stateWg.Done()
-		}()
-		ionizingElectrons := make([]int, nParticles)
-		izFlow := make(chan IonizingElectron)
-		stateWg.Add(1)
-		go func() {
-			for ie := range izFlow {
-				ionizingElectrons[ie.origin-m.TotalElectronsEmittedOnCathode] += ie.weight
-			}
-			stateWg.Done()
-		}()
-
-		anodeFlow := make(chan AnodeArrival)
-		stateWg.Add(1)
-		go func() {
-			for anodeArrival := range anodeFlow {
-				m.AnodeElectronCounter += anodeArrival.weight
-			}
-			stateWg.Done()
-		}()
-
-		countFlow := make(chan CountEvent)
-		stateWg.Add(1)
-		go func() {
-			for event := range countFlow {
-				if event.isAttachment {
-					attachmentCounters[event.origin-m.TotalElectronsEmittedOnCathode] += event.weight
-				} else {
-					ionizationCounters[event.origin-m.TotalElectronsEmittedOnCathode] += event.weight
-				}
-			}
-			stateWg.Done()
-		}()
-
-		for origin := range nParticles {
-			particle := m.newParticle(origin + m.TotalElectronsEmittedOnCathode)
-			if m.Parameters.CalculateDistribution {
-				m.DistributionXEMu[0][int(particle.eKinetic/m.Parameters.EnergyStep)][int((particle.mu+1)/m.Parameters.MuDiscretizationStep)]++
-			}
-			computeWg.Add(1)
-			computeFlow <- &particle
-		}
-
-		// status := []string{"//", "==", "\\\\", "||"}
 		closeCallback := func() {}
 		if !m.Parameters.SupressSpinner {
 			closeCallback = logger.Busy("Avalanches")
 		}
 
-		reweightRequest := false
+		if electrons {
+			for origin := range nParticles {
+				particle := m.newElectron(origin + m.TotalParticlesEmitted)
+				if m.Parameters.CalculateDistribution {
+					m.DistributionXEMu[0][int(particle.eKinetic/m.Parameters.EnergyStep)][int((particle.mu+1)/m.Parameters.MuDiscretizationStep)]++
+				}
+				computeWg.Add(1)
+				computeFlow <- &particle
+			}
 
-		go func() {
-			computeWg.Wait()
+			ionizationCounters := make([]int, nParticles)
+			attachmentCounters := make([]int, nParticles)
 
-			close(computeFlow)
-			close(collFlow)
+			collFlow := make(chan CollisionEvent, 1000*m.Parameters.NParticles)
+			stateWg.Add(1)
+			go func() {
+				for collision := range collFlow {
+					if 0 < collision.x && collision.x < m.NumCells {
+						CollisionAtCellPerAvalanche[collision.collType][collision.x][collision.origin-m.TotalParticlesEmitted] += collision.weight
+						collName := string(collision.collType) + collision.outcome
+						if _, exist := DetailedCollisionAtCell[collName]; exist {
+							DetailedCollisionAtCell[collName][collision.x][collision.origin-m.TotalParticlesEmitted] += collision.weight
+						}
+					}
+				}
+				stateWg.Done()
+			}()
+
+			var trajFlow chan TrajectoryUpdate
 			if m.Parameters.TrajectoryAveragedRates || m.Parameters.CalculateDistribution {
-				close(trajFlow)
-			}
+				// for x := range TimeAtCellPerAvalanche {
+				// 	TimeAtCellPerAvalanche[x] = make([]utils.KahanSummable, nElectrons)
+				// }
 
-			if m.Parameters.MeanFreePath {
-				close(freePathFlow)
-			}
-			close(erFlow)
-			close(izFlow)
-			close(anodeFlow)
-			close(countFlow)
-		}()
-
-		for {
-			var workerWG sync.WaitGroup
-			for range m.Parameters.Threads() - 1 {
-				workerWG.Add(1)
+				trajFlow = make(chan TrajectoryUpdate, 100000)
+				stateWg.Add(1)
 				go func() {
-					for particlePtr := range computeFlow {
-						lowerEnergyThreshold := m.Parameters.LowerEnergyThreshold()
-						attachmentLoss := false
-						for (lowerEnergyThreshold < particlePtr.trajectory.totEnergy || m.Parameters.CalculateDistribution) &&
-							(!m.Parameters.ReturningElectrons || particlePtr.trajectory.totEnergy+m.VfromL(0) > 0) {
-							if len(computeFlow)*10/(cap(computeFlow)*8) >= 1 || reweightRequest {
-								computeFlow <- particlePtr
-								computeWg.Add(1)
-								reweightRequest = true
-								break
-							}
-							var fillStartIndex, fillEndIndex int
-							if m.Parameters.MeanFreePath {
-								fillStartIndex = m.LNodefromVCached(-particlePtr.getPotentialEnergy())
-							}
-							collision, reversal, throwOut, freePath := m.nextCollision(particlePtr, trajFlow /*, stateflow*/)
-							if m.Parameters.MeanFreePath {
-								fillEndIndex = m.LNodefromVCached(-particlePtr.getPotentialEnergy())
-								fillStartIndex, fillEndIndex = min(fillStartIndex, fillEndIndex), max(fillStartIndex, fillEndIndex)
-								if reversal {
-									fillStartIndex = int(particlePtr.trajectory.getTurnaroundX(m) / m.XStep)
+					// if m.Parameters.TrajectoryAveragedIonization {
+					// 	for tUpdate := range trajFlow {
+					// 		es, ee := min(tUpdate.startEnergy, tUpdate.endEnergy), max(tUpdate.startEnergy, tUpdate.endEnergy)
+					// 		m.RateIncrement(es, float64(int(math.Ceil(es/m.Parameters.EnergyStep)))*m.Parameters.EnergyStep, tUpdate.trajectory.totEnergy, m.TrajAveragedIonization)
+					// 		topEi := int(math.Floor(ee / m.Parameters.EnergyStep))
+					// 		for i := int(math.Ceil(es / m.Parameters.EnergyStep)); i < topEi; i++ {
+					// 			m.RateIncrement(float64(i)*m.Parameters.EnergyStep, float64(i+1)*m.Parameters.EnergyStep, tUpdate.trajectory.totEnergy, m.TrajAveragedIonization)
+					// 		}
+					// 	}
+					// }
+					if m.Parameters.TrajectoryAveragedRates || m.Parameters.CalculateDistribution {
+						for tUpdate := range trajFlow {
+							startEnergy, endEnergy := min(tUpdate.startEnergy, tUpdate.endEnergy), max(tUpdate.startEnergy, tUpdate.endEnergy)
+							if m.Parameters.TrajectoryAveragedRates && endEnergy > m.Parameters.LowerEnergyThreshold() {
+								eCell := int(math.Ceil(max(m.Parameters.LowerEnergyThreshold(), startEnergy) / m.Parameters.EnergyStep))
+								endCellIndex := int(math.Floor(endEnergy/m.Parameters.EnergyStep)) - 1
+								for ; eCell < endCellIndex; eCell++ {
+									eMid := m.Parameters.EnergyStep * (float64(eCell) + 0.5)
+									invMu := math.Sqrt(eMid / (eMid - tUpdate.trajectory.radialEnergy))
+									potentialMid := eMid - tUpdate.trajectory.totEnergy
+									field := m.EFieldFromPotential(potentialMid)
+									ncs := m.IonizationCSmulGasDensityLookupECell[eCell]
+									for range tUpdate.weight {
+										m.TrajAveragedIonization[int(m.LfromV(potentialMid)/m.XStep)].Add(ncs * m.Parameters.EnergyStep * invMu / -field)
+									}
 								}
-								freePathFlow <- MeanFreePathUpdate{
-									freePath:       freePath,
-									fillStartIndex: fillStartIndex,
-									fillEndIndex:   fillEndIndex,
-								}
-							}
-
-							if throwOut != None {
-								switch throwOut {
-								case ArrivalAtCathode:
-									erFlow <- CathodeArrival{weight: particlePtr.weight, origin: particlePtr.origin}
-								case ArrivalAtSimEnd:
-									anodeFlow <- AnodeArrival{weight: particlePtr.weight}
-								}
-								break
-							}
-							if collision != nil {
-								energyLoss := collision.Threshold
-								cosChiScattered := m.Parameters.CrossSectionsData().SampleScatteringAngleCos(particlePtr.eKinetic, energyLoss, collision.Type, lxgata.IgnoreAtomicNumber, collision.Species)
-								phi := 2. * math.Pi * rand.Float64()
-
-								particlePtr.eKinetic -= energyLoss
-								switch collision.Type {
-								case lxgata.ELASTIC:
-									energyLoss = particlePtr.eKinetic * 2. * collision.MassRatio * (1. - cosChiScattered)
-									particlePtr.eKinetic -= energyLoss
-
-								case lxgata.IONIZATION:
-									particlePtr.generation += 1
-									ejected := *particlePtr
-									ejected.ejectedFromIonization = true
-									particlePtr.producedIonization = true
-
-									availableEnergy := particlePtr.eKinetic
-
-									switch m.Parameters.GetIonizationEnergySharingMode() {
-									case config.Equal:
-										ejected.eKinetic = 0.5 * particlePtr.eKinetic
-									case config.Opal:
-
-										if w, known := utils.OpalIonizationShapeParameters[collision.Species]; known {
-											ejected.eKinetic = w * math.Tan(rand.Float64()*math.Atan(particlePtr.eKinetic/(2.*w)))
-										} else {
-											panic("no Opal coefficient known for species: " + collision.Species)
-											// ejected.eKinetic = 0.5 * particlePtr.eKinetic
+								{
+									//interval boundaries
+									ingressCellEnergy := math.Ceil(startEnergy/m.Parameters.EnergyStep) * m.Parameters.EnergyStep
+									egressCellEnergy := math.Floor(endEnergy/m.Parameters.EnergyStep) * m.Parameters.EnergyStep
+									if ingressCellEnergy <= endEnergy {
+										startStep := ingressCellEnergy - startEnergy
+										eMid := 0.5 * (startEnergy + ingressCellEnergy)
+										invMu := math.Sqrt(eMid / (eMid - tUpdate.trajectory.radialEnergy))
+										potentialMid := eMid - tUpdate.trajectory.totEnergy
+										x := m.LfromV(potentialMid)
+										if x > m.Parameters.CathodeFallLength {
+											invMu = math.Pi * 0.5
 										}
-									case config.UniformRandom:
-										ejected.eKinetic = particlePtr.eKinetic * rand.Float64()
-									case config.Zero:
-										ejected.eKinetic = 0
-									default:
-										panic("unexpected config.IonizationEnergySharing")
+										field := m.EFieldFromPotential(potentialMid)
+										ncs := m.IonizationCSmulGasDensityLookupECell[eCell]
+										for range tUpdate.weight {
+											m.TrajAveragedIonization[int(m.LfromV(potentialMid)/m.XStep)].Add(ncs * startStep * invMu / -field)
+										}
 									}
-									particlePtr.eKinetic = availableEnergy - ejected.eKinetic
-
-									var cosChiEjected float64
-
-									switch m.Parameters.GetIonizationScatteringMode() {
-									case config.Boeuf:
-										cosChiScattered = math.Sqrt(particlePtr.eKinetic / availableEnergy)
-										cosChiEjected = math.Sqrt(ejected.eKinetic / availableEnergy)
-									case config.Born:
-										cosChiScattered = lxgata.BornScatteringAngleSample(particlePtr.eKinetic+energyLoss, energyLoss)
-										cosChiEjected = lxgata.BornScatteringAngleSample(ejected.eKinetic+energyLoss, energyLoss)
-									case config.BornFullLoss:
-										cosChiScattered = lxgata.BornScatteringAngleSample(availableEnergy+energyLoss, energyLoss+ejected.eKinetic)
-										cosChiEjected = lxgata.BornScatteringAngleSample(availableEnergy+energyLoss, energyLoss+particlePtr.eKinetic)
-									case config.Coulomb:
-										cosChiScattered = lxgata.CoulombScatteringAngleSample(particlePtr.eKinetic+energyLoss, m.Parameters.CrossSectionsData().Species[collision.Species].UParameter, energyLoss, lxgata.IgnoreAtomicNumber)
-										cosChiEjected = 1. - 2.*rand.Float64()
-									case config.CoulombM:
-										cosChiScattered = lxgata.CoulombScatteringAngleSample(particlePtr.eKinetic+energyLoss, m.Parameters.CrossSectionsData().Species[collision.Species].UParameter, energyLoss, lxgata.IgnoreAtomicNumber)
-										cosChiEjected = lxgata.CoulombScatteringAngleSample(ejected.eKinetic+energyLoss, m.Parameters.CrossSectionsData().Species[collision.Species].UParameter, energyLoss, lxgata.IgnoreAtomicNumber)
-									case config.Isotropic:
-										cosChiScattered = 1. - 2.*rand.Float64()
-										cosChiEjected = 1. - 2.*rand.Float64()
-									case config.Mixed:
-										eScattered, eEjected := max(particlePtr.eKinetic, ejected.eKinetic), min(particlePtr.eKinetic, ejected.eKinetic)
-										particlePtr.eKinetic, ejected.eKinetic = eScattered, eEjected
-										cosChiScattered = lxgata.BornScatteringAngleSample(particlePtr.eKinetic+energyLoss, energyLoss)
-										cosChiEjected = 1. - 2.*rand.Float64()
-									case config.MixedFullLoss:
-										eScattered, eEjected := max(particlePtr.eKinetic, ejected.eKinetic), min(particlePtr.eKinetic, ejected.eKinetic)
-										particlePtr.eKinetic, ejected.eKinetic = eScattered, eEjected
-										cosChiScattered = lxgata.BornScatteringAngleSample(availableEnergy+energyLoss, energyLoss+ejected.eKinetic)
-										cosChiEjected = 1. - 2.*rand.Float64()
-									default:
-										panic("unexpected config.IonizationScattering")
+									if egressCellEnergy >= startEnergy {
+										endStep := endEnergy - egressCellEnergy
+										eMid := 0.5 * (egressCellEnergy + endEnergy)
+										invMu := math.Sqrt(eMid / (eMid - tUpdate.trajectory.radialEnergy))
+										potentialMid := eMid - tUpdate.trajectory.totEnergy
+										x := m.LfromV(potentialMid)
+										if x > m.Parameters.CathodeFallLength {
+											invMu = math.Pi * 0.5
+										}
+										field := m.EFieldFromPotential(potentialMid)
+										ncs := m.IonizationCSmulGasDensityLookupECell[eCell]
+										for range tUpdate.weight {
+											m.TrajAveragedIonization[int(m.LfromV(potentialMid)/m.XStep)].Add(ncs * endStep * invMu / -field)
+										}
 									}
-
-									countFlow <- CountEvent{isAttachment: false, origin: particlePtr.origin, weight: particlePtr.weight}
-
-									ejected.redirect(cosChiEjected, math.Cos(phi+math.Pi), m)
-									if ejected.trajectory.totEnergy > lowerEnergyThreshold {
-										computeWg.Add(1)
-										computeFlow <- &ejected
-									} else {
-										anodeFlow <- AnodeArrival{weight: ejected.weight}
-									}
-
-								case lxgata.ATTACHMENT:
-									countFlow <- CountEvent{isAttachment: true, origin: particlePtr.origin, weight: particlePtr.weight}
-								case lxgata.EFFECTIVE:
-								case lxgata.EXCITATION: //energy is lost with threshold decrement
-								case lxgata.ROTATION:
-								case lxgata.DEEXCITATION: //energy is gained with (negative) threshold decrement
-
-								default:
-									panic(fmt.Sprintf("unexpected lxgata.CollisionType: %#v", collision.Type))
-								}
-								// if !m.Parameters.Volumetric || (particlePtr.y*particlePtr.y+particlePtr.z*particlePtr.z < m.cathodeRadius2) || particlePtr.x < m.Parameters.CathodeFallLength {
-								if _, count := m.Parameters.GetCollisionTypesToStore()[collision.Type]; count {
-									collFlow <- CollisionEvent{
-										x:          m.LNodefromVCached(particlePtr.potential),
-										energyLoss: energyLoss,
-										collType:   collision.Type,
-										origin:     particlePtr.origin,
-										outcome:    collision.Outcome,
-										weight:     particlePtr.weight,
+									if ingressCellEnergy > endEnergy && egressCellEnergy < startEnergy {
+										interCellStep := endEnergy - startEnergy
+										eMid := 0.5 * (startEnergy + endEnergy)
+										invMu := math.Sqrt(eMid / (eMid - tUpdate.trajectory.radialEnergy))
+										potentialMid := eMid - tUpdate.trajectory.totEnergy
+										x := m.LfromV(potentialMid)
+										if x > m.Parameters.CathodeFallLength {
+											invMu = math.Pi * 0.5
+										}
+										field := m.EFieldFromPotential(potentialMid)
+										ncs := m.IonizationCSmulGasDensityLookupECell[eCell]
+										for range tUpdate.weight {
+											m.TrajAveragedIonization[int(x/m.XStep)].Add(ncs * interCellStep * invMu / -field)
+										}
 									}
 								}
+							}
+							if m.Parameters.CalculateDistribution {
+								xStart := m.LfromV(tUpdate.startEnergy - tUpdate.trajectory.totEnergy)
+								xEnd := m.LfromV(tUpdate.endEnergy - tUpdate.trajectory.totEnergy)
+								xStart, xEnd = min(xStart, xEnd), max(xStart, xEnd)
+								xStartIndex := int(math.Ceil(xStart / m.XStep))
+								xEndIndex := int(math.Floor(xEnd / m.XStep))
+								for xIndex := xStartIndex; xIndex <= xEndIndex; xIndex++ {
+									energy := tUpdate.trajectory.totEnergy + m.lookUpPotentialAtCellNode[xIndex]
+									eIndex := int(energy / m.Parameters.EnergyStep)
+									mu := math.Copysign(math.Sqrt((energy-tUpdate.trajectory.radialEnergy)/energy), tUpdate.endEnergy-tUpdate.startEnergy)
+									muIndex := int((mu + 1 + 0.5*m.Parameters.MuDiscretizationStep) / m.Parameters.MuDiscretizationStep)
+									if xIndex < m.NumCells && eIndex < m.NumCellsE && muIndex < m.NumCellsMu {
+										for range tUpdate.weight {
+											m.MeanEnergy[xIndex].AppendF(energy)
+										}
+										m.DistributionXEMu[xIndex][eIndex][muIndex] += float64(tUpdate.weight)
+									}
+								}
+							}
+						}
+					}
+					stateWg.Done()
+				}()
+			}
 
-								// } // else {
-								// 	outcollFlow <- CollisionEvent{
-								// 		x:          int(particlePtr.x / m.XStep),
-								// 		energyLoss: energyLoss,
-								// 		collType:   collision.Type,
-								// 		origin:     particlePtr.origin,
-								// 		outcome:    collision.Outcome,
-								// 	}
-								// }
+			for _, process := range m.Parameters.CrossSectionsData().GetTypes() {
+				for x := range CollisionAtCellPerAvalanche[process] {
+					CollisionAtCellPerAvalanche[process][x] = make([]int, nParticles)
+				}
+			}
 
-								if collision.Type == lxgata.ATTACHMENT {
-									attachmentLoss = true
+			var freePathFlow chan MeanFreePathUpdate
+			if m.Parameters.MeanFreePath {
+				freePathFlow = make(chan MeanFreePathUpdate)
+				stateWg.Add(1)
+				go func() {
+					for fpu := range freePathFlow {
+						for i := fpu.fillStartIndex; i <= fpu.fillEndIndex && i < m.NumCells; i++ {
+							m.MeanFreePath[i].Append(fpu.freePath)
+						}
+						m.GlobalMeanFreePath.Append(fpu.freePath)
+					}
+					stateWg.Done()
+				}()
+			}
+
+			electronsReturned := make([]int, nParticles)
+			erFlow := make(chan CathodeArrival)
+			stateWg.Add(1)
+			go func() {
+				for cathodeReturn := range erFlow {
+					electronsReturned[cathodeReturn.origin-m.TotalParticlesEmitted] += cathodeReturn.weight
+				}
+				stateWg.Done()
+			}()
+			ionizingElectrons := make([]int, nParticles)
+			izFlow := make(chan IonizingElectron)
+			stateWg.Add(1)
+			go func() {
+				for ie := range izFlow {
+					ionizingElectrons[ie.origin-m.TotalParticlesEmitted] += ie.weight
+				}
+				stateWg.Done()
+			}()
+
+			anodeFlow := make(chan AnodeArrival)
+			stateWg.Add(1)
+			go func() {
+				for anodeArrival := range anodeFlow {
+					m.AnodeElectronCounter += anodeArrival.weight
+				}
+				stateWg.Done()
+			}()
+
+			countFlow := make(chan CountEvent)
+			stateWg.Add(1)
+			go func() {
+				for event := range countFlow {
+					if event.isAttachment {
+						attachmentCounters[event.origin-m.TotalParticlesEmitted] += event.weight
+					} else {
+						ionizationCounters[event.origin-m.TotalParticlesEmitted] += event.weight
+					}
+				}
+				stateWg.Done()
+			}()
+
+			// status := []string{"//", "==", "\\\\", "||"}
+
+			reweightRequest := false
+
+			go func() {
+				computeWg.Wait()
+
+				close(computeFlow)
+				close(collFlow)
+				if m.Parameters.TrajectoryAveragedRates || m.Parameters.CalculateDistribution {
+					close(trajFlow)
+				}
+
+				if m.Parameters.MeanFreePath {
+					close(freePathFlow)
+				}
+				close(erFlow)
+				close(izFlow)
+				close(anodeFlow)
+				close(countFlow)
+			}()
+
+			for {
+				var workerWG sync.WaitGroup
+				for range m.Parameters.Threads() - 1 {
+					workerWG.Add(1)
+					go func() {
+						for particlePtr := range computeFlow {
+							lowerEnergyThreshold := m.Parameters.LowerEnergyThreshold()
+							attachmentLoss := false
+							for (lowerEnergyThreshold < particlePtr.trajectory.totEnergy || m.Parameters.CalculateDistribution) &&
+								(!m.Parameters.ReturningElectrons || particlePtr.trajectory.totEnergy+m.VfromL(0) > 0) {
+								if len(computeFlow)*10/(cap(computeFlow)*8) >= 1 || reweightRequest {
+									computeFlow <- particlePtr
+									computeWg.Add(1)
+									reweightRequest = true
 									break
 								}
-								particlePtr.redirect(cosChiScattered, math.Cos(phi), m)
+								var fillStartIndex, fillEndIndex int
+								if m.Parameters.MeanFreePath {
+									fillStartIndex = m.LNodefromVCached(-particlePtr.getPotentialEnergy())
+								}
+								collision, reversal, throwOut, freePath := m.nextCollision(particlePtr, trajFlow /*, stateflow*/)
+								if m.Parameters.MeanFreePath {
+									fillEndIndex = m.LNodefromVCached(-particlePtr.getPotentialEnergy())
+									fillStartIndex, fillEndIndex = min(fillStartIndex, fillEndIndex), max(fillStartIndex, fillEndIndex)
+									if reversal {
+										fillStartIndex = int(particlePtr.trajectory.getTurnaroundX(m) / m.XStep)
+									}
+									freePathFlow <- MeanFreePathUpdate{
+										freePath:       freePath,
+										fillStartIndex: fillStartIndex,
+										fillEndIndex:   fillEndIndex,
+									}
+								}
+
+								if throwOut != None {
+									switch throwOut {
+									case ArrivalAtCathode:
+										erFlow <- CathodeArrival{weight: particlePtr.weight, origin: particlePtr.origin}
+									case ArrivalAtSimEnd:
+										anodeFlow <- AnodeArrival{weight: particlePtr.weight}
+									}
+									break
+								}
+								if collision != nil {
+									energyLoss := collision.Threshold
+									cosChiScattered := m.Parameters.CrossSectionsData().SampleScatteringAngleCos(particlePtr.eKinetic, energyLoss, collision.Type, lxgata.IgnoreAtomicNumber, collision.Species)
+									phi := 2. * math.Pi * rand.Float64()
+
+									particlePtr.eKinetic -= energyLoss
+									switch collision.Type {
+									case lxgata.ELASTIC:
+										energyLoss = particlePtr.eKinetic * 2. * collision.MassRatio * (1. - cosChiScattered)
+										particlePtr.eKinetic -= energyLoss
+
+									case lxgata.IONIZATION:
+										particlePtr.generation += 1
+										ejected := *particlePtr
+										ejected.ejectedFromIonization = true
+										particlePtr.producedIonization = true
+
+										availableEnergy := particlePtr.eKinetic
+
+										switch m.Parameters.GetIonizationEnergySharingMode() {
+										case config.Equal:
+											ejected.eKinetic = 0.5 * particlePtr.eKinetic
+										case config.Opal:
+
+											if w, known := utils.OpalIonizationShapeParameters[collision.Species]; known {
+												ejected.eKinetic = w * math.Tan(rand.Float64()*math.Atan(particlePtr.eKinetic/(2.*w)))
+											} else {
+												panic("no Opal coefficient known for species: " + collision.Species)
+												// ejected.eKinetic = 0.5 * particlePtr.eKinetic
+											}
+										case config.UniformRandom:
+											ejected.eKinetic = particlePtr.eKinetic * rand.Float64()
+										case config.Zero:
+											ejected.eKinetic = 0
+										default:
+											panic("unexpected config.IonizationEnergySharing")
+										}
+										particlePtr.eKinetic = availableEnergy - ejected.eKinetic
+
+										var cosChiEjected float64
+
+										switch m.Parameters.GetIonizationScatteringMode() {
+										case config.Boeuf:
+											cosChiScattered = math.Sqrt(particlePtr.eKinetic / availableEnergy)
+											cosChiEjected = math.Sqrt(ejected.eKinetic / availableEnergy)
+										case config.Born:
+											cosChiScattered = lxgata.BornScatteringAngleSample(particlePtr.eKinetic+energyLoss, energyLoss)
+											cosChiEjected = lxgata.BornScatteringAngleSample(ejected.eKinetic+energyLoss, energyLoss)
+										case config.BornFullLoss:
+											cosChiScattered = lxgata.BornScatteringAngleSample(availableEnergy+energyLoss, energyLoss+ejected.eKinetic)
+											cosChiEjected = lxgata.BornScatteringAngleSample(availableEnergy+energyLoss, energyLoss+particlePtr.eKinetic)
+										case config.Coulomb:
+											cosChiScattered = lxgata.CoulombScatteringAngleSample(particlePtr.eKinetic+energyLoss, m.Parameters.CrossSectionsData().Species[collision.Species].UParameter, energyLoss, lxgata.IgnoreAtomicNumber)
+											cosChiEjected = 1. - 2.*rand.Float64()
+										case config.CoulombM:
+											cosChiScattered = lxgata.CoulombScatteringAngleSample(particlePtr.eKinetic+energyLoss, m.Parameters.CrossSectionsData().Species[collision.Species].UParameter, energyLoss, lxgata.IgnoreAtomicNumber)
+											cosChiEjected = lxgata.CoulombScatteringAngleSample(ejected.eKinetic+energyLoss, m.Parameters.CrossSectionsData().Species[collision.Species].UParameter, energyLoss, lxgata.IgnoreAtomicNumber)
+										case config.Isotropic:
+											cosChiScattered = 1. - 2.*rand.Float64()
+											cosChiEjected = 1. - 2.*rand.Float64()
+										case config.Mixed:
+											eScattered, eEjected := max(particlePtr.eKinetic, ejected.eKinetic), min(particlePtr.eKinetic, ejected.eKinetic)
+											particlePtr.eKinetic, ejected.eKinetic = eScattered, eEjected
+											cosChiScattered = lxgata.BornScatteringAngleSample(particlePtr.eKinetic+energyLoss, energyLoss)
+											cosChiEjected = 1. - 2.*rand.Float64()
+										case config.MixedFullLoss:
+											eScattered, eEjected := max(particlePtr.eKinetic, ejected.eKinetic), min(particlePtr.eKinetic, ejected.eKinetic)
+											particlePtr.eKinetic, ejected.eKinetic = eScattered, eEjected
+											cosChiScattered = lxgata.BornScatteringAngleSample(availableEnergy+energyLoss, energyLoss+ejected.eKinetic)
+											cosChiEjected = 1. - 2.*rand.Float64()
+										default:
+											panic("unexpected config.IonizationScattering")
+										}
+
+										countFlow <- CountEvent{isAttachment: false, origin: particlePtr.origin, weight: particlePtr.weight}
+
+										ejected.redirect(cosChiEjected, math.Cos(phi+math.Pi), m)
+										if ejected.trajectory.totEnergy > lowerEnergyThreshold {
+											computeWg.Add(1)
+											computeFlow <- &ejected
+										} else {
+											anodeFlow <- AnodeArrival{weight: ejected.weight}
+										}
+
+									case lxgata.ATTACHMENT:
+										countFlow <- CountEvent{isAttachment: true, origin: particlePtr.origin, weight: particlePtr.weight}
+									case lxgata.EFFECTIVE:
+									case lxgata.EXCITATION: //energy is lost with threshold decrement
+									case lxgata.ROTATION:
+									case lxgata.DEEXCITATION: //energy is gained with (negative) threshold decrement
+
+									default:
+										panic(fmt.Sprintf("unexpected lxgata.CollisionType: %#v", collision.Type))
+									}
+									// if !m.Parameters.Volumetric || (particlePtr.y*particlePtr.y+particlePtr.z*particlePtr.z < m.cathodeRadius2) || particlePtr.x < m.Parameters.CathodeFallLength {
+									if _, count := m.Parameters.GetCollisionTypesToStore()[collision.Type]; count {
+										collFlow <- CollisionEvent{
+											x:          m.LNodefromVCached(particlePtr.potential),
+											energyLoss: energyLoss,
+											collType:   collision.Type,
+											origin:     particlePtr.origin,
+											outcome:    collision.Outcome,
+											weight:     particlePtr.weight,
+										}
+									}
+
+									// } // else {
+									// 	outcollFlow <- CollisionEvent{
+									// 		x:          int(particlePtr.x / m.XStep),
+									// 		energyLoss: energyLoss,
+									// 		collType:   collision.Type,
+									// 		origin:     particlePtr.origin,
+									// 		outcome:    collision.Outcome,
+									// 	}
+									// }
+
+									if collision.Type == lxgata.ATTACHMENT {
+										attachmentLoss = true
+										break
+									}
+									particlePtr.redirect(cosChiScattered, math.Cos(phi), m)
+								}
+							}
+
+							if particlePtr.trajectory.totEnergy < lowerEnergyThreshold && !attachmentLoss {
+								anodeFlow <- AnodeArrival{weight: particlePtr.weight}
+							}
+
+							if !particlePtr.ejectedFromIonization && particlePtr.producedIonization {
+								izFlow <- IonizingElectron{origin: particlePtr.origin, weight: particlePtr.weight}
+							}
+							computeWg.Done()
+							if reweightRequest {
+								break
 							}
 						}
-
-						if particlePtr.trajectory.totEnergy < lowerEnergyThreshold && !attachmentLoss {
-							anodeFlow <- AnodeArrival{weight: particlePtr.weight}
+						workerWG.Done()
+					}()
+				}
+				workerWG.Wait()
+				if reweightRequest {
+					newCF := make(chan *Particle, cfCap)
+					for particlePtr := range computeFlow {
+						if rand.Float64() < 0.5 {
+							particlePtr.weight *= 2
+							newCF <- particlePtr
+						} else {
+							computeWg.Done()
 						}
-
-						if !particlePtr.ejectedFromIonization && particlePtr.producedIonization {
-							izFlow <- IonizingElectron{origin: particlePtr.origin, weight: particlePtr.weight}
-						}
-						computeWg.Done()
-						if reweightRequest {
+						if len(computeFlow) == 0 {
 							break
 						}
 					}
-					workerWG.Done()
-				}()
+					close(computeFlow)
+					computeFlow = newCF
+					reweightRequest = false
+				} else {
+					break
+				}
 			}
-			workerWG.Wait()
-			if reweightRequest {
-				newCF := make(chan *Particle, cfCap)
-				for particlePtr := range computeFlow {
-					if rand.Float64() < 0.5 {
-						particlePtr.weight *= 2
-						newCF <- particlePtr
-					} else {
-						computeWg.Done()
-					}
-					if len(computeFlow) == 0 {
-						break
+
+			stateWg.Wait()
+
+			for process := range m.CollisionAtCell {
+				for x := range m.NumCells {
+					m.CollisionAtCell[process][x].Update(CollisionAtCellPerAvalanche[process][x])
+				}
+			}
+			for process := range m.DetailedCollisionAtCell {
+				for x := range m.NumCells {
+					m.DetailedCollisionAtCell[process][x].Update(DetailedCollisionAtCell[process][x])
+				}
+			}
+
+			PerAvalancheCollisionSumsUpToCell := make([]int, nParticles)
+			for x := range m.IonizationsSumUpToCell {
+				for electron := range nParticles {
+					PerAvalancheCollisionSumsUpToCell[electron] += CollisionAtCellPerAvalanche[lxgata.IONIZATION][x][electron]
+				}
+				m.IonizationsSumUpToCell[x].Update(PerAvalancheCollisionSumsUpToCell)
+
+			}
+			m.CathodeElectronCounter += utils.SumIntSlice(electronsReturned)
+			m.ElectronsReturned.Update(electronsReturned)
+			m.IonizingCathodeElectrons.Update(ionizingElectrons)
+			m.IonizationCounters = append(m.IonizationCounters, ionizationCounters...)
+			m.AttachmentCounters = append(m.AttachmentCounters, attachmentCounters...)
+		} else {
+			for origin := range nParticles {
+				particle := m.newIon(origin+m.TotalParticlesEmitted, m.Parameters.IonMobilityTrackingSpecies)
+				computeWg.Add(1)
+				computeFlow <- &particle
+			}
+			collFlow := make(chan CollisionEvent, 1000*m.Parameters.NParticles)
+			stateWg.Add(1)
+			go func() {
+				for collision := range collFlow {
+					if 0 < collision.x && collision.x < m.NumCells {
+						CollisionAtCellPerAvalanche[collision.collType][collision.x][collision.origin-m.TotalParticlesEmitted] += collision.weight
+						collName := string(collision.collType) + collision.outcome
+						if _, exist := DetailedCollisionAtCell[collName]; exist {
+							DetailedCollisionAtCell[collName][collision.x][collision.origin-m.TotalParticlesEmitted] += collision.weight
+						}
 					}
 				}
+				stateWg.Done()
+			}()
+
+			mobFlow := make(chan float64)
+			stateWg.Add(1)
+			go func() {
+				for mobEstimation := range mobFlow {
+					m.IonMobility.AppendF(mobEstimation)
+				}
+				stateWg.Done()
+			}()
+
+			for _, process := range m.Parameters.CrossSectionsData().GetTypes() {
+				for x := range CollisionAtCellPerAvalanche[process] {
+					CollisionAtCellPerAvalanche[process][x] = make([]int, nParticles)
+				}
+			}
+
+			reweightRequest := false
+
+			go func() {
+				computeWg.Wait()
+
 				close(computeFlow)
-				computeFlow = newCF
-				reweightRequest = false
-			} else {
-				break
+				close(collFlow)
+				close(mobFlow)
+			}()
+
+			for {
+				var workerWG sync.WaitGroup
+				for range m.Parameters.Threads() - 1 {
+					workerWG.Add(1)
+					go func() {
+						for particlePtr := range computeFlow {
+							// attachmentLoss := false
+							for {
+								if len(computeFlow)*10/(cap(computeFlow)*8) >= 1 || reweightRequest {
+									computeFlow <- particlePtr
+									computeWg.Add(1)
+									reweightRequest = true
+									break
+								}
+								collision, _, throwOut, _ := m.nextCollision(particlePtr, nil /*, stateflow*/)
+
+								if throwOut != None {
+									break
+								}
+								if collision != nil {
+									if particlePtr.driftStatisticsOn {
+										particlePtr.driftCollisions++
+										if particlePtr.driftCollisions > m.Parameters.IonMobilityCollisionLimit {
+											prevX := m.LfromV(particlePtr.driftStartPotential)
+											curX := m.LfromV(particlePtr.eKinetic - particlePtr.trajectory.totEnergy)
+											mobFlow <- (curX - prevX) / particlePtr.driftTimeTimesE.Val()
+											break
+										}
+
+									} else {
+										particlePtr.meanEnergyBuffer[particlePtr.bufferPosition] = particlePtr.eKinetic
+										particlePtr.bufferPosition++
+										if particlePtr.bufferPosition == len(particlePtr.meanEnergyBuffer) {
+											particlePtr.bufferPosition = 0
+											particlePtr.bufferFull = true
+										}
+										if particlePtr.bufferPosition%100 == 0 && particlePtr.bufferFull {
+											meanEnergy := utils.Mean(particlePtr.meanEnergyBuffer)
+											if math.Abs(meanEnergy-particlePtr.meanEnergyPrev)/particlePtr.meanEnergyPrev < 0.05 {
+												particlePtr.driftStatisticsOn = true
+												particlePtr.driftStartPotential = particlePtr.eKinetic - particlePtr.trajectory.totEnergy
+											}
+											particlePtr.meanEnergyPrev = meanEnergy
+										}
+									}
+
+									// energyLoss := collision.Threshold
+									// cosChiScattered := m.Parameters.CrossSectionsData().SampleScatteringAngleCos(particlePtr.eKinetic, energyLoss, collision.Type, lxgata.IgnoreAtomicNumber, collision.Species)
+
+									// particlePtr.eKinetic -= energyLoss
+
+									nx, ny := utils.BoxMuller2Normals()
+									nz, _ := utils.BoxMuller2Normals()
+
+									switch collision.Type {
+									case lxgata.ION_ISOTROPIC:
+										radialDirection := 2 * math.Pi * rand.Float64()
+										crd := math.Cos(radialDirection)
+										ey := crd * crd * particlePtr.trajectory.radialEnergy
+										ez := particlePtr.trajectory.radialEnergy - ey
+										neutralVScale := math.Sqrt(constants.KBolzmann * m.Parameters.Temperature / collision.SpeciesMass)
+										ionMass := collision.SpeciesMass * collision.MassRatio
+										vIon := utils.Vec3D{
+											X: utils.EV2ionVelocity(particlePtr.eKinetic-particlePtr.trajectory.radialEnergy, ionMass),
+											Y: utils.EV2ionVelocity(ey, collision.SpeciesMass*collision.MassRatio),
+											Z: utils.EV2ionVelocity(ez, collision.SpeciesMass*collision.MassRatio),
+										}
+
+										vNeutral := utils.Vec3D{
+											X: nx * neutralVScale,
+											Y: ny * neutralVScale,
+											Z: nz * neutralVScale,
+										}
+
+										vCOM := utils.MassCenterVelocity([]utils.Vec3D{vIon, vNeutral}, []float64{ionMass, collision.SpeciesMass})
+										vRelative := vIon.Sub(&vNeutral)
+										diverging, _ := vRelative.ModifiedFrisvadBasis()
+										cosTheta := rand.Float64()*2 - 1
+										phi := rand.Float64() * 2 * math.Pi
+										vRelativeNew := utils.RodriguesRotation(&vRelative, &diverging, math.Acos(cosTheta))
+										vRelativeNew = utils.RodriguesRotation(&vRelativeNew, &vRelative, phi)
+										vRelativeNew = vRelativeNew.Scale(collision.SpeciesMass / (collision.SpeciesMass * (1 + collision.MassRatio)))
+										vIon = vCOM.Add(&vRelativeNew)
+										particlePtr.eKinetic = vIon.Norm2() * 0.5 * constants.Dalton * (collision.SpeciesMass * collision.MassRatio)
+										particlePtr.trajectory.totEnergy = particlePtr.eKinetic - particlePtr.potential
+										particlePtr.trajectory.radialEnergy = particlePtr.eKinetic - (vIon.X * vIon.X * 0.5 * constants.Dalton * (collision.SpeciesMass * collision.MassRatio))
+										particlePtr.mu = math.Sqrt(particlePtr.getAxialEnergy() / particlePtr.eKinetic)
+
+										//sample neutral velocity from maxwellian / 3D-normal
+										//spend the energy
+										//update our velocity
+
+									case lxgata.ION_BACKSCATTERING:
+										//sample neutral velocity from maxwellian/ 3D-normal
+										//
+										particlePtr.eKinetic = constants.KBolzmannEv * m.Parameters.Temperature / 2 * (nx*nx + ny*ny + nz*nz)
+										particlePtr.trajectory.radialEnergy = constants.KBolzmannEv * m.Parameters.Temperature / 2 * (ny*ny + nz*nz)
+										particlePtr.trajectory.totEnergy = particlePtr.eKinetic - particlePtr.potential
+										particlePtr.mu = math.Sqrt(particlePtr.getAxialEnergy() / particlePtr.eKinetic)
+										particlePtr.species = collision.Outcome
+										if particlePtr.species != m.Parameters.IonMobilityTrackingSpecies {
+											break
+										}
+										//for atomic gases!!!
+
+									default:
+										panic(fmt.Sprintf("unexpected lxgata.CollisionType: %#v", collision.Type))
+									}
+									if _, count := m.Parameters.GetCollisionTypesToStore()[collision.Type]; count {
+										collFlow <- CollisionEvent{
+											x:        m.LNodefromVCached(particlePtr.potential),
+											collType: collision.Type,
+											origin:   particlePtr.origin,
+											outcome:  collision.Outcome,
+											weight:   particlePtr.weight,
+										}
+									}
+								}
+							}
+
+							computeWg.Done()
+							if reweightRequest {
+								break
+							}
+						}
+						workerWG.Done()
+					}()
+				}
+				workerWG.Wait()
+				if reweightRequest {
+					newCF := make(chan *Particle, cfCap)
+					for particlePtr := range computeFlow {
+						if rand.Float64() < 0.5 {
+							particlePtr.weight *= 2
+							newCF <- particlePtr
+						} else {
+							computeWg.Done()
+						}
+						if len(computeFlow) == 0 {
+							break
+						}
+					}
+					close(computeFlow)
+					computeFlow = newCF
+					reweightRequest = false
+				} else {
+					break
+				}
+			}
+
+			stateWg.Wait()
+
+			for process := range m.CollisionAtCell {
+				for x := range m.NumCells {
+					m.CollisionAtCell[process][x].Update(CollisionAtCellPerAvalanche[process][x])
+				}
+			}
+			for process := range m.DetailedCollisionAtCell {
+				for x := range m.NumCells {
+					m.DetailedCollisionAtCell[process][x].Update(DetailedCollisionAtCell[process][x])
+				}
+			}
+
+			PerAvalancheCollisionSumsUpToCell := make([]int, nParticles)
+			for x := range m.IonizationsSumUpToCell {
+				for electron := range nParticles {
+					PerAvalancheCollisionSumsUpToCell[electron] += CollisionAtCellPerAvalanche[lxgata.IONIZATION][x][electron]
+				}
+				m.IonizationsSumUpToCell[x].Update(PerAvalancheCollisionSumsUpToCell)
+
 			}
 		}
+		m.TotalParticlesEmitted += nParticles
 
-		stateWg.Wait()
-
-		for process := range m.CollisionAtCell {
-			for x := range m.NumCells {
-				m.CollisionAtCell[process][x].Update(CollisionAtCellPerAvalanche[process][x])
-			}
-		}
-		for process := range m.DetailedCollisionAtCell {
-			for x := range m.NumCells {
-				m.DetailedCollisionAtCell[process][x].Update(DetailedCollisionAtCell[process][x])
-			}
-		}
-
-		PerAvalancheCollisionSumsUpToCell := make([]int, nParticles)
-		for x := range m.IonizationsSumUpToCell {
-			for electron := range nParticles {
-				PerAvalancheCollisionSumsUpToCell[electron] += CollisionAtCellPerAvalanche[lxgata.IONIZATION][x][electron]
-			}
-			m.IonizationsSumUpToCell[x].Update(PerAvalancheCollisionSumsUpToCell)
-
-		}
-		m.CathodeElectronCounter += utils.SumIntSlice(electronsReturned)
-		m.ElectronsReturned.Update(electronsReturned)
-		m.IonizingCathodeElectrons.Update(ionizingElectrons)
-		m.TotalElectronsEmittedOnCathode += nParticles
-		m.IonizationCounters = append(m.IonizationCounters, ionizationCounters...)
-		m.AttachmentCounters = append(m.AttachmentCounters, attachmentCounters...)
 		nParticles = particlesToLaunch(m)
 		closeCallback()
 	}
