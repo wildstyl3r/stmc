@@ -630,6 +630,12 @@ func (m *Model) Run(particlesToLaunch func(*Model) int, electrons bool, logger m
 			ionizationCounters := make([]int, nParticles)
 			attachmentCounters := make([]int, nParticles)
 
+			for process := range DetailedCollisionAtCell {
+				for x := range DetailedCollisionAtCell[process] {
+					DetailedCollisionAtCell[process][x] = make([]int, nParticles)
+				}
+			}
+
 			collFlow := make(chan CollisionEvent, 1000*m.Parameters.NParticles)
 			stateWg.Add(1)
 			go func() {
@@ -978,7 +984,9 @@ func (m *Model) Run(particlesToLaunch func(*Model) int, electrons bool, logger m
 										panic(fmt.Sprintf("unexpected lxgata.CollisionType: %#v", collision.Type))
 									}
 									// if !m.Parameters.Volumetric || (particlePtr.y*particlePtr.y+particlePtr.z*particlePtr.z < m.cathodeRadius2) || particlePtr.x < m.Parameters.CathodeFallLength {
-									if _, count := m.Parameters.GetCollisionTypesToStore()[collision.Type]; count {
+									_, typeCount := m.Parameters.GetCollisionTypesToStore()[collision.Type]
+									_, detailedCount := DetailedCollisionAtCell[string(collision.Type)+collision.Outcome]
+									if typeCount || detailedCount {
 										collFlow <- CollisionEvent{
 											x:          m.LNodefromVCached(particlePtr.potential),
 											energyLoss: energyLoss,

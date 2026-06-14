@@ -63,6 +63,7 @@ const (
 	NormalizedCollisionCountersFromDistribution = "NormalizedCollisionCountersD"
 	NormalizedCollisionCountersTA               = "NormalizedCollisionCountersTA"
 	NormalizedOutDischargeCollisionCounters     = "NormalizedOutDischargeCollisionCounters"
+	NormalizedDetailedCollisionCounters         = "NormalizedDetailedCollisionCounters"
 	NormalizedWallLoss                          = "NormalizedWallLoss"
 	CollisionCounters                           = "CollisionCounters"
 	DetailedCollisionCounters                   = "DetailedCollisionCounters"
@@ -199,7 +200,7 @@ func NewDataFlags() DataFlags {
 				values: func(model *model.Model) (files []DataFile) {
 					collisions := model.GetMetrics(extensions.SingleElectronCollisionRateKey).(map[lxgata.CollisionType]utils.GriddedInterval)
 					collisionsMargin := model.GetMetrics(extensions.SingleElectronCollisionRateMarginKey).(map[lxgata.CollisionType]utils.GriddedInterval)
-					for _, label := range model.Parameters.CountCollisions {
+					for _, label := range model.Parameters.StoreCollisions {
 						dataFile := DataFile{
 							metricsName:   NormalizedCollisionCounters + "/" + string(label),
 							indexName:     fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
@@ -211,6 +212,34 @@ func NewDataFlags() DataFlags {
 							dataFile.data[x].index = model.XStep * (float64(x) + 0.5)
 							dataFile.data[x].value = collisions[lxgata.CollisionType(label)].Values[x] / model.Parameters.Pressure
 							dataFile.data[x].margin = collisionsMargin[lxgata.CollisionType(label)].Values[x] / model.Parameters.Pressure
+						}
+						files = append(files, dataFile)
+					}
+					return files
+				},
+				xUnit: []config.UnitElement{{Class: config.Length, Power: 1}},
+				yUnit: []config.UnitElement{{Class: config.Length, Power: -1}, {Class: config.Pressure, Power: -1}},
+			},
+			NormalizedDetailedCollisionCounters: {
+				DataItem: DataItem{
+					SaveFlag: flag.Bool("ndcc", true, "save detailed single-electron collision counters divided by pressure"),
+					shortID:  "ndcc",
+				},
+				values: func(model *model.Model) (files []DataFile) {
+					collisions := model.GetMetrics(extensions.SingleElectronDetailedCollisionRateKey).(map[string]utils.GriddedInterval)
+					// collisionsMargin := model.GetMetrics(extensions.SingleElectronCollisionRateMarginKey).(map[lxgata.CollisionType]utils.GriddedInterval)
+					for label := range collisions {
+						dataFile := DataFile{
+							metricsName:   NormalizedDetailedCollisionCounters + "/" + string(label),
+							indexName:     fmt.Sprintf("x (%s)", model.Parameters.OutputUnit(config.Length)),
+							valueName:     fmt.Sprintf("N_i(%s^{-1} %s^{-1})", model.Parameters.OutputUnit(config.Length), model.Parameters.OutputUnit(config.Pressure)),
+							data:          make([]Row, model.NumCells),
+							confIntervals: false,
+						}
+						for x := range model.NumCells {
+							dataFile.data[x].index = model.XStep * (float64(x) + 0.5)
+							dataFile.data[x].value = collisions[label].Values[x] / model.Parameters.Pressure
+							// dataFile.data[x].margin = collisionsMargin[lxgata.CollisionType(label)].Values[x] / model.Parameters.Pressure
 						}
 						files = append(files, dataFile)
 					}

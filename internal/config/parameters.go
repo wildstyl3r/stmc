@@ -356,7 +356,7 @@ type ModelParameters struct {
 	SimplifiedDiffusionScale   bool    `toml:"SimplifiedDiffusionScale,omitzero,omitempty"`
 	CathodeFallLengthPrecision float64 `toml:"CathodeFallLengthPrecision,omitzero,omitempty"`
 
-	CountCollisions []string `toml:"StoreCollisions,omitzero,omitempty"`
+	StoreCollisions []string `toml:"StoreCollisions,omitzero,omitempty"`
 
 	EmissionType string `form:"label=Emission type,options=Cosine,ForwardIsotropic,Forward" toml:"EmissionType,omitzero,omitempty"`
 
@@ -519,7 +519,7 @@ func (p *ModelParameters) ReducedFieldMidSheath() float64 {
 }
 
 var defaultValues = map[string]any{ // in SI-eV
-	"CountCollisions":            []string{"IONIZATION"},
+	"StoreCollisions":            []string{"IONIZATION"},
 	"CrossSectionsDStep":         0.001,
 	"SheathFieldModel":           "Linear",
 	"ThresholdType":              "Ionization",
@@ -991,7 +991,7 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 	modelConfig._sheathFieldModel = sheathFieldModel[modelConfig.SheathFieldModel]
 
 	modelConfig._countCollisions = make(map[lxgata.CollisionType]struct{})
-	for _, t := range modelConfig.CountCollisions {
+	for _, t := range modelConfig.StoreCollisions {
 		modelConfig._countCollisions[lxgata.CollisionType(t)] = struct{}{}
 	}
 
