@@ -68,7 +68,7 @@ func ElectronVelocity2eV(v float64) (energy float64) {
 	return
 }
 
-func EV2ionVelocity(energy, massDalton float64) (v float64) {
+func EV2heavyVelocity(energy, massDalton float64) (v float64) {
 	v = math.Sqrt(constants.ElementaryCharge * 2. * energy / (massDalton * constants.Dalton))
 	if math.IsNaN(v) {
 		println("v is nan")
@@ -76,7 +76,7 @@ func EV2ionVelocity(energy, massDalton float64) (v float64) {
 	return
 }
 
-func IonVelocity2eV(v, massDalton float64) (energy float64) {
+func HeavyVelocity2eV(v, massDalton float64) (energy float64) {
 	energy = 0.5 * v * v * (massDalton * constants.Dalton) / constants.ElementaryCharge
 	return
 }

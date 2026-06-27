@@ -367,8 +367,10 @@ type ModelParameters struct {
 	MeanFreePath            bool `toml:"MeanFreePath,omitzero,omitempty"`
 	DarkDischarge           bool `toml:"DarkDischarge,omitzero,omitempty"`
 
-	IonMobilityCollisionLimit  int    `toml:"IonMobilityCollisionLimit,omitzero,omitempty"`
-	IonMobilityTrackingSpecies string `toml:"IonSpecies,omitzero,omitempty"`
+	IonMobilityCollisionLimit int `toml:"IonMobilityCollisionLimit,omitzero,omitempty"`
+
+	NeutralMass float64 `toml:"NeutralMass,omitzero,omitempty"`
+	Particle    string  `toml:"Particle,omitzero,omitempty"`
 
 	SupressSpinner bool `form:"hide" toml:"-"`
 
@@ -967,11 +969,12 @@ func (modelConfig *ModelParameters) CheckAndUnify(modelName string, config *Conf
 	}
 
 	calculationMode := map[string]CalculationMode{
-		"Current": CurrentCalculation,
-		"Gamma":   GammaCalculation,
-		"Voltage": VoltageCalculation,
-		"Basic":   BasicSheathCalculation,
-		"Alpha":   TownsendAlpha,
+		"Current":     CurrentCalculation,
+		"Gamma":       GammaCalculation,
+		"Voltage":     VoltageCalculation,
+		"Basic":       BasicSheathCalculation,
+		"Alpha":       TownsendAlpha,
+		"IonMobility": IonMobilityCalculation,
 	}
 	modelConfig._calculationMode = calculationMode[modelConfig.CalculationMode]
 

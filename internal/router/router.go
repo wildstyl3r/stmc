@@ -24,27 +24,27 @@ type ModeParameterSet struct {
 }
 
 var calculationModeParameters = map[config.CalculationMode]ModeParameterSet{
-	config.BasicSheathCalculation: ModeParameterSet{
+	config.BasicSheathCalculation: {
 		extensions.BasicCalculation,
 		"result",
 	},
-	config.CurrentCalculation: ModeParameterSet{
+	config.CurrentCalculation: {
 		extensions.CurrentDensityCalculation,
 		"result_j",
 	},
-	config.GammaCalculation: ModeParameterSet{
+	config.GammaCalculation: {
 		extensions.SourceIntegralCalculation,
 		"result_gamma",
 	},
-	config.VoltageCalculation: ModeParameterSet{
+	config.VoltageCalculation: {
 		extensions.VoltageCalculation2,
 		"result_V",
 	},
-	config.TownsendAlpha: ModeParameterSet{
+	config.TownsendAlpha: {
 		extensions.AlphaCalculation,
 		"result_alpha",
 	},
-	config.IonMobilityCalculation: ModeParameterSet{
+	config.IonMobilityCalculation: {
 		extensions.IonMobilityCalculation,
 		"result_im",
 	},
@@ -92,6 +92,12 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags,
 			}
 
 			csID := parameters.CrossSections + parameters.ElasticScatteringMode + c.InelasticScatteringMode + config.StringifyMixture(parameters.GetMixtureParameters())
+			var particle string
+			if parameters.Particle != "" && parameters.Particle != "electron" {
+				particle = parameters.Particle
+			} else {
+				particle = "electron"
+			}
 			if _, exists := speciesCrossSections[csID]; !exists {
 				elasticSM, inelasticSM := parameters.GetScatteringModes()
 				if crossSections, err := lxgata.LoadCrossSections(
@@ -104,9 +110,12 @@ func RunConsole(configFlags *config.Flags, dataExtractorFlags *output.DataFlags,
 					lxgata.Hartree,
 					lxgata.IgnoreAtomicNumber,
 					parameters.GetMixtureParameters(),
-					"electron",
+					particle,
 				); err == nil {
 					speciesCrossSections[csID] = &crossSections
+					if len(crossSections.Processes) == 0 {
+						panic("no cs loaded")
+					}
 				} else {
 					modelStatus[modelNames[i]] = fmt.Sprintf("invalid cross section file: %v\n", err)
 					continue

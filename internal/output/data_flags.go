@@ -194,7 +194,7 @@ func NewDataFlags() DataFlags {
 			},
 			NormalizedCollisionCounters: {
 				DataItem: DataItem{
-					SaveFlag: flag.Bool("ncc", true, "save single-electron collision counters divided by pressure"),
+					SaveFlag: flag.Bool("ncc", false, "save single-electron collision counters divided by pressure"),
 					shortID:  "ncc",
 				},
 				values: func(model *model.Model) (files []DataFile) {

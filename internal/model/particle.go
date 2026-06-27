@@ -36,6 +36,7 @@ type Particle struct {
 	driftCollisions     int
 	driftStartPotential float64
 	driftStatisticsOn   bool
+	driftXDeltas        utils.KahanSummable
 	driftTimeTimesE     utils.KahanSummable
 
 	timeToWall float64
@@ -84,27 +85,37 @@ func (m *Model) newElectron(origin int) Particle {
 
 func (m *Model) newIon(origin int, species string) Particle {
 	var mu float64
-	switch m.Parameters.GetEmissionMode() {
-	case config.Cosine:
-		// mu = math.Cos(math.Asin(math.Sqrt(rand.Float64())))
-		mu = math.Sqrt(1 - rand.Float64())
-	case config.Forward:
-		mu = 1.
-	case config.ForwardIsotropic:
-		mu = rand.Float64()
-	default:
-		panic("unexpected config.EmissionMode")
-	}
+	mu = rand.Float64()
+	// switch m.Parameters.GetEmissionMode() {
+	// case config.Cosine:
+	// 	// mu = math.Cos(math.Asin(math.Sqrt(rand.Float64())))
+	// 	mu = math.Sqrt(1 - rand.Float64())
+	// case config.Forward:
+	// 	mu = 1.
+	// case config.ForwardIsotropic:
+	// 	mu = rand.Float64()
+	// default:
+	// 	panic("unexpected config.EmissionMode")
+	// }
+	// nx, ny := utils.BoxMuller2Normals()
+	// nz, _ := utils.BoxMuller2Normals()
+	// neutralVScale := math.Sqrt(constants.KBolzmann * m.Parameters.Temperature / (constants.Dalton * m.Parameters.NeutralMass))
+	// vel := utils.Vec3D{
+	// 	X: nx * neutralVScale,
+	// 	Y: ny * neutralVScale,
+	// 	Z: nz * neutralVScale,
+	// }
 	p := Particle{
 		// x:          0,
-		potential:  m.VfromL(0),
-		eKinetic:   1.5 * constants.KBolzmannEv * m.Parameters.Temperature,
-		mu:         mu,
-		prevMuSign: mu,
-		origin:     origin,
-		weight:     1,
-		ptype:      Ion,
-		species:    species,
+		potential:        m.VfromL(0),
+		eKinetic:         1.5 * constants.KBolzmannEv * m.Parameters.Temperature, //utils.HeavyVelocity2eV(vel.Norm(), m.Parameters.NeutralMass),
+		mu:               mu,                                                     //vel.X / vel.Norm(),
+		prevMuSign:       mu,                                                     //vel.X / vel.Norm(),
+		origin:           origin,
+		weight:           1,
+		ptype:            Ion,
+		species:          species,
+		meanEnergyBuffer: make([]float64, 1000),
 	}
 	if m.Parameters.Volumetric {
 		// p.y, p.z = utils.UniformOnDisk(m.Parameters.CathodeRadius)

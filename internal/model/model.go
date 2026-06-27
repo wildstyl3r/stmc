@@ -173,9 +173,22 @@ func NewModel(parameters *config.ModelParameters) *Model {
 	numEnergyCells := m.NumCellsE + 10
 	m.LookupEnergy = make([]float64, numEnergyCells)
 	m.lookupMNumerator = make([]float64, numEnergyCells)
+
 	for gridNode := range m.LookupEnergy {
 		m.LookupEnergy[gridNode] = float64(gridNode) * m.Parameters.EnergyStep
-		m.lookupMNumerator[gridNode] = m.Parameters.GasDensity * m.Parameters.CrossSectionsData().TotalCrossSectionAt(m.LookupEnergy[gridNode]) * math.Sqrt(m.LookupEnergy[gridNode])
+		if m.Parameters.GetCalculationMode() == config.IonMobilityCalculation {
+			scaledTCS := max(
+				(1+4.17*math.Sqrt(constants.KBolzmannEv*m.Parameters.Temperature/(2*m.LookupEnergy[gridNode])))*
+					m.Parameters.CrossSectionsData().TotalCrossSectionAt(
+						m.LookupEnergy[gridNode]+
+							4.17*math.Sqrt(constants.KBolzmannEv*parameters.Temperature*2*m.LookupEnergy[gridNode])+
+							4.17*4.17*constants.KBolzmannEv*parameters.Temperature/2),
+				m.Parameters.CrossSectionsData().TotalCrossSectionAt(m.LookupEnergy[gridNode]))
+			m.lookupMNumerator[gridNode] = m.Parameters.GasDensity * scaledTCS * math.Sqrt(m.LookupEnergy[gridNode])
+		} else {
+			m.lookupMNumerator[gridNode] = m.Parameters.GasDensity * m.Parameters.CrossSectionsData().TotalCrossSectionAt(m.LookupEnergy[gridNode]) * math.Sqrt(m.LookupEnergy[gridNode])
+		}
+
 	}
 
 	m.MeanEnergy = make([]utils.AggregationF, m.NumCells+1)
@@ -237,13 +250,13 @@ type PathRate struct {
 	rate float64
 }
 
-func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collisionDescription *lxgata.Collision, reversal bool, throwOut BoundaryConditionType, freePath utils.KahanSummable) {
+func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate, electron bool) (collisionDescription *lxgata.Collision, reversal bool, throwOut BoundaryConditionType, freePath utils.KahanSummable, partnerVelocity, ownVelocity *utils.Vec3D) {
 
-	if -p.getPotentialEnergy() < -m.Vs+m.SheathPotentialCorrection {
+	if -p.getPotentialEnergy() < -m.Vs+m.SheathPotentialCorrection && electron {
 		throwOut = ArrivalAtCathode
 		return
 	}
-	if -p.getPotentialEnergy() > 0 { //p.x > m.Parameters.SimulationLength() {
+	if -p.getPotentialEnergy() > 0 && electron { //p.x > m.Parameters.SimulationLength() {
 		throwOut = ArrivalAtSimEnd
 		return
 	}
@@ -334,8 +347,12 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 
 			//check for gap end arrival
 			if p.trajectory.totEnergy <= highEnergy {
-				arrivalAtSimEnd = true
-				highEnergy, highEnergyAligned = p.trajectory.totEnergy, false
+				if electron {
+					arrivalAtSimEnd = true
+					highEnergy, highEnergyAligned = p.trajectory.totEnergy, false
+				} else {
+					highEnergyAligned = false
+				}
 			} else {
 				highEnergyCellIndex, highEnergyAligned = nextCellIndex, true
 			}
@@ -413,7 +430,7 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 					collisionEnergy := math.FMA(delta, delta, p.trajectory.radialEnergy) // R = 2M[sqrt(p.e-p.trajectory.eStar) - sqrt(eColl - p.trajectory.eStar)]
 					segmentEndEnergy = collisionEnergy
 					p.setEnergy(collisionEnergy, m, true)
-					if p.trajectory.totEnergy < collisionEnergy || p.getPotentialEnergy() < 0 {
+					if (p.trajectory.totEnergy < collisionEnergy || p.getPotentialEnergy() < 0) && electron {
 						arrivalAtSimEnd = true
 						segmentEndEnergy = p.trajectory.totEnergy
 					} else if -p.getPotentialEnergy() < -m.Vs+m.SheathPotentialCorrection {
@@ -423,7 +440,38 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 						if !m.Parameters.Volumetric { //|| p.y*p.y+p.z*p.z < m.tubeRadius2 {
 							var totalCrossSectionPrimed = M * math.Abs(m.EFieldFromPotential(collisionEnergy-p.trajectory.totEnergy)) / (math.Sqrt(collisionEnergy) * m.Parameters.GasDensity)
 							// collisionDescription = m.collisionSelector(collisionEnergy, p.x, M)
-							collisionDescription = m.Parameters.CrossSectionsData().SampleWithNullCollision(collisionEnergy, totalCrossSectionPrimed)
+							if electron {
+								collisionDescription = m.Parameters.CrossSectionsData().SampleWithNullCollision(collisionEnergy, totalCrossSectionPrimed)
+							} else {
+								//sample neutral from Maxwell-Boltzmann
+								//calculate relative energy g and rescaling factor (1+sqrt(e_neutr/e_collision))
+								nx, ny := utils.BoxMuller2Normals()
+								nz, _ := utils.BoxMuller2Normals()
+								neutralVScale := math.Sqrt(constants.KBolzmann * m.Parameters.Temperature / (m.Parameters.NeutralMass * constants.Dalton))
+								partnerVelocity = &utils.Vec3D{
+									X: nx * neutralVScale,
+									Y: ny * neutralVScale,
+									Z: nz * neutralVScale,
+								}
+
+								radialDirection := 2 * math.Pi * rand.Float64()
+								crd := math.Cos(radialDirection)
+								ey := crd * crd * p.trajectory.radialEnergy
+								ez := p.trajectory.radialEnergy - ey
+
+								ownVelocity = &utils.Vec3D{
+									X: utils.EV2heavyVelocity(p.eKinetic-p.trajectory.radialEnergy, m.Parameters.NeutralMass),
+									Y: utils.EV2heavyVelocity(ey, m.Parameters.NeutralMass),
+									Z: utils.EV2heavyVelocity(ez, m.Parameters.NeutralMass),
+								}
+
+								//neutralEnergy := utils.HeavyVelocity2eV(partnerVelocity.Norm(), m.Parameters.NeutralMass)
+								relativeVel := ownVelocity.Sub(partnerVelocity)
+								relativeEnergy := utils.HeavyVelocity2eV(relativeVel.Norm(), m.Parameters.NeutralMass)
+								rescalingFactor := relativeVel.Norm() / ownVelocity.Norm() //1 - partnerVelocity.Norm()/ownVelocity.Norm()
+								collisionDescription = m.Parameters.CrossSectionsData().SampleWithNullCollision(relativeEnergy, totalCrossSectionPrimed/rescalingFactor)
+							}
+
 							collisionOccured = true
 						} else {
 							arrivalAtTubeWall = true
@@ -543,10 +591,11 @@ func (m *Model) nextCollision(p *Particle, tupd chan<- TrajectoryUpdate) (collis
 		}
 	}
 	if p.driftStatisticsOn {
+		p.driftXDeltas.Add(math.Abs(m.LfromV(segmentEndEnergy-p.trajectory.totEnergy) - m.LfromV(eStart-p.trajectory.totEnergy)))
 		if reversal {
-			p.driftTimeTimesE.Add((utils.EV2electronVelocity(segmentEndEnergy) + utils.EV2electronVelocity(eStart)) * constants.ElectronMassToChargeRatio)
+			p.driftTimeTimesE.Add((utils.EV2heavyVelocity(segmentEndEnergy, m.Parameters.NeutralMass) + utils.EV2heavyVelocity(eStart, m.Parameters.NeutralMass)) * (constants.Dalton * m.Parameters.NeutralMass / constants.ElementaryCharge))
 		} else {
-			p.driftTimeTimesE.Add(math.Abs(utils.EV2electronVelocity(segmentEndEnergy)-utils.EV2electronVelocity(eStart)) * constants.ElectronMassToChargeRatio)
+			p.driftTimeTimesE.Add(math.Abs(utils.EV2heavyVelocity(segmentEndEnergy, m.Parameters.NeutralMass)-utils.EV2heavyVelocity(eStart, m.Parameters.NeutralMass)) * (constants.Dalton * m.Parameters.NeutralMass / constants.ElementaryCharge))
 		}
 	}
 	return
@@ -866,7 +915,7 @@ func (m *Model) Run(particlesToLaunch func(*Model) int, electrons bool, logger m
 								if m.Parameters.MeanFreePath {
 									fillStartIndex = m.LNodefromVCached(-particlePtr.getPotentialEnergy())
 								}
-								collision, reversal, throwOut, freePath := m.nextCollision(particlePtr, trajFlow /*, stateflow*/)
+								collision, reversal, throwOut, freePath, _, _ := m.nextCollision(particlePtr, trajFlow, true /*, stateflow*/)
 								if m.Parameters.MeanFreePath {
 									fillEndIndex = m.LNodefromVCached(-particlePtr.getPotentialEnergy())
 									fillStartIndex, fillEndIndex = min(fillStartIndex, fillEndIndex), max(fillStartIndex, fillEndIndex)
@@ -1080,7 +1129,7 @@ func (m *Model) Run(particlesToLaunch func(*Model) int, electrons bool, logger m
 			m.AttachmentCounters = append(m.AttachmentCounters, attachmentCounters...)
 		} else {
 			for origin := range nParticles {
-				particle := m.newIon(origin+m.TotalParticlesEmitted, m.Parameters.IonMobilityTrackingSpecies)
+				particle := m.newIon(origin+m.TotalParticlesEmitted, m.Parameters.Particle)
 				computeWg.Add(1)
 				computeFlow <- &particle
 			}
@@ -1138,7 +1187,7 @@ func (m *Model) Run(particlesToLaunch func(*Model) int, electrons bool, logger m
 									reweightRequest = true
 									break
 								}
-								collision, _, throwOut, _ := m.nextCollision(particlePtr, nil /*, stateflow*/)
+								collision, _, throwOut, _, vNeutral, vIon := m.nextCollision(particlePtr, nil, false /*, stateflow*/)
 
 								if throwOut != None {
 									break
@@ -1147,9 +1196,9 @@ func (m *Model) Run(particlesToLaunch func(*Model) int, electrons bool, logger m
 									if particlePtr.driftStatisticsOn {
 										particlePtr.driftCollisions++
 										if particlePtr.driftCollisions > m.Parameters.IonMobilityCollisionLimit {
-											prevX := m.LfromV(particlePtr.driftStartPotential)
-											curX := m.LfromV(particlePtr.eKinetic - particlePtr.trajectory.totEnergy)
-											mobFlow <- (curX - prevX) / particlePtr.driftTimeTimesE.Val()
+											// prevX := m.LfromV(particlePtr.driftStartPotential)
+											// curX := m.LfromV(particlePtr.eKinetic - particlePtr.trajectory.totEnergy) //(curX - prevX)
+											mobFlow <- particlePtr.driftXDeltas.Val() / particlePtr.driftTimeTimesE.Val()
 											break
 										}
 
@@ -1175,39 +1224,40 @@ func (m *Model) Run(particlesToLaunch func(*Model) int, electrons bool, logger m
 
 									// particlePtr.eKinetic -= energyLoss
 
-									nx, ny := utils.BoxMuller2Normals()
-									nz, _ := utils.BoxMuller2Normals()
+									// nx, ny := utils.BoxMuller2Normals()
+									// nz, _ := utils.BoxMuller2Normals()
+									// neutralVScale := math.Sqrt(constants.KBolzmann * m.Parameters.Temperature / collision.SpeciesMass)
+									// radialDirection := 2 * math.Pi * rand.Float64()
+									// crd := math.Cos(radialDirection)
+									// ey := crd * crd * particlePtr.trajectory.radialEnergy
+									// ez := particlePtr.trajectory.radialEnergy - ey
+
+									ionMass := collision.SpeciesMass * collision.MassRatio
+									// vIon := utils.Vec3D{
+									// 	X: utils.EV2heavyVelocity(particlePtr.eKinetic-particlePtr.trajectory.radialEnergy, ionMass),
+									// 	Y: utils.EV2heavyVelocity(ey, collision.SpeciesMass*collision.MassRatio),
+									// 	Z: utils.EV2heavyVelocity(ez, collision.SpeciesMass*collision.MassRatio),
+									// }
+
+									// vNeutral := utils.Vec3D{
+									// 	X: nx * neutralVScale,
+									// 	Y: ny * neutralVScale,
+									// 	Z: nz * neutralVScale,
+									// }
 
 									switch collision.Type {
 									case lxgata.ION_ISOTROPIC:
-										radialDirection := 2 * math.Pi * rand.Float64()
-										crd := math.Cos(radialDirection)
-										ey := crd * crd * particlePtr.trajectory.radialEnergy
-										ez := particlePtr.trajectory.radialEnergy - ey
-										neutralVScale := math.Sqrt(constants.KBolzmann * m.Parameters.Temperature / collision.SpeciesMass)
-										ionMass := collision.SpeciesMass * collision.MassRatio
-										vIon := utils.Vec3D{
-											X: utils.EV2ionVelocity(particlePtr.eKinetic-particlePtr.trajectory.radialEnergy, ionMass),
-											Y: utils.EV2ionVelocity(ey, collision.SpeciesMass*collision.MassRatio),
-											Z: utils.EV2ionVelocity(ez, collision.SpeciesMass*collision.MassRatio),
-										}
 
-										vNeutral := utils.Vec3D{
-											X: nx * neutralVScale,
-											Y: ny * neutralVScale,
-											Z: nz * neutralVScale,
-										}
-
-										vCOM := utils.MassCenterVelocity([]utils.Vec3D{vIon, vNeutral}, []float64{ionMass, collision.SpeciesMass})
-										vRelative := vIon.Sub(&vNeutral)
+										vCOM := utils.MassCenterVelocity([]utils.Vec3D{*vIon, *vNeutral}, []float64{ionMass, collision.SpeciesMass})
+										vRelative := vIon.Sub(vNeutral)
 										diverging, _ := vRelative.ModifiedFrisvadBasis()
 										cosTheta := rand.Float64()*2 - 1
 										phi := rand.Float64() * 2 * math.Pi
 										vRelativeNew := utils.RodriguesRotation(&vRelative, &diverging, math.Acos(cosTheta))
 										vRelativeNew = utils.RodriguesRotation(&vRelativeNew, &vRelative, phi)
 										vRelativeNew = vRelativeNew.Scale(collision.SpeciesMass / (collision.SpeciesMass * (1 + collision.MassRatio)))
-										vIon = vCOM.Add(&vRelativeNew)
-										particlePtr.eKinetic = vIon.Norm2() * 0.5 * constants.Dalton * (collision.SpeciesMass * collision.MassRatio)
+										*vIon = vCOM.Add(&vRelativeNew)
+										particlePtr.eKinetic = utils.HeavyVelocity2eV(vIon.Norm(), m.Parameters.NeutralMass)
 										particlePtr.trajectory.totEnergy = particlePtr.eKinetic - particlePtr.potential
 										particlePtr.trajectory.radialEnergy = particlePtr.eKinetic - (vIon.X * vIon.X * 0.5 * constants.Dalton * (collision.SpeciesMass * collision.MassRatio))
 										particlePtr.mu = math.Sqrt(particlePtr.getAxialEnergy() / particlePtr.eKinetic)
@@ -1218,13 +1268,13 @@ func (m *Model) Run(particlesToLaunch func(*Model) int, electrons bool, logger m
 
 									case lxgata.ION_BACKSCATTERING:
 										//sample neutral velocity from maxwellian/ 3D-normal
-										//
-										particlePtr.eKinetic = constants.KBolzmannEv * m.Parameters.Temperature / 2 * (nx*nx + ny*ny + nz*nz)
-										particlePtr.trajectory.radialEnergy = constants.KBolzmannEv * m.Parameters.Temperature / 2 * (ny*ny + nz*nz)
+
+										particlePtr.eKinetic = utils.HeavyVelocity2eV(vNeutral.Norm(), m.Parameters.NeutralMass)
+										particlePtr.trajectory.radialEnergy = particlePtr.eKinetic - (vNeutral.X * vNeutral.X * 0.5 * constants.Dalton * (collision.SpeciesMass * collision.MassRatio))
 										particlePtr.trajectory.totEnergy = particlePtr.eKinetic - particlePtr.potential
-										particlePtr.mu = math.Sqrt(particlePtr.getAxialEnergy() / particlePtr.eKinetic)
+										particlePtr.mu = vNeutral.X / vNeutral.Norm() //math.Sqrt(particlePtr.getAxialEnergy() / particlePtr.eKinetic)
 										particlePtr.species = collision.Outcome
-										if particlePtr.species != m.Parameters.IonMobilityTrackingSpecies {
+										if particlePtr.species != m.Parameters.Particle {
 											break
 										}
 										//for atomic gases!!!
@@ -1287,14 +1337,14 @@ func (m *Model) Run(particlesToLaunch func(*Model) int, electrons bool, logger m
 				}
 			}
 
-			PerAvalancheCollisionSumsUpToCell := make([]int, nParticles)
-			for x := range m.IonizationsSumUpToCell {
-				for electron := range nParticles {
-					PerAvalancheCollisionSumsUpToCell[electron] += CollisionAtCellPerAvalanche[lxgata.IONIZATION][x][electron]
-				}
-				m.IonizationsSumUpToCell[x].Update(PerAvalancheCollisionSumsUpToCell)
+			// PerAvalancheCollisionSumsUpToCell := make([]int, nParticles)
+			// for x := range m.IonizationsSumUpToCell {
+			// 	for electron := range nParticles {
+			// 		PerAvalancheCollisionSumsUpToCell[electron] += CollisionAtCellPerAvalanche[lxgata.IONIZATION][x][electron]
+			// 	}
+			// 	m.IonizationsSumUpToCell[x].Update(PerAvalancheCollisionSumsUpToCell)
 
-			}
+			// }
 		}
 		m.TotalParticlesEmitted += nParticles
 

@@ -33,7 +33,7 @@ type AlphaResult struct {
 }
 
 func AlphaCalculation(parameters *config.ModelParameters, outputDir, modelName string, logger messages.Logger) (dataRow, _ utils.ResultInterface, finalModel, _ *model.Model) {
-	voltages := []float64{50, 75, 100, 150, 200, 250, 300, 350}
+	voltages := []float64{50, 75, 100, 150, 200, 250, 300}
 	n := len(voltages)
 	progress := progressbar.Default(int64(n))
 	l1ps := make([]float64, n)
